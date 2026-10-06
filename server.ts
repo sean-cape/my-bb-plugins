@@ -7,6 +7,9 @@
 // between columns with `bb kanban move <column>`.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import {
   PluginCliError,
@@ -445,12 +448,54 @@ export const ticketDiffSchema = z.object({
   files: z.array(diffFileSchema),
   /** What the diff was taken against: the PR base branch or the environment's merge base. */
   baseRef: z.string().nullable(),
+  baseSha: z.string().nullable(),
   headSha: z.string().nullable(),
   truncated: z.boolean(),
   message: z.string().nullable(),
   fetchedAt: z.number(),
 });
 export type TicketDiff = z.infer<typeof ticketDiffSchema>;
+
+/** difftastic's JSON output, trimmed to what the viewer renders. Line numbers are 1-based here. */
+export const structuralChangeSchema = z.object({
+  start: z.number().int(),
+  end: z.number().int(),
+  highlight: z.string(),
+});
+export const structuralLineSchema = z.object({
+  line: z.number().int(),
+  changes: z.array(structuralChangeSchema),
+});
+export const structuralDiffSchema = z.object({
+  available: z.boolean(),
+  /** Why the structural diff is unavailable: difftastic missing, binary file, parse failure. */
+  reason: z.string().nullable(),
+  language: z.string().nullable(),
+  status: z.enum(["unchanged", "changed", "created", "deleted"]).nullable(),
+  oldText: z.string(),
+  newText: z.string(),
+  /** Hunks of aligned line pairs; a null side means no corresponding line. */
+  chunks: z.array(z.array(z.object({ lhs: structuralLineSchema.nullable(), rhs: structuralLineSchema.nullable() }))),
+});
+export type StructuralDiff = z.infer<typeof structuralDiffSchema>;
+
+export const symbolDefinitionSchema = z.object({
+  path: z.string(),
+  line: z.number().int().nullable(),
+  snippet: z.string(),
+});
+export const symbolLookupSchema = z.object({
+  symbol: z.string(),
+  definitions: z.array(symbolDefinitionSchema),
+  /** How to open a result: a bb environment (file preview at the line) or a GitHub blob URL base. */
+  open: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("environment"), environmentId: z.string() }),
+    z.object({ kind: z.literal("github"), repo: z.string(), sha: z.string() }),
+    z.object({ kind: z.literal("none") }),
+  ]),
+  searched: z.enum(["workspace", "github", "none"]),
+});
+export type SymbolLookup = z.infer<typeof symbolLookupSchema>;
 
 /** A comment the user left on the card's diff. Posted to GitHub and/or handed to an apply thread on submit. */
 export const diffSideSchema = z.enum(["LEFT", "RIGHT"]);
@@ -571,6 +616,14 @@ export const rpcContract = defineRpcContract({
   diff_get: {
     input: z.object({ ticketId: z.string(), refresh: z.boolean().default(false) }).strict(),
     output: ticketDiffSchema,
+  },
+  diff_structural: {
+    input: z.object({ ticketId: z.string(), path: z.string().min(1) }).strict(),
+    output: structuralDiffSchema,
+  },
+  symbol_definitions: {
+    input: z.object({ ticketId: z.string(), symbol: z.string().trim().min(1).max(200) }).strict(),
+    output: symbolLookupSchema,
   },
   diff_comments_list: {
     input: z.object({ ticketId: z.string() }).strict(),
@@ -1267,6 +1320,12 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Fallback project",
       description:
         "Used for PR cards whose repository does not match any project's git remote, and as the default for ad hoc tickets.",
+    },
+    difftPath: {
+      type: "string",
+      label: "difftastic binary",
+      description: "Path to `difft` for the structural diff view. Install with `brew install difftastic`.",
+      default: "difft",
     },
     reviewTag: {
       type: "string",
@@ -2144,10 +2203,10 @@ export default async function plugin(bb: BbPluginApi) {
       if (!refresh && cached !== undefined && cached.key === key && now - cached.diff.fetchedAt < 10 * 60_000) return cached.diff;
       const auth = await resolveToken();
       if (auth === null) {
-        return { source: "pr", files: [], baseRef: null, headSha: null, truncated: false, message: "No GitHub token configured.", fetchedAt: now };
+        return { source: "pr", files: [], baseRef: null, baseSha: null, headSha: null, truncated: false, message: "No GitHub token configured.", fetchedAt: now };
       }
       const [pull, files] = await Promise.all([
-        github<GithubPull & { base?: { ref?: string }; head?: { sha?: string } }>(`/repos/${ticket.pr.repo}/pulls/${ticket.pr.number}`, auth.token),
+        github<GithubPull & { base?: { ref?: string; sha?: string }; head?: { sha?: string } }>(`/repos/${ticket.pr.repo}/pulls/${ticket.pr.number}`, auth.token),
         (async () => {
           const all: GithubPullFile[] = [];
           for (let page = 1; page <= 3; page += 1) {
@@ -2169,6 +2228,7 @@ export default async function plugin(bb: BbPluginApi) {
           patch: file.patch ?? null,
         })),
         baseRef: pull.base?.ref ?? null,
+        baseSha: pull.base?.sha ?? null,
         headSha: pull.head?.sha ?? null,
         truncated: files.length >= 300,
         message: null,
@@ -2180,7 +2240,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (ticket.threadId !== null) {
       const thread = await bb.sdk.threads.get({ threadId: ticket.threadId });
       if (thread.environmentId === null) {
-        return { source: "none", files: [], baseRef: null, headSha: null, truncated: false, message: "The card's thread has no environment yet.", fetchedAt: now };
+        return { source: "none", files: [], baseRef: null, baseSha: null, headSha: null, truncated: false, message: "The card's thread has no environment yet.", fetchedAt: now };
       }
       const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
       // Everything on the branch since it diverged when the merge base is known, else just the working tree.
@@ -2190,19 +2250,212 @@ export default async function plugin(bb: BbPluginApi) {
           : { environmentId: thread.environmentId, target: "uncommitted" },
       );
       if (result.outcome !== "available") {
-        return { source: "environment", files: [], baseRef: null, headSha: null, truncated: false, message: result.outcome === "not_applicable" ? result.message : result.failure.message, fetchedAt: now };
+        return { source: "environment", files: [], baseRef: null, baseSha: null, headSha: null, truncated: false, message: result.outcome === "not_applicable" ? result.message : result.failure.message, fetchedAt: now };
       }
       return {
         source: "environment",
         files: splitUnifiedDiff(result.diff.diff),
         baseRef: result.diff.mergeBaseRef,
+        baseSha: null,
         headSha: null,
         truncated: result.diff.truncated,
         message: null,
         fetchedAt: now,
       };
     }
-    return { source: "none", files: [], baseRef: null, headSha: null, truncated: false, message: "No pull request or thread to diff.", fetchedAt: now };
+    return { source: "none", files: [], baseRef: null, baseSha: null, headSha: null, truncated: false, message: "No pull request or thread to diff.", fetchedAt: now };
+  }
+
+  /** Both sides of one file in the card's diff, as text; null for a side that does not exist or is binary. */
+  async function fileSides(ticket: Ticket, path: string): Promise<{ old: string | null; new: string | null; headSha: string | null }> {
+    const diff = await ticketDiff(ticket, false);
+    const file = diff.files.find((entry) => entry.path === path || entry.previousPath === path);
+    if (file === undefined) throw new Error(`${path} is not in this card's diff`);
+    const decode = (content: string, encoding: string) => (encoding === "base64" ? Buffer.from(content, "base64").toString("utf8") : content);
+    if (ticket.pr !== null) {
+      const auth = await resolveToken();
+      if (auth === null) throw new Error("No GitHub token configured.");
+      const fetchSide = async (ref: string | null, filePath: string): Promise<string | null> => {
+        if (ref === null) return null;
+        const response = await fetch(`https://api.github.com/repos/${ticket.pr!.repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}?ref=${ref}`, {
+          headers: { authorization: `Bearer ${auth.token}`, accept: "application/vnd.github.raw+json", "user-agent": "bb-plugin-kanban" },
+        });
+        if (response.status === 404) return null;
+        if (!response.ok) throw new Error(`GitHub ${response.status} fetching ${filePath}@${ref.slice(0, 7)}`);
+        return response.text();
+      };
+      return {
+        old: file.status === "added" ? null : await fetchSide(diff.baseSha, file.previousPath ?? file.path),
+        new: file.status === "removed" ? null : await fetchSide(diff.headSha, file.path),
+        headSha: diff.headSha,
+      };
+    }
+    if (ticket.threadId !== null) {
+      const thread = await bb.sdk.threads.get({ threadId: ticket.threadId });
+      if (thread.environmentId === null) throw new Error("The card's thread has no environment yet.");
+      const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
+      const read = async (side: "old" | "new"): Promise<string | null> => {
+        if (side === "old" && file.status === "added") return null;
+        if (side === "new" && file.status === "removed") return null;
+        try {
+          const result = await bb.sdk.environments.diffFile(
+            environment.mergeBaseBranch !== null
+              ? { environmentId: thread.environmentId!, path: side === "old" ? (file.previousPath ?? file.path) : file.path, side, target: "all", mergeBaseRef: environment.mergeBaseBranch }
+              : { environmentId: thread.environmentId!, path: side === "old" ? (file.previousPath ?? file.path) : file.path, side, target: "uncommitted" },
+          );
+          return decode(result.content, result.contentEncoding);
+        } catch {
+          return null;
+        }
+      };
+      return { old: await read("old"), new: await read("new"), headSha: null };
+    }
+    throw new Error("No pull request or thread to diff.");
+  }
+
+  interface DifftLine {
+    line_number: number;
+    changes: Array<{ start: number; end: number; content: string; highlight: string }>;
+  }
+  interface DifftOutput {
+    language?: string;
+    status?: string;
+    chunks?: Array<Array<{ lhs?: DifftLine | null; rhs?: DifftLine | null }>>;
+  }
+
+  const structuralCache = new Map<string, StructuralDiff>();
+
+  async function structuralDiff(ticket: Ticket, path: string): Promise<StructuralDiff> {
+    const sides = await fileSides(ticket, path);
+    const cacheKey = `${ticket.id}:${path}:${sides.headSha ?? "env"}:${(sides.old ?? "").length}:${(sides.new ?? "").length}`;
+    const cached = structuralCache.get(cacheKey);
+    if (cached !== undefined && sides.headSha !== null) return cached;
+    const base: StructuralDiff = { available: false, reason: null, language: null, status: null, oldText: sides.old ?? "", newText: sides.new ?? "", chunks: [] };
+    if (sides.old === null && sides.new === null) return { ...base, reason: "This file has no text content on either side (binary or oversized)." };
+    const { difftPath } = await settings.get();
+    const dir = await mkdtemp(join(tmpdir(), "kanban-difft-"));
+    try {
+      const name = basename(path) || "file";
+      const oldFile = join(dir, `old-${name}`);
+      const newFile = join(dir, `new-${name}`);
+      await writeFile(oldFile, sides.old ?? "");
+      await writeFile(newFile, sides.new ?? "");
+      let stdout: string;
+      try {
+        ({ stdout } = await execFileAsync(difftPath, ["--display", "json", "--context", "3", "--color", "never", oldFile, newFile], {
+          env: { ...process.env, DFT_UNSTABLE: "yes" },
+          timeout: 30_000,
+          maxBuffer: 64 * 1024 * 1024,
+        }));
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        const reason =
+          code === "ENOENT"
+            ? `difftastic was not found at \`${difftPath}\`. Install it with \`brew install difftastic\` (or set the difftastic binary setting).`
+            : `difftastic failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`;
+        return { ...base, reason };
+      }
+      let parsed: DifftOutput;
+      try {
+        parsed = JSON.parse(stdout) as DifftOutput;
+      } catch {
+        return { ...base, reason: "difftastic returned output that was not JSON; is it an older version without `--display json`?" };
+      }
+      const oldLines = (sides.old ?? "").split("\n").length;
+      const newLines = (sides.new ?? "").split("\n").length;
+      // difftastic's JSON uses 0-based line numbers; guard against a build that already emits 1-based ones.
+      const numbers = (parsed.chunks ?? []).flat().flatMap((pair) => [pair.lhs?.line_number, pair.rhs?.line_number]).filter((n): n is number => typeof n === "number");
+      const zeroBased = numbers.length === 0 || numbers.some((n) => n === 0) || Math.max(...numbers) < Math.max(oldLines, newLines);
+      const toLine = (line: DifftLine | null | undefined): StructuralDiff["chunks"][number][number]["lhs"] =>
+        line === null || line === undefined
+          ? null
+          : { line: line.line_number + (zeroBased ? 1 : 0), changes: line.changes.map((change) => ({ start: change.start, end: change.end, highlight: change.highlight })) };
+      const status = parsed.status === "unchanged" || parsed.status === "changed" || parsed.status === "created" || parsed.status === "deleted" ? parsed.status : "changed";
+      const result: StructuralDiff = {
+        ...base,
+        available: true,
+        language: parsed.language ?? null,
+        status,
+        chunks: (parsed.chunks ?? []).map((chunk) => chunk.map((pair) => ({ lhs: toLine(pair.lhs), rhs: toLine(pair.rhs) }))),
+      };
+      structuralCache.set(cacheKey, result);
+      return result;
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  /** Where a symbol is defined: `git grep` in a local workspace of the card, else GitHub code search for PR cards. */
+  async function symbolDefinitions(ticket: Ticket, symbol: string): Promise<SymbolLookup> {
+    const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    // Definition shapes across the languages this board sees most; intentionally generous, ranked by the UI.
+    const pattern = [
+      `^\\s*(export\\s+)?(default\\s+)?(async\\s+)?(function|class|interface|type|enum|const|let|var)\\s+${escaped}\\b`,
+      `^\\s*func\\s+(\\([^)]*\\)\\s*)?${escaped}\\s*[(\\[]`,
+      `^\\s*(type|var|const)\\s+${escaped}\\b`,
+      `^\\s*${escaped}\\s+(struct|interface)\\b`,
+      `^\\s*(def|class)\\s+${escaped}\\b`,
+      `^\\s*(pub\\s+)?(fn|struct|enum|trait|type|const|static)\\s+${escaped}\\b`,
+      `^\\s*(public|private|protected|static|final|abstract|\\s)*\\s*(class|interface|enum|record)\\s+${escaped}\\b`,
+    ].join("|");
+    const localDir = await localWorkspaceDir(ticket);
+    if (localDir !== null) {
+      try {
+        const { stdout } = await execFileAsync("git", ["grep", "-n", "-I", "-E", "--", pattern], { cwd: localDir.path, timeout: 15_000, maxBuffer: 8 * 1024 * 1024 });
+        const definitions = stdout
+          .split("\n")
+          .filter((line) => line !== "")
+          .slice(0, 40)
+          .map((line) => {
+            const match = /^(.+?):(\d+):(.*)$/u.exec(line);
+            return match === null ? null : { path: match[1]!, line: Number.parseInt(match[2]!, 10), snippet: match[3]!.trim().slice(0, 200) };
+          })
+          .filter((entry): entry is { path: string; line: number; snippet: string } => entry !== null);
+        return { symbol, definitions, open: { kind: "environment", environmentId: localDir.environmentId }, searched: "workspace" };
+      } catch (error) {
+        // git grep exits 1 when nothing matched; anything else falls through to GitHub.
+        if ((error as { code?: number }).code === 1) return { symbol, definitions: [], open: { kind: "environment", environmentId: localDir.environmentId }, searched: "workspace" };
+      }
+    }
+    if (ticket.pr !== null) {
+      const auth = await resolveToken();
+      const diff = await ticketDiff(ticket, false);
+      if (auth !== null) {
+        const response = await fetch(`https://api.github.com/search/code?q=${encodeURIComponent(`${symbol} repo:${ticket.pr.repo}`)}&per_page=20`, {
+          headers: { authorization: `Bearer ${auth.token}`, accept: "application/vnd.github.text-match+json", "user-agent": "bb-plugin-kanban" },
+        });
+        if (response.ok) {
+          const body = (await response.json()) as { items?: Array<{ path: string; text_matches?: Array<{ fragment: string }> }> };
+          const definitions = (body.items ?? []).map((item) => ({
+            path: item.path,
+            line: null,
+            snippet: (item.text_matches?.[0]?.fragment ?? "").split("\n").find((line) => line.includes(symbol))?.trim().slice(0, 200) ?? "",
+          }));
+          return { symbol, definitions, open: { kind: "github", repo: ticket.pr.repo, sha: diff.headSha ?? "HEAD" }, searched: "github" };
+        }
+      }
+      return { symbol, definitions: [], open: { kind: "github", repo: ticket.pr.repo, sha: diff.headSha ?? "HEAD" }, searched: "none" };
+    }
+    return { symbol, definitions: [], open: { kind: "none" }, searched: "none" };
+  }
+
+  /** A checkout of the card's code on this server machine: the card thread's environment, else its latest review's. */
+  async function localWorkspaceDir(ticket: Ticket): Promise<{ path: string; environmentId: string } | null> {
+    const config = await bb.sdk.system.config();
+    const candidates = [ticket.threadId, ticket.latestReview?.threadId ?? null].filter((id): id is string => id !== null);
+    for (const threadId of candidates) {
+      try {
+        const thread = await bb.sdk.threads.get({ threadId });
+        if (thread.environmentId === null) continue;
+        const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
+        const path = (environment as { workspacePath?: string | null; path?: string | null }).workspacePath ?? (environment as { path?: string | null }).path ?? null;
+        const hostId = (environment as { hostId?: string | null }).hostId ?? null;
+        if (path !== null && (hostId === null || hostId === config.primaryHostId)) return { path, environmentId: thread.environmentId };
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   /** Post pending diff comments to the PR as one GitHub review. Inline where a line is given, otherwise in the review body. */
@@ -3197,6 +3450,8 @@ export default async function plugin(bb: BbPluginApi) {
       return rowToReview(stmts.reviewById.get(reviewId)!);
     },
     diff_get: ({ ticketId, refresh }) => ticketDiff(getTicket(ticketId), refresh),
+    diff_structural: ({ ticketId, path }) => structuralDiff(getTicket(ticketId), path),
+    symbol_definitions: ({ ticketId, symbol }) => symbolDefinitions(getTicket(ticketId), symbol),
     diff_comments_list: ({ ticketId }) => ({ comments: stmts.diffCommentsForTicket.all(ticketId).map(rowToDiffComment) }),
     diff_comment_add: ({ ticketId, path, line, side, body }) => {
       getTicket(ticketId);

@@ -3,7 +3,7 @@
 // A kanban board page in the sidebar. Every card is a ticket; most tickets are
 // backed by a thread, whose live status shows on the card. Cards drag between
 // columns; the same moves are available to agents through `bb kanban move`.
-import { Component, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Component, Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { DragEvent, FormEvent, ReactNode } from "react";
 import {
   Markdown,
@@ -25,7 +25,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { PatchDiff, useWorkerPool } from "@pierre/diffs/react";
 import type { DiffLineAnnotation } from "@pierre/diffs/react";
 import { toast } from "sonner";
-import type { Board, Column, CommentApply, DiffComment, DiffFile, Dump, Finding, FindingSeverity, PrComment, ProposedTicket, Review, Source, SourceKind, Ticket, TicketDiff, rpcContract } from "./server";
+import type { Board, Column, CommentApply, DiffComment, DiffFile, Dump, Finding, FindingSeverity, PrComment, ProposedTicket, Review, Source, SourceKind, StructuralDiff, SymbolLookup, Ticket, TicketDiff, rpcContract } from "./server";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -84,6 +84,8 @@ function collapseRightPanel(): void {
  */
 interface PageUiState {
   dialog: "new" | "columns" | "sources" | null;
+  /** Text (Pierre) or structural (difftastic) rendering of a file's changes. */
+  diffMode: "text" | "structural";
   /** Show subtasks as their own cards on the board (default: only in their parent's panel). */
   showSubtasks: boolean;
   newTicketColumn: string | null;
@@ -98,12 +100,25 @@ const pageUi = (() => {
   } catch {
     showSubtasks = false;
   }
-  let state: PageUiState = { dialog: null, newTicketColumn: null, showSubtasks, diffView: "unified", diffReloadNonce: 0, diffLoading: false };
+  let diffMode: "text" | "structural" = "text";
+  try {
+    diffMode = window.localStorage.getItem("kanban:diffMode") === "structural" ? "structural" : "text";
+  } catch {
+    diffMode = "text";
+  }
+  let state: PageUiState = { dialog: null, newTicketColumn: null, showSubtasks, diffMode, diffView: "unified", diffReloadNonce: 0, diffLoading: false };
   const listeners = new Set<() => void>();
   return {
     get: () => state,
     set: (patch: Partial<PageUiState>) => {
       state = { ...state, ...patch };
+      if (patch.diffMode !== undefined) {
+        try {
+          window.localStorage.setItem("kanban:diffMode", patch.diffMode);
+        } catch {
+          // ignore
+        }
+      }
       if (patch.showSubtasks !== undefined) {
         try {
           window.localStorage.setItem("kanban:showSubtasks", String(patch.showSubtasks));
@@ -1532,6 +1547,291 @@ function AnnotatedPatch({
   );
 }
 
+const HIGHLIGHT_CLASS: Record<string, string> = {
+  keyword: "text-violet-600 dark:text-violet-300",
+  string: "text-emerald-700 dark:text-emerald-300",
+  type: "text-sky-700 dark:text-sky-300",
+  comment: "text-muted-foreground italic",
+  delimiter: "text-muted-foreground",
+  treesittererror: "underline decoration-wavy decoration-destructive",
+  normal: "",
+};
+const IDENTIFIER = /[A-Za-z_$][A-Za-z0-9_$]*/gu;
+
+/** One side's line: changed spans tinted by difftastic, identifiers made ⌘-clickable. */
+function StructuralLine({
+  text,
+  changes,
+  side,
+  onSymbol,
+}: {
+  text: string;
+  changes: StructuralDiff["chunks"][number][number]["lhs"];
+  side: "LEFT" | "RIGHT";
+  onSymbol: (symbol: string, anchor: HTMLElement) => void;
+}) {
+  // Build segments: [start,end) ranges with a highlight kind, gaps are plain.
+  const spans = (changes?.changes ?? []).slice().sort((a, b) => a.start - b.start);
+  const segments: Array<{ text: string; changed: boolean; highlight: string }> = [];
+  let cursor = 0;
+  for (const span of spans) {
+    const start = Math.max(cursor, Math.min(span.start, text.length));
+    const end = Math.max(start, Math.min(span.end, text.length));
+    if (start > cursor) segments.push({ text: text.slice(cursor, start), changed: false, highlight: "normal" });
+    if (end > start) segments.push({ text: text.slice(start, end), changed: true, highlight: span.highlight });
+    cursor = end;
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), changed: false, highlight: "normal" });
+  if (segments.length === 0) segments.push({ text: "", changed: false, highlight: "normal" });
+  const renderTokens = (segment: string, key: string) => {
+    const parts: ReactNode[] = [];
+    let last = 0;
+    for (const match of segment.matchAll(IDENTIFIER)) {
+      const index = match.index ?? 0;
+      if (index > last) parts.push(segment.slice(last, index));
+      const word = match[0];
+      parts.push(
+        <span
+          key={`${key}-${index}`}
+          data-symbol={word}
+          className="rounded-sm [.symbol-mode_&]:cursor-pointer [.symbol-mode_&]:hover:bg-primary/15 [.symbol-mode_&]:hover:underline"
+          onClick={(event) => {
+            if (!(event.metaKey || event.ctrlKey)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onSymbol(word, event.currentTarget);
+          }}
+        >
+          {word}
+        </span>,
+      );
+      last = index + word.length;
+    }
+    if (last < segment.length) parts.push(segment.slice(last));
+    return parts;
+  };
+  return (
+    <>
+      {segments.map((segment, index) => (
+        <span
+          key={index}
+          className={cn(
+            HIGHLIGHT_CLASS[segment.highlight] ?? "",
+            segment.changed && (side === "LEFT" ? "rounded-sm bg-red-500/25" : "rounded-sm bg-emerald-500/25"),
+          )}
+        >
+          {renderTokens(segment.text, `${index}`)}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function StructuralPatch({
+  ticketId,
+  path,
+  comments,
+  composer,
+  onStartComment,
+  onCancelComposer,
+  onSubmitComposer,
+  onDeleteComment,
+  onOpenFile,
+}: {
+  ticketId: string;
+  path: string;
+  comments: DiffComment[];
+  composer: { line: number | null; side: "LEFT" | "RIGHT" } | null;
+  onStartComment: (line: number | null, side: "LEFT" | "RIGHT") => void;
+  onCancelComposer: () => void;
+  onSubmitComposer: (body: string) => Promise<void>;
+  onDeleteComment: (id: string) => void;
+  onOpenFile: (lookup: SymbolLookup, definition: SymbolLookup["definitions"][number]) => void;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [diff, setDiff] = useState<StructuralDiff | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lookup, setLookup] = useState<{ symbol: string; result: SymbolLookup | null; anchor: DOMRect } | null>(null);
+  const [symbolMode, setSymbolMode] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setDiff(null);
+    setError(null);
+    rpc.call("diff_structural", { ticketId, path }).then(
+      (result) => {
+        if (!cancelled) setDiff(result);
+      },
+      (cause: unknown) => {
+        if (!cancelled) setError(errorMessage(cause));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [rpc, ticketId, path]);
+  // ⌘/Ctrl held → identifiers become links, like an IDE.
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (event.key === "Meta" || event.key === "Control") setSymbolMode(true);
+    };
+    const up = (event: KeyboardEvent) => {
+      if (event.key === "Meta" || event.key === "Control") setSymbolMode(false);
+    };
+    const blur = () => setSymbolMode(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", blur);
+    };
+  }, []);
+  const lookupSymbol = (symbol: string, anchor: HTMLElement) => {
+    const rect = anchor.getBoundingClientRect();
+    setLookup({ symbol, result: null, anchor: rect });
+    rpc.call("symbol_definitions", { ticketId, symbol }).then(
+      (result) => setLookup((current) => (current?.symbol === symbol ? { ...current, result } : current)),
+      (cause: unknown) => {
+        toast.error(errorMessage(cause));
+        setLookup(null);
+      },
+    );
+  };
+  if (error !== null) return <p className="p-4 text-sm text-destructive">{error}</p>;
+  if (diff === null) return <p className="p-4 text-sm text-muted-foreground">Running difftastic…</p>;
+  if (!diff.available) {
+    return (
+      <div className="m-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+        <p>Structural diff unavailable.</p>
+        <p className="mt-1 text-xs">{diff.reason}</p>
+        <Button type="button" variant="secondary" className={cn(COMPACT, "mt-2")} onClick={() => pageUi.set({ diffMode: "text" })}>
+          Show text diff
+        </Button>
+      </div>
+    );
+  }
+  const oldLines = diff.oldText.split("\n");
+  const newLines = diff.newText.split("\n");
+  const commentsAt = (side: "LEFT" | "RIGHT", line: number) => comments.filter((comment) => comment.line === line && comment.side === side);
+  const lineCell = (sideLine: StructuralDiff["chunks"][number][number]["lhs"], side: "LEFT" | "RIGHT") => {
+    const lines = side === "LEFT" ? oldLines : newLines;
+    if (sideLine === null) return <td className="w-1/2 bg-muted/20" colSpan={2} />;
+    const text = lines[sideLine.line - 1] ?? "";
+    const changed = sideLine.changes.length > 0;
+    return (
+      <>
+        <td
+          className={cn("group/ln w-10 select-none border-r border-border/60 pr-2 text-right align-top text-muted-foreground/70", changed && (side === "LEFT" ? "bg-red-500/10" : "bg-emerald-500/10"))}
+        >
+          <button
+            type="button"
+            className="relative w-full text-right tabular-nums hover:text-foreground"
+            title="Comment on this line"
+            onClick={() => onStartComment(sideLine.line, side)}
+          >
+            <span className="group-hover/ln:invisible">{sideLine.line}</span>
+            <span className="absolute inset-0 hidden items-center justify-end pr-0.5 text-primary group-hover/ln:flex">+</span>
+          </button>
+        </td>
+        <td className={cn("w-1/2 whitespace-pre-wrap break-words pl-2 pr-3 align-top", changed && (side === "LEFT" ? "bg-red-500/10" : "bg-emerald-500/10"))}>
+          <StructuralLine text={text} changes={sideLine} side={side} onSymbol={lookupSymbol} />
+        </td>
+      </>
+    );
+  };
+  const annotationRow = (side: "LEFT" | "RIGHT", line: number) => {
+    const list = commentsAt(side, line);
+    const composing = composer !== null && composer.line === line && composer.side === side;
+    if (list.length === 0 && !composing) return null;
+    return (
+      <tr key={`${side}-${line}-notes`}>
+        <td colSpan={4} className="px-3 py-1">
+          {composing ? <DiffCommentForm path={path} line={line} side={side} onSubmit={onSubmitComposer} onCancel={onCancelComposer} /> : null}
+          {list.length > 0 ? (
+            <ul className="list-none">
+              {list.map((comment) => (
+                <DiffCommentItem key={comment.id} comment={comment} onDelete={() => onDeleteComment(comment.id)} />
+              ))}
+            </ul>
+          ) : null}
+        </td>
+      </tr>
+    );
+  };
+  return (
+    <div className={cn("relative", symbolMode && "symbol-mode")}>
+      <div className="flex items-center gap-2 px-3 py-1 text-[11px] text-muted-foreground">
+        <span>difftastic · {diff.language ?? "text"} · {diff.status}</span>
+        <span className="ml-auto">⌘-click an identifier to find its definition</span>
+      </div>
+      {diff.chunks.length === 0 ? <p className="px-3 py-2 text-sm text-muted-foreground">No structural changes.</p> : null}
+      <table className="w-full table-fixed border-collapse font-mono text-[12px] leading-5">
+        <tbody>
+          {diff.chunks.map((chunk, chunkIndex) => (
+            <Fragment key={chunkIndex}>
+              {chunkIndex > 0 ? (
+                <tr>
+                  <td colSpan={4} className="border-y border-border/60 bg-muted/30 px-3 py-0.5 text-[11px] text-muted-foreground">
+                    ⋯
+                  </td>
+                </tr>
+              ) : null}
+              {chunk.map((pair, pairIndex) => (
+                <Fragment key={pairIndex}>
+                  <tr className="hover:bg-state-hover/40">
+                    {lineCell(pair.lhs, "LEFT")}
+                    {lineCell(pair.rhs, "RIGHT")}
+                  </tr>
+                  {pair.lhs !== null ? annotationRow("LEFT", pair.lhs.line) : null}
+                  {pair.rhs !== null ? annotationRow("RIGHT", pair.rhs.line) : null}
+                </Fragment>
+              ))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+      {lookup !== null ? (
+        <div
+          role="dialog"
+          aria-label={`Definitions of ${lookup.symbol}`}
+          className="fixed z-50 w-96 max-w-[90vw] rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md"
+          style={{ top: Math.min(lookup.anchor.bottom + 6, window.innerHeight - 260), left: Math.min(lookup.anchor.left, window.innerWidth - 400) }}
+        >
+          <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+            <code className="text-foreground">{lookup.symbol}</code>
+            {lookup.result !== null ? <span>· {lookup.result.searched === "workspace" ? "git grep in workspace" : lookup.result.searched === "github" ? "GitHub code search" : "no searchable checkout"}</span> : <span>· searching…</span>}
+            <button type="button" aria-label="Close" className="ml-auto rounded p-0.5 hover:bg-state-hover" onClick={() => setLookup(null)}>
+              <Icon name="X" className="size-3.5" />
+            </button>
+          </div>
+          {lookup.result !== null && lookup.result.definitions.length === 0 ? <p className="px-1 py-1 text-xs text-muted-foreground">No definition found.</p> : null}
+          <ul className="max-h-56 overflow-y-auto">
+            {lookup.result?.definitions.map((definition, index) => (
+              <li key={`${definition.path}:${definition.line ?? index}`}>
+                <button
+                  type="button"
+                  className="flex w-full flex-col gap-0.5 rounded px-1.5 py-1 text-left hover:bg-state-hover"
+                  onClick={() => {
+                    onOpenFile(lookup.result!, definition);
+                    setLookup(null);
+                  }}
+                >
+                  <span className="truncate font-mono text-xs">
+                    {definition.path}
+                    {definition.line !== null ? `:${definition.line}` : ""}
+                  </span>
+                  {definition.snippet !== "" ? <span className="truncate font-mono text-[11px] text-muted-foreground">{definition.snippet}</span> : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DiffView({ ticketId, onBack, onOpenThread }: { ticketId: string; onBack: () => void; onOpenThread: (threadId: string) => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const { board, refetch } = useBoard();
@@ -1540,7 +1840,22 @@ function DiffView({ ticketId, onBack, onOpenThread }: { ticketId: string; onBack
   const [comments, setComments] = useState<DiffComment[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [composer, setComposer] = useState<{ path: string; line: number | null; side: "LEFT" | "RIGHT" } | null>(null);
-  const { diffView: view, diffReloadNonce } = usePageUi();
+  const { diffView: view, diffMode, diffReloadNonce } = usePageUi();
+  const navigate = useBbNavigate();
+  const openDefinition = (lookup: SymbolLookup, definition: SymbolLookup["definitions"][number]) => {
+    if (lookup.open.kind === "environment") {
+      const accepted = navigate.experimental_openFilePreview({
+        target: { kind: "workspace", environmentId: lookup.open.environmentId, path: definition.path },
+        location: definition.line === null ? null : { kind: "line", line: definition.line, column: null },
+      });
+      if (accepted) return;
+    }
+    if (lookup.open.kind === "github") {
+      window.open(`https://github.com/${lookup.open.repo}/blob/${lookup.open.sha}/${definition.path}${definition.line === null ? "" : `#L${definition.line}`}`, "_blank", "noopener,noreferrer");
+      return;
+    }
+    toast.message("No checkout to open this file in; start the card's thread first.");
+  };
   const lastReload = useRef(diffReloadNonce);
   useEffect(() => {
     if (lastReload.current !== diffReloadNonce) {
@@ -1720,7 +2035,20 @@ function DiffView({ ticketId, onBack, onOpenThread }: { ticketId: string; onBack
                   Comment on file
                 </Button>
               </div>
-              {file.patch !== null ? (
+              {file.patch !== null && diffMode === "structural" ? (
+                <StructuralPatch
+                  key={`structural-${file.path}`}
+                  ticketId={ticketId}
+                  path={file.path}
+                  comments={forPath(file.path)}
+                  composer={composer !== null && composer.path === file.path ? composer : null}
+                  onStartComment={(line, side) => setComposer({ path: file.path, line, side })}
+                  onCancelComposer={() => setComposer(null)}
+                  onSubmitComposer={(body) => (composer === null ? Promise.resolve() : addComment(file.path, composer.line, composer.side, body))}
+                  onDeleteComment={(id) => void deleteComment(id)}
+                  onOpenFile={openDefinition}
+                />
+              ) : file.patch !== null ? (
                 <DiffErrorBoundary key={file.path} fallback={<Diff patch={file.patch} path={file.path} view={view} className="text-xs" />}>
                 <AnnotatedPatch
                   key={file.path}
@@ -1976,6 +2304,7 @@ function threadStatusText(thread: PluginSidebarThread | null | undefined): strin
 function CardView({
   ticket,
   thread,
+  hiddenTags,
   isDragging,
   onOpen,
   onOpenThread,
@@ -1987,6 +2316,8 @@ function CardView({
 }: {
   ticket: Ticket;
   thread: PluginSidebarThread | null | undefined;
+  /** Tags applied by the card's source; every card from that source carries them, so they are noise here. */
+  hiddenTags: ReadonlySet<string>;
   isDragging: boolean;
   onOpen: () => void;
   onOpenThread: () => void;
@@ -1997,8 +2328,12 @@ function CardView({
   onDragEnd: () => void;
 }) {
   const review = ticket.latestReview;
-  const hasMeta = ticket.pr !== null || ticket.jira !== null || ticket.tags.length > 0 || ticket.children.total > 0 || ticket.parentId !== null;
+  const ownTags = ticket.tags.filter((tag) => !hiddenTags.has(tag));
   const iconButton = "flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground";
+  // Only states that need the eye get words; a quiet idle thread is just a dot.
+  const status = ticket.threadId === null ? null : threadStatusText(thread);
+  const loud = status === "working" || status === "needs you" || status === "error" || status === "provisioning";
+  const findings = review?.counts === null || review?.counts === undefined ? null : review.counts.critical + review.counts.important + review.counts.minor;
   return (
     <div
       data-ticket-id={ticket.id}
@@ -2020,33 +2355,50 @@ function CardView({
       )}
     >
       <span className="line-clamp-2 break-words font-medium leading-5">{ticket.title}</span>
-      {hasMeta ? (
+      {ticket.pr !== null || ticket.jira !== null || ownTags.length > 0 || ticket.parentId !== null ? (
         <div className="flex flex-wrap items-center gap-1">
           <PrBadges ticket={ticket} />
           <JiraBadges ticket={ticket} />
-          <TagBadges tags={ticket.tags} />
-          <SubtaskProgress ticket={ticket} />
-          {ticket.parentId !== null ? <Badge tone="outline" title="Subtask of another card">↳ subtask</Badge> : null}
+          <TagBadges tags={ownTags} />
+          {ticket.parentId !== null ? <Badge tone="outline">↳ subtask</Badge> : null}
         </div>
       ) : null}
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span className="inline-flex min-w-0 items-center gap-1.5">
-          {ticket.threadId !== null ? <ThreadStatusDot thread={thread} /> : null}
-          <span className="truncate">{ticket.threadId === null ? "No thread" : threadStatusText(thread)}</span>
-        </span>
-        {review !== null ? (
-          <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
-            <span aria-hidden>·</span>
-            <ReviewBadge ticket={ticket} />
-            {review.status === "completed" ? <ReviewScoreBadges scores={review.scores} compact /> : null}
+      <div className="flex h-6 items-center gap-1.5 text-[11px] text-muted-foreground">
+        {ticket.threadId !== null ? (
+          <span className="inline-flex shrink-0 items-center gap-1.5" title={`Thread ${status ?? ""}`}>
+            <ThreadStatusDot thread={thread} />
+            {loud ? <span>{status}</span> : null}
           </span>
-        ) : null}
-        {ticket.comments !== null && ticket.comments.open > 0 ? (
-          <Badge tone="warning" title={`${ticket.comments.open} PR comment(s) not yet addressed`}>
-            <Icon name="MessageSquare" className="size-3" />
-            {ticket.comments.open}
-          </Badge>
-        ) : null}
+        ) : (
+          <span className="size-2 shrink-0 rounded-full border border-border" title="No thread yet" />
+        )}
+        <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+          {ticket.children.total > 0 ? <SubtaskProgress ticket={ticket} /> : null}
+          {review !== null && review.status !== "completed" ? <ReviewBadge ticket={ticket} /> : null}
+          {review !== null && review.status === "completed" && review.apply !== null && review.apply.completedAt !== null ? (
+            <Badge tone="success" title={`Review fixes ${review.apply.push ? "pushed" : "committed"} as ${shortSha(review.apply.pushedCommit)}`}>applied</Badge>
+          ) : review !== null && review.status === "completed" && findings !== null ? (
+            <Badge
+              tone={review.counts!.critical > 0 ? "danger" : review.counts!.important > 0 ? "warning" : "neutral"}
+              title={`${review.counts!.critical} critical, ${review.counts!.important} important, ${review.counts!.minor} minor · ${review.selectedCount ?? 0} selected to apply`}
+            >
+              <Icon name="kanban-search-check" className="size-3" />
+              {findings}
+            </Badge>
+          ) : null}
+          {ticket.comments !== null && ticket.comments.open > 0 ? (
+            <Badge tone="warning" title={`${ticket.comments.open} PR comment(s) not yet addressed`}>
+              <Icon name="MessageSquare" className="size-3" />
+              {ticket.comments.open}
+            </Badge>
+          ) : null}
+          {ticket.pendingDiffComments > 0 ? (
+            <Badge tone="warning" title={`${ticket.pendingDiffComments} diff comment(s) waiting to be submitted`}>
+              <Icon name="kanban-diff" className="size-3" />
+              {ticket.pendingDiffComments}
+            </Badge>
+          ) : null}
+        </span>
         <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           {ticket.pr !== null ? (
             <button
@@ -2106,6 +2458,7 @@ function ColumnView({
   column,
   tickets,
   threads,
+  hiddenTags,
   draggingId,
   dropTarget,
   onDragStart,
@@ -2121,6 +2474,7 @@ function ColumnView({
   column: Column;
   tickets: Ticket[];
   threads: ReadonlyMap<string, PluginSidebarThread>;
+  hiddenTags: ReadonlySet<string>;
   draggingId: string | null;
   dropTarget: DropTarget | null;
   onDragStart: (ticketId: string, event: DragEvent<HTMLElement>) => void;
@@ -2179,6 +2533,7 @@ function ColumnView({
             <CardView
               ticket={ticket}
               thread={ticket.threadId === null ? null : threads.get(ticket.threadId)}
+              hiddenTags={hiddenTags}
               isDragging={draggingId === ticket.id}
               onOpen={() => onOpen(ticket)}
               onOpenThread={() => {
@@ -2993,7 +3348,8 @@ function SourcesDialog({
         <DialogHeader>
           <DialogTitle>Ticket sources</DialogTitle>
           <DialogDescription>
-            Each source is a search on GitHub or Jira; every result becomes a card with the source's tags. Saving triggers a sync.
+            Each source is a saved search; every result becomes a card carrying the source's tags. Saving runs a sync. The two
+            defaults are ordinary sources you can edit or remove.
           </DialogDescription>
         </DialogHeader>
         {hasJira && jiraSite === null ? (
@@ -3003,84 +3359,107 @@ function SourcesDialog({
         ) : null}
         <ul className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-1">
           {draft.map((source) => (
-            <li key={source.id} className="flex flex-col gap-2 rounded-md border border-border p-3">
+            <li key={source.id} className={cn("flex flex-col gap-3 rounded-md border border-border p-3", !source.enabled && "opacity-60")}>
               <div className="flex items-center gap-2">
-                <Badge tone="accent">{SOURCE_KIND_LABELS[source.kind]}</Badge>
+                <span className="shrink-0">
+                  <Badge tone="accent">{SOURCE_KIND_LABELS[source.kind]}</Badge>
+                </span>
                 <Input
                   value={source.name}
                   aria-label={`Name of source ${source.id}`}
+                  placeholder="Source name"
+                  className="h-8 min-w-0 flex-1 font-medium"
                   onChange={(event) => update(source.id, (entry) => ({ ...entry, name: event.target.value }))}
                 />
-                <code className="w-24 shrink-0 truncate text-xs text-muted-foreground">{source.id}</code>
                 <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
                   <Checkbox
                     checked={source.enabled}
                     onCheckedChange={(checked) => update(source.id, (entry) => ({ ...entry, enabled: checked === true }))}
                     aria-label="Enabled"
                   />
-                  on
+                  Enabled
                 </label>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-7 text-muted-foreground hover:text-destructive"
+                  className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
                   aria-label={`Remove source ${source.name}`}
                   onClick={() => setDraft(draft.filter((entry) => entry.id !== source.id))}
                 >
                   <Icon name="X" className="size-4" />
                 </Button>
               </div>
-              <Input
-                value={sourceQuery(source)}
-                aria-label={`${source.kind === "github-search" ? "GitHub search query" : "JQL"} for ${source.name}`}
-                placeholder={
-                  source.kind === "github-search"
-                    ? "is:pr is:open author:@me archived:false"
-                    : "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
-                }
-                className="font-mono text-xs"
-                onChange={(event) => update(source.id, (entry) => withQuery(entry, event.target.value))}
-              />
-              <div className="flex flex-wrap items-center gap-3">
-                <Input
-                  value={source.tags.join(", ")}
-                  aria-label={`Tags for ${source.name}`}
-                  placeholder="tags, comma separated"
-                  className="max-w-xs"
-                  onChange={(event) =>
-                    update(source.id, (entry) => ({
-                      ...entry,
-                      tags: event.target.value.split(/[\s,]+/u).map((tag) => tag.toLowerCase()).filter(Boolean),
-                    }))
-                  }
-                />
-                <Select
-                  aria-label={`Project for ${source.name} threads`}
-                  value={source.projectId ?? ""}
-                  className="max-w-xs"
-                  onChange={(value) => update(source.id, (entry) => ({ ...entry, projectId: value === "" ? null : value }))}
-                >
-                  <option value="">{source.kind === "github-search" ? "Project: match repo, else fallback" : "Project: fallback setting"}</option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      Project: {project.name}
-                    </option>
-                  ))}
-                </Select>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Checkbox
-                    checked={source.doneWhenGone}
-                    onCheckedChange={(checked) => update(source.id, (entry) => ({ ...entry, doneWhenGone: checked === true }))}
-                    aria-label="Move to Done when the item leaves this source"
+              <dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 text-sm">
+                <dt className="pt-1.5 text-xs text-muted-foreground">{source.kind === "github-search" ? "GitHub query" : "JQL"}</dt>
+                <dd>
+                  <Input
+                    value={sourceQuery(source)}
+                    aria-label={`${source.kind === "github-search" ? "GitHub search query" : "JQL"} for ${source.name}`}
+                    placeholder={
+                      source.kind === "github-search"
+                        ? "is:pr is:open author:@me archived:false"
+                        : "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
+                    }
+                    className="h-8 font-mono text-xs"
+                    onChange={(event) => update(source.id, (entry) => withQuery(entry, event.target.value))}
                   />
-                  Done when it leaves this search
-                </label>
-              </div>
+                </dd>
+                <dt className="pt-1.5 text-xs text-muted-foreground">Tags</dt>
+                <dd className="flex flex-wrap items-center gap-1">
+                  <TagBadges tags={source.tags} onRemove={(tag) => update(source.id, (entry) => ({ ...entry, tags: entry.tags.filter((value) => value !== tag) }))} />
+                  <input
+                    placeholder={source.tags.length === 0 ? "Add tag and press Enter" : "+ tag"}
+                    aria-label={`Add tag to ${source.name}`}
+                    className="h-7 min-w-32 flex-1 rounded border border-dashed border-border bg-transparent px-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== ",") return;
+                      event.preventDefault();
+                      const input = event.target as HTMLInputElement;
+                      const tags = parseQuickAdd(input.value.split(/[\s,]+/u).filter(Boolean).map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).join(" ")).tags;
+                      if (tags.length === 0) return;
+                      update(source.id, (entry) => ({ ...entry, tags: [...new Set([...entry.tags, ...tags])] }));
+                      input.value = "";
+                    }}
+                  />
+                </dd>
+                <dt className="pt-1.5 text-xs text-muted-foreground">Threads run in</dt>
+                <dd>
+                  <Select
+                    aria-label={`Project for ${source.name} threads`}
+                    value={source.projectId ?? ""}
+                    className="h-8"
+                    onChange={(value) => update(source.id, (entry) => ({ ...entry, projectId: value === "" ? null : value }))}
+                  >
+                    <option value="">{source.kind === "github-search" ? "Project matching the repo's remote, else the fallback setting" : "The fallback project setting"}</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </Select>
+                </dd>
+                <dt className="pt-1.5 text-xs text-muted-foreground">When an item leaves this search</dt>
+                <dd>
+                  <Select
+                    aria-label={`What happens when an item leaves ${source.name}`}
+                    value={source.doneWhenGone ? "done" : "keep"}
+                    className="h-8"
+                    onChange={(value) => update(source.id, (entry) => ({ ...entry, doneWhenGone: value === "done" }))}
+                  >
+                    <option value="keep">Keep the card where it is</option>
+                    <option value="done">Move the card to Done</option>
+                  </Select>
+                </dd>
+              </dl>
+              <p className="text-[11px] text-muted-foreground">
+                Source id <code>{source.id}</code> is fixed at creation; cards remember which source made them by this id, and <code>bb kanban sources</code> lists it.
+              </p>
             </li>
           ))}
         </ul>
         <div className="flex items-center gap-2">
-          <Select aria-label="New source type" value={newKind} onChange={(value) => setNewKind(value as SourceKind)} className="max-w-48">
+          <span className="text-xs text-muted-foreground">Add</span>
+          <Select aria-label="New source type" value={newKind} onChange={(value) => setNewKind(value as SourceKind)} className="h-8 max-w-48">
             {(Object.keys(SOURCE_KIND_LABELS) as SourceKind[]).map((kind) => (
               <option key={kind} value={kind}>
                 {SOURCE_KIND_LABELS[kind]}
@@ -3671,6 +4050,7 @@ function BoardPage({ subPath }: { subPath: string }) {
   }, [board, showSubtasks]);
 
   const selected = board?.tickets.find((ticket) => ticket.id === selectedId) ?? null;
+  const sourceTags = useMemo(() => new Set((board?.sources ?? []).flatMap((source) => source.tags)), [board]);
   const appPanel = useAppPanel();
   const showTicket = (ticketId: string) => {
     const opened = appPanel.openFixedTab({ surface: { kind: "current" }, tab: TICKET_TAB, target: { ticketId } });
@@ -3779,6 +4159,7 @@ function BoardPage({ subPath }: { subPath: string }) {
             column={column}
             tickets={ticketsByColumn.get(column.id) ?? []}
             threads={threads}
+            hiddenTags={sourceTags}
             draggingId={draggingId}
             dropTarget={dropTarget}
             onDragStart={(ticketId, event) => {
@@ -3914,7 +4295,22 @@ function BoardHeader({ subPath }: { subPath: string }) {
             <span className="shrink-0">· {ticket.pr !== null ? `${ticket.pr.repo.split("/")[1]}#${ticket.pr.number}` : ticket.id}</span>
           </span>
         ) : null}
-        <div role="tablist" aria-label="Diff layout" className="flex rounded-md border border-border p-0.5">
+        <div role="tablist" aria-label="Diff engine" className="flex rounded-md border border-border p-0.5">
+          {(["text", "structural"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              role="tab"
+              aria-selected={ui.diffMode === mode}
+              title={mode === "structural" ? "Syntax-aware diff via difftastic" : "Line diff"}
+              onClick={() => pageUi.set({ diffMode: mode })}
+              className={cn("rounded px-2 py-0.5 text-xs", ui.diffMode === mode ? "bg-state-active text-foreground" : "text-muted-foreground hover:text-foreground")}
+            >
+              {mode === "text" ? "Text" : "Structural"}
+            </button>
+          ))}
+        </div>
+        <div role="tablist" aria-label="Diff layout" className={cn("flex rounded-md border border-border p-0.5", ui.diffMode === "structural" && "hidden")}>
           {(["unified", "split"] as const).map((mode) => (
             <button
               key={mode}

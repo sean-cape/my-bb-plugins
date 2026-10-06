@@ -4,7 +4,7 @@ import {
   makePluginAgentConfigurationContext,
   makeThreadResponse,
 } from "@get-bb/plugin-sdk/testing";
-import plugin, { adfToText, defaultSelected, githubRepoFromRemote, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CommentApply, type DiffComment, type Dump, type Finding, type PrComment, type Review, type Ticket, type TicketDiff } from "./server";
+import plugin, { adfToText, defaultSelected, githubRepoFromRemote, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CommentApply, type DiffComment, type Dump, type Finding, type PrComment, type Review, type StructuralDiff, type SymbolLookup, type Ticket, type TicketDiff } from "./server";
 
 type Host = ReturnType<typeof createFakePluginHost>;
 
@@ -71,6 +71,8 @@ function stubGithub(options: {
   jiraFail?: boolean;
   files?: unknown[];
   rejectInline?: boolean;
+  contents?: Record<string, string>;
+  codeSearch?: Array<{ path: string; fragment: string }>;
   comments?: {
     issue?: Array<{ id: number; login: string; body: string }>;
     review?: Array<{ id: number; login: string; body: string; path: string; line: number | null; replyTo?: number }>;
@@ -101,6 +103,14 @@ function stubGithub(options: {
       posted.push(body);
       if (options.rejectInline && (body.comments?.length ?? 0) > 0) return new Response("Unprocessable", { status: 422 });
       return json({ id: 900 + posted.length, html_url: `https://github.com/cape-co/cape/pull/7#pullrequestreview-${900 + posted.length}` });
+    }
+    const contents = /\/repos\/([^/]+\/[^/]+)\/contents\/(.+)\?ref=([^&]+)/u.exec(url);
+    if (contents !== null) {
+      const body = options.contents?.[`${decodeURIComponent(contents[2]!)}@${contents[3]}`];
+      return body === undefined ? new Response("not found", { status: 404 }) : new Response(body, { status: 200 });
+    }
+    if (url.includes("/search/code")) {
+      return json({ items: (options.codeSearch ?? []).map((item) => ({ path: item.path, text_matches: [{ fragment: item.fragment }] })) });
     }
     if (/\/pulls\/\d+\/files/u.test(url)) {
       return json(
@@ -152,7 +162,7 @@ function stubGithub(options: {
         html_url: `https://github.com/${match[1]}/pull/${match[2]}`,
         updated_at: "2026-10-05T01:00:00Z",
         user: { login: "octocat" },
-        base: { ref: "main" },
+        base: { ref: "main", sha: "1111111111111111111111111111111111111111" },
         head: { sha: "4c934cd4730c5004c7118a873e102b0b60fcc41f" },
       });
     }
@@ -1361,6 +1371,45 @@ describe("brain dumps", () => {
     const discarded = (await current().harness.behavior.callRpc("dump_discard", { id: dump.id })) as Dump;
     expect(discarded.status).toBe("discarded");
     expect(current().harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(1);
+  });
+});
+
+describe("structural diff and symbols", () => {
+  it("reports a clear reason when difftastic is not installed and still returns both file sides", async () => {
+    vi.stubGlobal(
+      "fetch",
+      stubGithub({
+        authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" } })],
+        contents: { "a.go@1111111111111111111111111111111111111111": "package a\nfunc old() {}\n", "a.go@4c934cd4730c5004c7118a873e102b0b60fcc41f": "package a\nfunc add() {}\n" },
+      }),
+    );
+    await load({ autoStartThreads: false, difftPath: "/definitely/not/difft" });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const card = (await board()).tickets[0]!;
+    const result = (await current().harness.behavior.callRpc("diff_structural", { ticketId: card.id, path: "a.go" })) as StructuralDiff;
+    expect(result.available).toBe(false);
+    expect(result.reason).toContain("brew install difftastic");
+    expect(result.oldText).toContain("func old()");
+    expect(result.newText).toContain("func add()");
+    await expect(current().harness.behavior.callRpc("diff_structural", { ticketId: card.id, path: "nope.go" })).rejects.toThrow(/not in this card's diff/u);
+  });
+
+  it("falls back to GitHub code search for symbol definitions when no local checkout exists", async () => {
+    vi.stubGlobal(
+      "fetch",
+      stubGithub({
+        authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" } })],
+        codeSearch: [{ path: "internal/x/add.go", fragment: "package x\nfunc add(a, b int) int {\n\treturn a + b\n}" }],
+      }),
+    );
+    await load({ autoStartThreads: false });
+    current().harness.sdk.stub("system.config", async () => ({ primaryHostId: "host_1" }));
+    await current().harness.behavior.callRpc("sync_now", null);
+    const card = (await board()).tickets[0]!;
+    const lookup = (await current().harness.behavior.callRpc("symbol_definitions", { ticketId: card.id, symbol: "add" })) as SymbolLookup;
+    expect(lookup.searched).toBe("github");
+    expect(lookup.open).toEqual({ kind: "github", repo: "cape-co/cape", sha: "4c934cd4730c5004c7118a873e102b0b60fcc41f" });
+    expect(lookup.definitions[0]).toMatchObject({ path: "internal/x/add.go", line: null, snippet: "func add(a, b int) int {" });
   });
 });
 

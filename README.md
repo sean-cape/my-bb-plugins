@@ -2,8 +2,11 @@
 
 A kanban board for BB where every card is a thread.
 
-- **Kanban** page in the sidebar: columns, drag-and-drop cards, a live thread
-  status dot on each card. Clicking a card opens it in the page's right-side
+- **Kanban** page in the sidebar: columns, drag-and-drop cards. Each card shows
+  its title, its PR or Jira identity and your own tags (tags applied by a
+  source are hidden on cards), and one quiet status row: a thread dot (words
+  only when it is working, errored, or needs you) plus compact counters for
+  subtasks, review findings, open PR comments, and pending diff comments. Clicking a card opens it in the page's right-side
   Card panel (a dialog on compact viewports) to edit, tag, move, review, start
   or open the thread, or delete. GitHub links open in your system browser.
 - **Sources**: cards are created automatically from searches you configure
@@ -78,6 +81,15 @@ A kanban board for BB where every card is a thread.
   per-file stats, bb's diff renderer (unified or split), and previous/next
   file navigation. PR cards diff the pull request from GitHub; thread-backed
   cards diff their environment against its merge base.
+- **Structural diff**: the changes page has a Text / Structural toggle. Structural
+  runs [difftastic](https://github.com/Wilfred/difftastic) (`brew install
+  difftastic`; path configurable in settings) on both sides of each file and
+  renders its syntax-aware result side by side: only semantically changed
+  spans are tinted, with keyword/string/type colouring from the parser. Line
+  numbers still take comments. Hold ⌘ (Ctrl) and click any identifier to look
+  up its definition: `git grep` in the card's local checkout when one exists
+  (results open in bb's file preview at the line), else GitHub code search
+  (results open on GitHub at the PR head).
 - **Diff comments**: hover a line in the changes view and press the "+" gutter
   button (or click the line number) to comment on that exact line, on either
   side of the diff; "Comment on file" leaves a file-level note. Comments
