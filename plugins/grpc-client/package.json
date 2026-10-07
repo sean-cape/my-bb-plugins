@@ -19,7 +19,9 @@
       "experimental_icons": {
         "brand": "./assets/icon.svg",
         "timer": "./assets/timer.svg",
-        "send": "./assets/send.svg"
+        "send": "./assets/send.svg",
+        "history": "./assets/history.svg",
+        "info": "./assets/info.svg"
       }
     },
     "server": "./server.ts",

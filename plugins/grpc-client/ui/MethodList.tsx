@@ -92,11 +92,11 @@ export function MethodList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-3 pb-2 pt-3">
+      <div className="px-2 pb-1.5 pt-2">
         <div className="relative">
           <Icon name="Search" className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
-            className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-8 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             placeholder={`Search ${total} methods`}
             value={filter}
             spellCheck={false}

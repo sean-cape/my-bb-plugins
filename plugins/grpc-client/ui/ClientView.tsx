@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { EditorOptionsContext, MessageEditor, inputClass } from "./MessageEditor";
 import { MethodBadges, MethodList } from "./MethodList";
 import { exampleMessage, hasUnsafeIntegers, isObject, type Json, type JsonObject } from "./proto-json";
+import { EndpointSwitcher } from "./EndpointSwitcher";
 import { ResponseView } from "./ResponseView";
 
 const STORAGE_PREFIX = "bb-plugin-grpc-client:";
@@ -88,36 +89,6 @@ function useWidth(): [(node: HTMLDivElement | null) => void, number] {
   return [setNode, width];
 }
 
-function Select({
-  label,
-  value,
-  options,
-  onChange,
-  className,
-}: {
-  label: string;
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (value: string) => void;
-  className?: string;
-}) {
-  return (
-    <label className={cn("flex min-w-0 flex-col gap-0.5", className)}>
-      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-      <select
-        className="h-8 min-w-0 truncate rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -278,6 +249,7 @@ function HistoryList({ onOpen }: { onOpen: (entry: HistoryEntry) => void }) {
   if (entries.length === 0) return <p className="p-4 text-sm text-muted-foreground">Calls you make here or with `bb grpc call` appear here.</p>;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+      <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Recent calls</p>
       {entries.map((entry) => (
         <button
           key={entry.id}
@@ -686,8 +658,6 @@ export function ClientView() {
   }
   if (endpoint === null) return <EmptyConfig errors={overview.errors} />;
 
-  const sourceOptions = overview.sources.map((option) => ({ value: option.name, label: `${option.name} · ${option.kind}` }));
-  if (sourceName !== null && !sourceOptions.some((option) => option.value === sourceName)) sourceOptions.push({ value: sourceName, label: `${sourceName} (missing)` });
   const errors = [...overview.errors, ...(overviewError ? [overviewError] : [])];
   const result = results[resultKey] ?? null;
   const loadingServices = current?.status === "loading";
@@ -700,17 +670,32 @@ export function ClientView() {
         overlayList ? "absolute inset-y-0 left-0 z-20 w-80 max-w-[85%] shadow-xl" : "w-80 shrink-0",
       )}
     >
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Tabs
-          value={leftTab}
-          onChange={setLeftTab}
-          options={[
-            { id: "methods", label: "Methods" },
-            { id: "history", label: "History" },
-          ]}
+      <div className="flex items-center gap-1 border-b border-border px-1.5 py-1.5">
+        <EndpointSwitcher
+          overview={overview}
+          endpoint={endpoint}
+          sourceName={sourceName ?? ""}
+          descriptors={serviceData?.state ?? null}
+          loading={loadingServices}
+          onEndpoint={setStoredEndpoint}
+          onSource={(next) => setSourceOverrides({ ...sourceOverrides, [endpoint.name]: next })}
+          onReload={() => servicesKey && loadServices(servicesKey, true)}
         />
+        <button
+          type="button"
+          className={cn(
+            "rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground",
+            leftTab === "history" && "bg-state-active text-foreground",
+          )}
+          aria-label="Call history"
+          aria-pressed={leftTab === "history"}
+          title="Call history"
+          onClick={() => setLeftTab(leftTab === "history" ? "methods" : "history")}
+        >
+          <Icon name="grpc-client/history" className="size-4" />
+        </button>
         {overlayList ? (
-          <button type="button" className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Close method list" onClick={() => setListOpen(false)}>
+          <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground" aria-label="Close method list" onClick={() => setListOpen(false)}>
             <Icon name="X" className="size-4" />
           </button>
         ) : null}
@@ -733,22 +718,6 @@ export function ClientView() {
       ) : (
         <MethodList key={servicesKey ?? ""} services={serviceData.services} selected={method?.fullName ?? null} onSelect={selectMethod} />
       )}
-      {serviceData !== null && leftTab === "methods" ? (
-        <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate" title={serviceData.state.key}>
-            {serviceData.state.fileCount} proto files · {new Date(serviceData.state.loadedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-          </span>
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded px-1.5 py-1 hover:bg-state-hover hover:text-foreground disabled:opacity-50"
-            disabled={loadingServices}
-            onClick={() => servicesKey && loadServices(servicesKey, true)}
-          >
-            <Icon name={loadingServices ? "Spinner" : "Repeat"} className="size-3.5" />
-            Reload
-          </button>
-        </div>
-      ) : null}
     </aside>
   );
 
@@ -841,34 +810,6 @@ export function ClientView() {
 
   return (
     <div ref={rootRef} className="flex h-full min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
-      <div className="flex flex-wrap items-end gap-x-3 gap-y-2 border-b border-border px-4 py-2.5">
-        {overlayList ? (
-          <Button variant="ghost" size="icon" className="size-8" aria-label="Show method list" aria-pressed={listOpen} onClick={() => setListOpen(!listOpen)}>
-            <Icon name="PanelLeft" className="size-4" />
-          </Button>
-        ) : null}
-        <Select
-          label="Endpoint"
-          className="w-44"
-          value={endpoint.name}
-          options={overview.endpoints.map((option) => ({ value: option.name, label: option.protected ? `${option.name} (protected)` : option.name }))}
-          onChange={setStoredEndpoint}
-        />
-        <Select
-          label="Protos"
-          className="w-52"
-          value={sourceName ?? ""}
-          options={sourceOptions}
-          onChange={(next) => setSourceOverrides({ ...sourceOverrides, [endpoint.name]: next })}
-        />
-        <div className="hidden min-w-0 flex-1 flex-col gap-0.5 pb-1 md:flex">
-          <span className="truncate font-mono text-xs text-muted-foreground" title={endpoint.target}>
-            {endpoint.transport === "tls" ? "" : `${endpoint.transport} · `}
-            {endpoint.target}
-          </span>
-          {endpoint.description ? <span className="truncate text-xs text-muted-foreground/80">{endpoint.description}</span> : null}
-        </div>
-      </div>
       {errors.length > 0 ? (
         <div role="alert" className="border-b border-border bg-destructive/5 px-4 py-2 text-xs text-destructive">
           {errors.join(" · ")}
@@ -906,43 +847,56 @@ export function ClientView() {
           </Centered>
         ) : (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex items-start gap-3 border-b border-border px-4 py-3">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs text-muted-foreground" title={method.fullName}>
-                  {method.fullName.slice(0, method.fullName.indexOf("/"))}
-                </p>
-                <div className="flex min-w-0 items-center gap-2">
-                  <h2 className="truncate text-lg font-semibold text-foreground">{method.name}</h2>
-                  <MethodBadges method={method} showAuthName />
-                  {method.deprecated ? <span className="rounded-full bg-amber-500/15 px-1.5 py-px text-[10px] text-amber-800 dark:text-amber-200">deprecated</span> : null}
-                </div>
+            <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+              {overlayList ? (
+                <button
+                  type="button"
+                  className="rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                  aria-label="Show method list"
+                  onClick={() => setListOpen(true)}
+                >
+                  <Icon name="PanelLeft" className="size-4" />
+                </button>
+              ) : null}
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <h2 className="truncate text-base font-semibold text-foreground" title={method.fullName}>
+                  {method.name}
+                </h2>
+                <MethodBadges method={method} showAuthName />
+                {method.deprecated ? <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-px text-[10px] text-amber-800 dark:text-amber-200">deprecated</span> : null}
                 {method.comment ? (
                   <button
                     type="button"
-                    className={cn("mt-0.5 block max-w-3xl text-left text-sm text-muted-foreground", showComment ? "whitespace-pre-line" : "line-clamp-1")}
-                    onClick={() => setShowComment(!showComment)}
+                    className={cn("shrink-0 rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground", showComment && "text-foreground")}
+                    aria-label="Show method description"
                     aria-expanded={showComment}
+                    title={method.comment}
+                    onClick={() => setShowComment(!showComment)}
                   >
-                    {method.comment}
+                    <Icon name="grpc-client/info" className="size-3.5" />
                   </button>
                 ) : null}
               </div>
-              <div className="flex shrink-0 items-center gap-2 pt-3">
-                <button
-                  type="button"
-                  className="flex h-9 items-center gap-1.5 rounded-md border border-input px-3 text-sm text-muted-foreground hover:bg-state-hover hover:text-foreground"
-                  onClick={copyCommand}
-                  title="Copy an equivalent grpcurl command"
-                >
-                  <Icon name="Terminal" className="size-4" />
-                  grpcurl
-                </button>
-                <Button className={cn("h-9 px-4", endpoint.protected && "bg-amber-600 text-white hover:bg-amber-600/90")} disabled={sending} onClick={requestSend}>
-                  <Icon name={sending ? "Spinner" : "grpc-client/send"} className="size-4" />
-                  {sending ? "Sending" : endpoint.protected ? `Send to ${endpoint.name}` : "Send"}
-                </Button>
-              </div>
+              <button
+                type="button"
+                className="rounded-md p-2 text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                aria-label="Copy as grpcurl command"
+                title="Copy as grpcurl command"
+                onClick={copyCommand}
+              >
+                <Icon name="Terminal" className="size-4" />
+              </button>
+              <Button size="sm" className={cn("px-3", endpoint.protected && "bg-amber-600 text-white hover:bg-amber-600/90")} disabled={sending} onClick={requestSend}>
+                <Icon name={sending ? "Spinner" : "grpc-client/send"} className="size-4" />
+                {sending ? "Sending" : endpoint.protected ? `Send to ${endpoint.name}` : "Send"}
+              </Button>
             </div>
+            {showComment && method.comment ? (
+              <p className="whitespace-pre-line border-b border-border px-4 py-2 text-sm text-muted-foreground">
+                <span className="mb-1 block font-mono text-xs">{method.fullName}</span>
+                {method.comment}
+              </p>
+            ) : null}
             <SplitPane vertical={!sideBySide} first={requestPane} second={<ResponseView result={result} sending={sending} />} />
           </div>
         )}
