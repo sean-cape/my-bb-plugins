@@ -1,0 +1,134 @@
+/* The block cursor replaces the native caret outside insert mode. */
+.bb-vim-normal {
+  caret-color: transparent !important;
+}
+
+/* CodeMirror draws its own caret layer, which the block cursor replaces. */
+.cm-editor:has(.bb-vim-normal) .cm-cursorLayer {
+  display: none !important;
+}
+
+.bb-vim-cursor-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483000;
+}
+
+.bb-vim-cursor {
+  position: fixed;
+  background: #fff;
+  mix-blend-mode: difference;
+  border-radius: 1px;
+}
+
+.bb-vim-bar {
+  position: fixed;
+  z-index: 2147483001;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-foreground, CanvasText) 10%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-foreground, CanvasText) 5%, var(--color-card, Canvas));
+  color: var(--color-foreground, CanvasText);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 16px;
+  pointer-events: none;
+  animation: bb-vim-bar-in 90ms ease-out;
+}
+
+@keyframes bb-vim-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+.bb-vim-bar[hidden] {
+  display: none;
+}
+
+.bb-vim-indicator {
+  position: fixed;
+  z-index: 2147483001;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--color-muted-foreground, GrayText);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+  pointer-events: none;
+  user-select: none;
+}
+
+.bb-vim-indicator[hidden],
+.bb-vim-indicator [hidden] {
+  display: none;
+}
+
+.bb-vim-keys {
+  letter-spacing: normal;
+}
+
+.bb-vim-panel {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  pointer-events: auto;
+}
+
+.bb-vim-dialog,
+.bb-vim-notification {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
+.bb-vim-dialog > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.bb-vim-prompt {
+  /* The prefix ("/", "?", ":") is the span's own text before the input. */
+  align-items: center;
+  gap: 2px;
+  color: var(--color-muted-foreground, GrayText);
+  font-family: inherit !important;
+  white-space: pre;
+}
+
+.bb-vim-prompt input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  padding: 0;
+  background: transparent;
+  color: var(--color-foreground, CanvasText);
+  caret-color: var(--color-foreground, CanvasText);
+  font: inherit;
+}
+
+.bb-vim-prompt-hint {
+  display: none;
+}
+
+/* vim-core colors every message red inline, including plain status lines. */
+.bb-vim-notification,
+.bb-vim-notification .cm-vim-message {
+  overflow: hidden;
+  color: var(--color-muted-foreground, GrayText) !important;
+  text-overflow: ellipsis;
+  white-space: nowrap !important;
+  cursor: default;
+}
