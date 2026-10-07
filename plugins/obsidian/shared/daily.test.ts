@@ -50,7 +50,7 @@ describe("openTasks", () => {
 
 describe("formatInboxEntry", () => {
   it("indents continuation lines and appends the source", () => {
-    assert.equal(formatInboxEntry("line one\nline two", "14:02", "bb: Fix HSS"), "- 14:02 line one\n  line two — _via bb: Fix HSS_");
+    assert.equal(formatInboxEntry("line one\nline two", "14:02", "bb: Fix login"), "- 14:02 line one\n  line two — _via bb: Fix login_");
   });
 });
 

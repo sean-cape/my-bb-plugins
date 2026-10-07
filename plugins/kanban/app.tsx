@@ -2750,7 +2750,7 @@ interface FileTreeDir {
   deletions: number;
 }
 
-/** Nest files by directory, then fold single-child directory chains into one row (`internal/api/edgemultiplexer`). */
+/** Nest files by directory, then fold single-child directory chains into one row (`src/server/handlers`). */
 function buildFileTree(files: DiffFile[]): FileTreeDir {
   const root: FileTreeDir = { name: "", path: "", dirs: [], files: [], additions: 0, deletions: 0 };
   for (const file of files) {
@@ -4463,7 +4463,7 @@ function NewTicketDialog({
                 value={dump}
                 rows={9}
                 onChange={(event) => setDump(event.target.value)}
-                placeholder="e.g. We need to move the HSS provisioning to the new sim service, the frontends still show deactivated lines, also someone should look at why the kafka consumer drops…"
+                placeholder="e.g. We need to move billing to the new payments service, the dashboard still shows stale invoices, also someone should look at why the email worker drops…"
                 aria-label="Brain dump"
                 className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 pr-12 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               />

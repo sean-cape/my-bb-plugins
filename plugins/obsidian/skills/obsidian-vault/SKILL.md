@@ -20,7 +20,7 @@ The Obsidian Vault plugin connects bb to one Obsidian vault. Run `bb obsidian pa
 ## Logging
 
 - Log when the user asks you to note, log, or remember something for the daily note, and when they asked to have finished work recorded.
-- Write one self-contained entry the user could act on tomorrow: what happened, the outcome, and identifiers such as `HSS-123`, PR numbers, hosts, and commands.
+- Write one self-contained entry the user could act on tomorrow: what happened, the outcome, and identifiers such as `PROJ-123`, PR numbers, hosts, and commands.
 - Keep entries short, a few lines at most. Put long material in a wiki note and log a `[[link]]` to it.
 - Don't log routine turns. The plugin already records which threads ran each day.
 - Use `bb obsidian log`, not direct file edits, while the user may have the note open. It merges safely with their edits.
@@ -28,7 +28,7 @@ The Obsidian Vault plugin connects bb to one Obsidian vault. Run `bb obsidian pa
 ## Vault conventions
 
 - `DailyNotes/YYYY-MM-DD.md`: one note per day. Sections: Inbox (raw captures), Plan, Meetings, Work Log, Carry to tomorrow. `/daily-note log` and `/daily-note wrap` file the Inbox into the other sections.
-- `Tickets/HSS-123.md`: one note per Jira ticket, with `jira`, `status`, `summary`, and `url` in its frontmatter. Daily notes link tickets as `[[HSS-123]]`.
+- `Tickets/PROJ-123.md`: one note per Jira ticket, with `jira`, `status`, `summary`, and `url` in its frontmatter. Daily notes link tickets as `[[PROJ-123]]`.
 - `Wiki/`: durable reference material such as setup guides and runbooks.
 - `Meetings/YYYY-MM-DD Title.md`: meeting notes, linked from that day's daily note.
 - Use `[[wikilinks]]` for links between notes, and valid Obsidian markdown.

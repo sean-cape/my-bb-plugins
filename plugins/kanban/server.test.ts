@@ -87,7 +87,7 @@ function stubGithub(options: {
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url.startsWith("https://cape.atlassian.net/")) {
+    if (url.startsWith("https://acme.atlassian.net/")) {
       if (options.jiraFail) return new Response("boom", { status: 500 });
       if (url.includes("/rest/api/3/search/jql")) {
         return json({ issues: (options.jira ?? []).map(jiraIssueJson), isLast: true });
@@ -106,7 +106,7 @@ function stubGithub(options: {
       const body = JSON.parse(String(init?.body ?? (await (input as Request).text()))) as { comments?: unknown[]; body?: string };
       posted.push(body);
       if (options.rejectInline && (body.comments?.length ?? 0) > 0) return new Response("Unprocessable", { status: 422 });
-      return json({ id: 900 + posted.length, html_url: `https://github.com/cape-co/cape/pull/7#pullrequestreview-${900 + posted.length}` });
+      return json({ id: 900 + posted.length, html_url: `https://github.com/acme-co/widgets/pull/7#pullrequestreview-${900 + posted.length}` });
     }
     const contents = /\/repos\/([^/]+\/[^/]+)\/contents\/(.+)\?ref=([^&]+)/u.exec(url);
     if (contents !== null) {
@@ -167,7 +167,7 @@ function stubGithub(options: {
         updated_at: "2026-10-05T01:00:00Z",
         user: { login: "octocat" },
         base: { ref: "main", sha: "1111111111111111111111111111111111111111" },
-        head: { sha: "4c934cd4730c5004c7118a873e102b0b60fcc41f" },
+        head: { sha: "9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c" },
       });
     }
     return new Response("unexpected", { status: 500 });
@@ -189,17 +189,17 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
       projects: {
         list: async () => [
           {
-            id: "proj_cape",
-            name: "cape",
+            id: "proj_acme",
+            name: "widgets",
             kind: "standard",
-            gitRemoteUrl: "git@github.com:cape-co/cape.git",
+            gitRemoteUrl: "git@github.com:acme-co/widgets.git",
             sources: [
               {
                 id: "src_1",
-                projectId: "proj_cape",
+                projectId: "proj_acme",
                 hostId: "host_1",
                 isDefault: true,
-                path: "/Users/me/cape",
+                path: "/Users/me/widgets",
                 type: "local_path",
                 createdAt: 0,
                 updatedAt: 0,
@@ -216,7 +216,7 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
           return makeThreadResponse({ id: `thr_${spawned.length}`, projectId: String(args.projectId) });
         },
         get: async ({ threadId }: { threadId: string }) =>
-          makeThreadResponse({ id: threadId, projectId: "proj_cape", environmentId: `env_${threadId}` }),
+          makeThreadResponse({ id: threadId, projectId: "proj_acme", environmentId: `env_${threadId}` }),
         updatePluginMetadata: async () => ({}),
       },
     },
@@ -245,9 +245,9 @@ afterEach(async () => {
 
 describe("githubRepoFromRemote", () => {
   it("normalizes ssh, https, and .git forms", () => {
-    expect(githubRepoFromRemote("git@github.com:Cape-Co/Cape.git")).toBe("cape-co/cape");
-    expect(githubRepoFromRemote("https://github.com/cape-co/cape")).toBe("cape-co/cape");
-    expect(githubRepoFromRemote("https://github.com/cape-co/cape.git/")).toBe("cape-co/cape");
+    expect(githubRepoFromRemote("git@github.com:Acme-Co/Widgets.git")).toBe("acme-co/widgets");
+    expect(githubRepoFromRemote("https://github.com/acme-co/widgets")).toBe("acme-co/widgets");
+    expect(githubRepoFromRemote("https://github.com/acme-co/widgets.git/")).toBe("acme-co/widgets");
     expect(githubRepoFromRemote("https://gitlab.com/a/b")).toBeNull();
     expect(githubRepoFromRemote(null)).toBeNull();
   });
@@ -276,12 +276,12 @@ describe("ad hoc tickets", () => {
     const ticket = (await current().harness.behavior.callRpc("ticket_create", {
       title: "Ship it",
       description: "Do the thing",
-      projectId: "proj_cape",
+      projectId: "proj_acme",
       startThread: true,
     })) as Ticket;
     expect(ticket.threadId).toBe("thr_1");
     expect(spawned[0]).toMatchObject({
-      projectId: "proj_cape",
+      projectId: "proj_acme",
       environment: { type: "project-default" },
       title: "Ship it",
       pluginMetadata: { ticketId: ticket.id },
@@ -348,11 +348,11 @@ describe("GitHub sync", () => {
   it("creates PR cards in To Do and spawns threads for matched projects", async () => {
     const fetchMock = stubGithub({
       authored: [
-        searchItem("cape-co/cape", 1, { title: "Add thing", user: { login: "sean" } }),
-        searchItem("cape-co/cape", 2, { title: "WIP", draft: true, user: { login: "sean" } }),
+        searchItem("acme-co/widgets", 1, { title: "Add thing", user: { login: "sean" } }),
+        searchItem("acme-co/widgets", 2, { title: "WIP", draft: true, user: { login: "sean" } }),
         searchItem("other/repo", 3, { title: "Elsewhere", user: { login: "sean" } }),
       ],
-      requested: [searchItem("cape-co/cape", 4, { title: "Please review", user: { login: "alice" } })],
+      requested: [searchItem("acme-co/widgets", 4, { title: "Please review", user: { login: "alice" } })],
     });
     vi.stubGlobal("fetch", fetchMock);
     await load();
@@ -362,7 +362,7 @@ describe("GitHub sync", () => {
     const byNumber = new Map(tickets.map((ticket) => [ticket.pr?.number, ticket]));
     expect(sync.login).toBe("sean");
     expect(sync.lastError).toBeNull();
-    expect(byNumber.get(1)).toMatchObject({ columnId: "todo", kind: "pr", projectId: "proj_cape" });
+    expect(byNumber.get(1)).toMatchObject({ columnId: "todo", kind: "pr", projectId: "proj_acme" });
     expect(byNumber.get(2)).toMatchObject({ columnId: "todo", pr: { state: "draft" } });
     expect(byNumber.get(4)).toMatchObject({ columnId: "todo", tags: ["pr-reviews"], sourceId: "pr-reviews", pr: { role: "other", author: "alice" } });
     expect(byNumber.get(1)).toMatchObject({ tags: ["my-prs"], sourceId: "my-prs" });
@@ -371,10 +371,10 @@ describe("GitHub sync", () => {
 
     expect(spawned).toHaveLength(3);
     const titles = spawned.map((args) => String(args.title));
-    expect(titles).toContain("cape#1: Add thing");
-    const reviewPrompt = spawned.find((args) => String(args.title).startsWith("cape#4"));
-    expect(String(reviewPrompt?.prompt)).toContain("gh pr diff 4 --repo cape-co/cape");
-    const ownPrompt = spawned.find((args) => String(args.title).startsWith("cape#1"));
+    expect(titles).toContain("widgets#1: Add thing");
+    const reviewPrompt = spawned.find((args) => String(args.title).startsWith("widgets#4"));
+    expect(String(reviewPrompt?.prompt)).toContain("gh pr diff 4 --repo acme-co/widgets");
+    const ownPrompt = spawned.find((args) => String(args.title).startsWith("widgets#1"));
     expect(String(ownPrompt?.prompt)).toContain("tracks your pull request");
     expect(String(reviewPrompt?.prompt)).toContain("Do not post comments");
   });
@@ -383,8 +383,8 @@ describe("GitHub sync", () => {
     vi.stubGlobal(
       "fetch",
       stubGithub({
-        authored: [searchItem("cape-co/cape", 1), searchItem("cape-co/cape", 2)],
-        requested: [searchItem("cape-co/cape", 4)],
+        authored: [searchItem("acme-co/widgets", 1), searchItem("acme-co/widgets", 2)],
+        requested: [searchItem("acme-co/widgets", 4)],
       }),
     );
     await load({ autoStartThreads: false });
@@ -400,9 +400,9 @@ describe("GitHub sync", () => {
         authored: [],
         requested: [],
         pulls: {
-          "cape-co/cape#1": { state: "closed", merged: true },
-          "cape-co/cape#2": { state: "closed", merged: false },
-          "cape-co/cape#4": { state: "open", merged: false },
+          "acme-co/widgets#1": { state: "closed", merged: true },
+          "acme-co/widgets#2": { state: "closed", merged: false },
+          "acme-co/widgets#4": { state: "open", merged: false },
         },
       }),
     );
@@ -414,7 +414,7 @@ describe("GitHub sync", () => {
   });
 
   it("does not override a manual column for a PR that is still open", async () => {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 1)] }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 1)] }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sync_now", null);
     const [ticket] = (await board()).tickets;
@@ -443,10 +443,10 @@ describe("thread lifecycle", () => {
     await load();
     const ticket = (await current().harness.behavior.callRpc("ticket_create", {
       title: "A",
-      projectId: "proj_cape",
+      projectId: "proj_acme",
       startThread: true,
     })) as Ticket;
-    const thread = makeThreadResponse({ id: ticket.threadId!, projectId: "proj_cape" });
+    const thread = makeThreadResponse({ id: ticket.threadId!, projectId: "proj_acme" });
 
     await current().harness.behavior.emitThreadEvent("thread.active", { thread });
     expect((await board()).tickets[0]!.columnId).toBe("in-progress");
@@ -475,7 +475,7 @@ describe("thread lifecycle", () => {
 
 describe("PR review", () => {
   it("spawns a review thread in a fresh worktree under the card's thread", async () => {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 7, { title: "Refactor" })] }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { title: "Refactor" })] }));
     await load();
     await current().harness.behavior.callRpc("sync_now", null);
     const [card] = (await board()).tickets;
@@ -484,14 +484,14 @@ describe("PR review", () => {
     const reviewed = (await current().harness.behavior.callRpc("ticket_review_pr", { id: card!.id })) as Ticket;
     expect(reviewed.reviewThreadId).toBe("thr_2");
     expect(spawned[1]).toMatchObject({
-      projectId: "proj_cape",
+      projectId: "proj_acme",
       environment: {
         type: "host",
         hostId: "host_1",
         workspace: { type: "managed-worktree", baseBranch: { kind: "default" } },
       },
       parentThreadId: "thr_1",
-      title: "Review cape#7: Refactor",
+      title: "Review widgets#7: Refactor",
       pluginMetadata: { ticketId: card!.id, role: "review" },
     });
     const prompt = String(spawned[1]!.prompt);
@@ -510,7 +510,7 @@ describe("PR review", () => {
     expect(configured?.instructions).not.toContain("bb kanban move");
 
     await current().harness.behavior.emitThreadEvent("thread.deleted", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
     });
     // The persisted review (and its thread reference) survives deletion of the thread.
     expect((await board()).tickets[0]!.latestReview).toMatchObject({ threadId: "thr_2" });
@@ -525,7 +525,7 @@ describe("PR review", () => {
     await current().harness.behavior.callRpc("sync_now", null);
     const pr = (await board()).tickets.find((ticket) => ticket.pr !== null)!;
     await expect(current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id })).rejects.toThrow(/No project matches/u);
-    const reviewed = (await current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id, projectId: "proj_cape" })) as Ticket;
+    const reviewed = (await current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id, projectId: "proj_acme" })) as Ticket;
     expect(reviewed.reviewThreadId).toBe("thr_1");
   });
 
@@ -551,7 +551,7 @@ describe("PR review", () => {
   });
 
   it("starts a review from the CLI using the thread's card", async () => {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 7)] }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7)] }));
     await load();
     await current().harness.behavior.callRpc("sync_now", null);
     const result = await current().harness.behavior.runCli(["review"], { threadId: "thr_1", signal: new AbortController().signal });
@@ -607,7 +607,7 @@ describe("persisted reviews", () => {
   const ctx = (threadId: string) => ({ threadId, signal: new AbortController().signal });
 
   async function reviewedCard(): Promise<Ticket> {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 7, { title: "Refactor" })] }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { title: "Refactor" })] }));
     await load();
     await current().harness.behavior.callRpc("sync_now", null);
     const [card] = (await board()).tickets;
@@ -625,7 +625,7 @@ describe("persisted reviews", () => {
 
     const findings = "## Review Findings\n\n### Important\n- x.go:1 Bug\n\nReviewed commit: " + sha;
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: findings,
     });
     const { reviews } = (await current().harness.behavior.callRpc("review_list", { ticketId: card.id })) as { reviews: Review[] };
@@ -647,7 +647,7 @@ describe("persisted reviews", () => {
 
     // A second idle (for example after a follow-up question) does not overwrite the completed review.
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: "Sure, here is more detail.",
     });
     const again = (await current().harness.behavior.callRpc("review_list", { ticketId: card.id })) as { reviews: Review[] };
@@ -674,7 +674,7 @@ describe("persisted reviews", () => {
       "```",
     ].join("\n");
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: body,
     });
     const latest = (await board()).tickets[0]!.latestReview!;
@@ -690,7 +690,7 @@ describe("persisted reviews", () => {
   it("marks a review failed when the thread ends without a commit or a report", async () => {
     const card = await reviewedCard();
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: "I couldn't complete the setup.\n\nReviewed commit: none",
     });
     expect((await board()).tickets[0]!.latestReview).toMatchObject({ status: "failed", commitSha: null, hasBody: true });
@@ -703,7 +703,7 @@ describe("persisted reviews", () => {
   it("falls back to the 'Reviewed commit' line when review-record was skipped", async () => {
     const card = await reviewedCard();
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: `## Review Findings\n\nnone\n\nReviewed commit: ${sha}`,
     });
     const { reviews } = (await current().harness.behavior.callRpc("review_list", { ticketId: card.id })) as { reviews: Review[] };
@@ -714,12 +714,12 @@ describe("persisted reviews", () => {
     const card = await reviewedCard();
     await current().harness.behavior.runCli(["review-record", "--commit", sha], ctx("thr_2"));
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: "findings",
     });
 
     await current().harness.behavior.callRpc("ticket_review_pr", { id: card.id });
-    expect(String(spawned[2]!.title)).toContain("Re-review cape#7");
+    expect(String(spawned[2]!.title)).toContain("Re-review widgets#7");
     expect(String(spawned[2]!.prompt)).toContain(`${sha}..HEAD`);
     expect(String(spawned[2]!.prompt)).toContain(`previous review covered commit ${sha}`);
     const { reviews } = (await current().harness.behavior.callRpc("review_list", { ticketId: card.id })) as { reviews: Review[] };
@@ -736,14 +736,14 @@ describe("persisted reviews", () => {
 
     await current().harness.behavior.runCli(["review-record", "--commit", sha, "--head", "feature/refactor"], ctx("thr_2"));
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: "## Review Findings\n- a.go:1 fix me",
     });
 
     const applied = (await current().harness.behavior.callRpc("review_apply", { ticketId: card.id, autoApprove: true })) as Ticket;
     expect(applied.latestReview?.apply).toMatchObject({ threadId: "thr_3", completedAt: null });
     expect(spawned[2]).toMatchObject({
-      projectId: "proj_cape",
+      projectId: "proj_acme",
       environment: { type: "reuse", environmentId: "env_thr_2" },
       parentThreadId: "thr_1",
       pluginMetadata: { ticketId: card.id, role: "apply" },
@@ -786,7 +786,7 @@ describe("persisted reviews", () => {
       ],
     };
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: `## Review Findings\n...\n\n\`\`\`json review-findings\n${JSON.stringify(report)}\n\`\`\``,
     });
     let { reviews } = (await current().harness.behavior.callRpc("review_list", { ticketId: card.id })) as { reviews: Review[] };
@@ -824,7 +824,7 @@ describe("persisted reviews", () => {
   it("asks for confirmation by default and deletes reviews with the card", async () => {
     const card = await reviewedCard();
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }),
       lastAssistantText: `findings\nReviewed commit: ${sha}`,
     });
     await current().harness.behavior.callRpc("review_apply", { ticketId: card.id });
@@ -858,8 +858,8 @@ describe("tags and sources", () => {
     vi.stubGlobal(
       "fetch",
       stubGithub({
-        authored: [searchItem("cape-co/cape", 1, { user: { login: "sean" } })],
-        requested: [searchItem("cape-co/cape", 1, { user: { login: "sean" } })],
+        authored: [searchItem("acme-co/widgets", 1, { user: { login: "sean" } })],
+        requested: [searchItem("acme-co/widgets", 1, { user: { login: "sean" } })],
       }),
     );
     await load({ autoStartThreads: false });
@@ -876,7 +876,7 @@ describe("tags and sources", () => {
   });
 
   it("uses user-defined sources: new tags are added to existing cards and doneWhenGone is per source", async () => {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 1, { user: { login: "sean" } })] }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 1, { user: { login: "sean" } })] }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sync_now", null);
 
@@ -897,7 +897,7 @@ describe("tags and sources", () => {
     expect((await board()).tickets[0]).toMatchObject({ tags: ["mine", "my-prs", "work"], sourceId: "my-prs" });
 
     // The PR leaves the only source but stays open: the original source (my-prs) is gone, so it is not moved.
-    vi.stubGlobal("fetch", stubGithub({ authored: [], pulls: { "cape-co/cape#1": { state: "open", merged: false } } }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [], pulls: { "acme-co/widgets#1": { state: "open", merged: false } } }));
     await current().harness.behavior.callRpc("sync_now", null);
     expect((await board()).tickets[0]!.columnId).toBe("todo");
 
@@ -913,7 +913,7 @@ describe("tags and sources", () => {
 });
 
 describe("Jira sources", () => {
-  const jiraSettings = { jiraSiteUrl: "https://cape.atlassian.net/", jiraEmail: "sean@cape.co", jiraApiToken: "jt" };
+  const jiraSettings = { jiraSiteUrl: "https://acme.atlassian.net/", jiraEmail: "dev@acme.example", jiraApiToken: "jt" };
   const jiraSource = {
     id: "my-jira",
     name: "My Jira",
@@ -922,7 +922,7 @@ describe("Jira sources", () => {
     tags: ["jira"],
     doneWhenGone: false,
     enabled: true,
-    projectId: "proj_cape",
+    projectId: "proj_acme",
   };
 
   it("flattens Atlassian Document Format to text", () => {
@@ -942,8 +942,8 @@ describe("Jira sources", () => {
       "fetch",
       stubGithub({
         jira: [
-          { key: "CAPE-1", summary: "Fix HSS", category: "new", description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Details here" }] }] } },
-          { key: "CAPE-2", summary: "In flight", category: "indeterminate", status: "In Progress", priority: "High" },
+          { key: "ACME-1", summary: "Fix login", category: "new", description: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Details here" }] }] } },
+          { key: "ACME-2", summary: "In flight", category: "indeterminate", status: "In Progress", priority: "High" },
         ],
       }),
     );
@@ -952,54 +952,54 @@ describe("Jira sources", () => {
     // sources_set kicks a sync asynchronously; call explicitly for a deterministic assertion.
     await current().harness.behavior.callRpc("sync_now", null);
     const { tickets, sync } = await board();
-    expect(sync.jiraSite).toBe("https://cape.atlassian.net");
+    expect(sync.jiraSite).toBe("https://acme.atlassian.net");
     expect(sync.lastError).toBeNull();
     const byKey = new Map(tickets.map((ticket) => [ticket.jira?.key, ticket]));
-    expect(byKey.get("CAPE-1")).toMatchObject({
+    expect(byKey.get("ACME-1")).toMatchObject({
       kind: "jira",
       columnId: "todo",
       tags: ["jira"],
       sourceId: "my-jira",
-      projectId: "proj_cape",
+      projectId: "proj_acme",
       description: "Details here",
-      jira: { url: "https://cape.atlassian.net/browse/CAPE-1", status: "To Do", statusCategory: "new", issueType: "Task", assignee: "Sean" },
+      jira: { url: "https://acme.atlassian.net/browse/ACME-1", status: "To Do", statusCategory: "new", issueType: "Task", assignee: "Sean" },
     });
-    expect(byKey.get("CAPE-2")).toMatchObject({ columnId: "in-progress", jira: { priority: "High", statusCategory: "indeterminate" } });
-    const spawnedJira = spawned.find((args) => String(args.title).startsWith("CAPE-1"));
-    expect(String(spawnedJira?.prompt)).toContain("Jira issue CAPE-1");
+    expect(byKey.get("ACME-2")).toMatchObject({ columnId: "in-progress", jira: { priority: "High", statusCategory: "indeterminate" } });
+    const spawnedJira = spawned.find((args) => String(args.title).startsWith("ACME-1"));
+    expect(String(spawnedJira?.prompt)).toContain("Jira issue ACME-1");
     expect(String(spawnedJira?.prompt)).toContain("Details here");
 
-    // CAPE-2 leaves the search and is now Done in Jira; CAPE-1 is done while still in the search.
+    // ACME-2 leaves the search and is now Done in Jira; ACME-1 is done while still in the search.
     vi.stubGlobal(
       "fetch",
       stubGithub({
-        jira: [{ key: "CAPE-1", summary: "Fix HSS", category: "done", status: "Done" }],
-        jiraIssues: { "CAPE-2": { key: "CAPE-2", summary: "In flight", category: "done", status: "Done" } },
+        jira: [{ key: "ACME-1", summary: "Fix login", category: "done", status: "Done" }],
+        jiraIssues: { "ACME-2": { key: "ACME-2", summary: "In flight", category: "done", status: "Done" } },
       }),
     );
     await current().harness.behavior.callRpc("sync_now", null);
     const after = new Map((await board()).tickets.map((ticket) => [ticket.jira?.key, ticket]));
-    expect(after.get("CAPE-1")).toMatchObject({ columnId: "done", jira: { status: "Done" } });
-    expect(after.get("CAPE-2")).toMatchObject({ columnId: "done", jira: { statusCategory: "done" } });
+    expect(after.get("ACME-1")).toMatchObject({ columnId: "done", jira: { status: "Done" } });
+    expect(after.get("ACME-2")).toMatchObject({ columnId: "done", jira: { statusCategory: "done" } });
     const list = await current().harness.behavior.runCli(["list", "--tag", "jira"]);
-    expect(list.stdout).toContain("CAPE-1 (Done)");
+    expect(list.stdout).toContain("ACME-1 (Done)");
     const cli = await current().harness.behavior.runCli(["sources"]);
     expect(cli.stdout).toContain("[jira-jql] assignee = currentUser()");
   });
 
   it("reports missing Jira settings and per-source failures without blocking GitHub sources", async () => {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 1, { user: { login: "sean" } })] }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 1, { user: { login: "sean" } })] }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sources_set", { sources: [...((await board()).sources), jiraSource] });
     const status = (await current().harness.behavior.callRpc("sync_now", null)) as Board["sync"];
     expect(status.lastError).toContain("Jira sources need");
     expect((await board()).tickets.some((ticket) => ticket.kind === "pr")).toBe(true);
 
-    vi.stubGlobal("fetch", stubGithub({ authored: [], jiraFail: true, pulls: { "cape-co/cape#1": { state: "open", merged: false } } }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [], jiraFail: true, pulls: { "acme-co/widgets#1": { state: "open", merged: false } } }));
     await current().harness.behavior.setSettings(jiraSettings);
     const failed = (await current().harness.behavior.callRpc("sync_now", null)) as Board["sync"];
     expect(failed.lastError).toContain("My Jira: Jira 500");
-    expect(failed.jiraSite).toBe("https://cape.atlassian.net");
+    expect(failed.jiraSite).toBe("https://acme.atlassian.net");
   });
 
   it("rejects a source whose fields do not match its kind", async () => {
@@ -1031,7 +1031,7 @@ describe("PR comments", () => {
   const ctx = (threadId: string) => ({ threadId, signal: new AbortController().signal });
 
   async function syncedCard(extra: Record<string, string | number | boolean> = {}): Promise<Ticket> {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 7, { title: "Refactor", user: { login: "sean" } })], comments }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { title: "Refactor", user: { login: "sean" } })], comments }));
     await load({ autoStartThreads: false, ...extra });
     await current().harness.behavior.callRpc("sync_now", null);
     return (await board()).tickets[0]!;
@@ -1051,12 +1051,12 @@ describe("PR comments", () => {
     expect(byId.has("review:102")).toBe(false);
 
     // Unchanged PR: comments are not refetched; a bumped updated_at refetches and drops deleted ones.
-    const fetchMock = vi.fn(stubGithub({ authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" } })], comments: { issue: [] } }));
+    const fetchMock = vi.fn(stubGithub({ authored: [searchItem("acme-co/widgets", 7, { user: { login: "sean" } })], comments: { issue: [] } }));
     vi.stubGlobal("fetch", fetchMock);
     await current().harness.behavior.callRpc("sync_now", null);
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/issues/7/comments"))).toBe(false);
     expect((await board()).tickets[0]!.comments?.total).toBe(5);
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" }, updated_at: "2026-10-06T00:00:00Z" })], comments: { issue: [comments.issue[0]!] } }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { user: { login: "sean" }, updated_at: "2026-10-06T00:00:00Z" })], comments: { issue: [comments.issue[0]!] } }));
     await current().harness.behavior.callRpc("sync_now", null);
     expect((await board()).tickets[0]!.comments).toEqual({ total: 1, open: 1, selected: 1 });
 
@@ -1146,7 +1146,7 @@ describe("diff view and diff comments", () => {
   });
 
   it("serves the PR diff from GitHub and leaves comments that submit to GitHub and an address thread", async () => {
-    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("cape-co/cape", 7, { title: "Refactor", user: { login: "alice" } })] }));
+    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 7, { title: "Refactor", user: { login: "alice" } })] }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sync_now", null);
     const card = (await board()).tickets[0]!;
@@ -1170,7 +1170,7 @@ describe("diff view and diff comments", () => {
     };
     expect(result.posted).toBe(2);
     expect(posted).toHaveLength(1);
-    expect(posted[0]).toMatchObject({ event: "COMMENT", commit_id: "4c934cd4730c5004c7118a873e102b0b60fcc41f", comments: [{ path: "a.go", line: 3, side: "LEFT", body: "Use a named constant here" }] });
+    expect(posted[0]).toMatchObject({ event: "COMMENT", commit_id: "9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c", comments: [{ path: "a.go", line: 3, side: "LEFT", body: "Use a named constant here" }] });
     expect(String(posted[0]!.body)).toContain("img.png");
     expect(result.apply?.commentIds).toEqual([`local:${c1.id}`, expect.stringMatching(/^local:/u)]);
     const prompt = String(spawned[0]!.prompt);
@@ -1189,7 +1189,7 @@ describe("diff view and diff comments", () => {
   });
 
   it("refuses to post to GitHub without the review tag and falls back to a body-only review on 422", async () => {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" } })], rejectInline: true }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { user: { login: "sean" } })], rejectInline: true }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sync_now", null);
     const card = (await board()).tickets[0]!;
@@ -1214,7 +1214,7 @@ describe("diff view and diff comments", () => {
       expect(args).toMatchObject({ target: "all", mergeBaseBranch: "main" });
       return { outcome: "available", diff: { diff: "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-a\n+b", files: "x.ts", mergeBaseRef: "main", shortstat: "", truncated: false } };
     });
-    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Local work", projectId: "proj_cape", startThread: true })) as Ticket;
+    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Local work", projectId: "proj_acme", startThread: true })) as Ticket;
     const diff = (await current().harness.behavior.callRpc("diff_get", { ticketId: ticket.id })) as TicketDiff;
     expect(diff.source).toBe("environment");
     expect(diff.files).toHaveLength(1);
@@ -1234,10 +1234,10 @@ describe("subtasks", () => {
 
   it("nests cards, tracks progress, inherits the parent's project, and refuses cycles", async () => {
     await load();
-    const parent = (await current().harness.behavior.callRpc("ticket_create", { title: "Epic", projectId: "proj_cape" })) as Ticket;
+    const parent = (await current().harness.behavior.callRpc("ticket_create", { title: "Epic", projectId: "proj_acme" })) as Ticket;
     const a = (await current().harness.behavior.callRpc("ticket_create", { title: "Part A", parentId: parent.id })) as Ticket;
     const b = (await current().harness.behavior.callRpc("ticket_create", { title: "Part B", parentId: parent.id })) as Ticket;
-    expect(a).toMatchObject({ parentId: parent.id, projectId: "proj_cape" });
+    expect(a).toMatchObject({ parentId: parent.id, projectId: "proj_acme" });
     let fresh = (await board()).tickets.find((ticket) => ticket.id === parent.id)!;
     expect(fresh.children).toEqual({ total: 2, done: 0, withThread: 0 });
 
@@ -1266,7 +1266,7 @@ describe("subtasks", () => {
 
   it("starts one thread per open subtask under the parent's thread, or one sequential thread", async () => {
     await load();
-    const parent = (await current().harness.behavior.callRpc("ticket_create", { title: "Epic", projectId: "proj_cape", startThread: true })) as Ticket;
+    const parent = (await current().harness.behavior.callRpc("ticket_create", { title: "Epic", projectId: "proj_acme", startThread: true })) as Ticket;
     expect(parent.threadId).toBe("thr_1");
     const a = (await current().harness.behavior.callRpc("ticket_create", { title: "Part A", parentId: parent.id })) as Ticket;
     const b = (await current().harness.behavior.callRpc("ticket_create", { title: "Part B", parentId: parent.id })) as Ticket;
@@ -1276,7 +1276,7 @@ describe("subtasks", () => {
     const result = (await current().harness.behavior.callRpc("ticket_start_children", { id: parent.id })) as { started: number; skipped: number };
     expect(result).toMatchObject({ started: 2, skipped: 0 });
     expect(spawned.slice(1).map((args) => args.title)).toEqual(["Part A", "Part B"]);
-    expect(spawned[1]).toMatchObject({ parentThreadId: "thr_1", projectId: "proj_cape", pluginMetadata: { ticketId: a.id } });
+    expect(spawned[1]).toMatchObject({ parentThreadId: "thr_1", projectId: "proj_acme", pluginMetadata: { ticketId: a.id } });
     expect(String(spawned[1]!.prompt)).toContain('subtask of "Epic"');
     expect((await board()).tickets.find((ticket) => ticket.id === b.id)?.threadId).toBe("thr_3");
 
@@ -1299,7 +1299,7 @@ describe("subtasks", () => {
 
   it("asks an agent to break a card down, in its own thread when it has none", async () => {
     await load();
-    const card = (await current().harness.behavior.callRpc("ticket_create", { title: "Big feature", description: "Do many things", projectId: "proj_cape" })) as Ticket;
+    const card = (await current().harness.behavior.callRpc("ticket_create", { title: "Big feature", description: "Do many things", projectId: "proj_acme" })) as Ticket;
     const updated = (await current().harness.behavior.callRpc("ticket_breakdown", { id: card.id, guidance: "keep the migration separate" })) as Ticket;
     expect(updated.threadId).toBe("thr_1");
     const prompt = String(spawned[0]!.prompt);
@@ -1325,11 +1325,11 @@ describe("brain dumps", () => {
     await load();
     current().harness.sdk.stub("threads.send", async () => ({ ok: true }));
     current().harness.sdk.stub("threads.archive", async () => ({ archived: 1 }));
-    const dump = (await current().harness.behavior.callRpc("dump_create", { text: "Move HSS provisioning to sim service.\nAlso fix the deactivated lines view.", projectId: "proj_cape" })) as Dump;
-    expect(dump).toMatchObject({ status: "planning", threadId: "thr_1", projectId: "proj_cape" });
-    expect(spawned[0]).toMatchObject({ projectId: "proj_cape", title: "Plan: Move HSS provisioning to sim service.", pluginMetadata: { dumpId: dump.id, role: "plan" } });
+    const dump = (await current().harness.behavior.callRpc("dump_create", { text: "Move billing to the payments service.\nAlso fix the stale invoices view.", projectId: "proj_acme" })) as Dump;
+    expect(dump).toMatchObject({ status: "planning", threadId: "thr_1", projectId: "proj_acme" });
+    expect(spawned[0]).toMatchObject({ projectId: "proj_acme", title: "Plan: Move billing to the payments service.", pluginMetadata: { dumpId: dump.id, role: "plan" } });
     expect(String(spawned[0]!.prompt)).toContain("json kanban-proposal");
-    expect(String(spawned[0]!.prompt)).toContain("deactivated lines");
+    expect(String(spawned[0]!.prompt)).toContain("stale invoices");
     expect((await board()).dumps.map((entry) => entry.id)).toEqual([dump.id]);
 
     const configured = await current().harness.behavior.resolveAgentConfiguration(
@@ -1338,13 +1338,13 @@ describe("brain dumps", () => {
     expect(configured?.instructions).toContain("kanban-proposal");
 
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_1", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_1", projectId: "proj_acme" }),
       lastAssistantText: proposalBlock(
         [
-          { id: "T1", title: "Provision via sim service", description: "Replace HSS call", tags: ["backend"], subtasks: [{ title: "Add client" }, { title: "Wire provisioning" }], estimate: "M" },
-          { id: "T2", title: "Hide deactivated lines", tags: ["frontend"], dependsOn: ["T1"] },
+          { id: "T1", title: "Charge via payments service", description: "Replace billing call", tags: ["backend"], subtasks: [{ title: "Add client" }, { title: "Wire payments" }], estimate: "M" },
+          { id: "T2", title: "Hide stale invoices", tags: ["frontend"], dependsOn: ["T1"] },
         ],
-        [{ id: "Q1", question: "Keep the old HSS path as fallback?", affects: ["T1"], options: ["yes", "no"] }],
+        [{ id: "Q1", question: "Keep the old billing path as fallback?", affects: ["T1"], options: ["yes", "no"] }],
       ),
     });
     let fresh = (await board()).dumps[0]!;
@@ -1356,13 +1356,13 @@ describe("brain dumps", () => {
     expect(refined.status).toBe("planning");
     expect(refined.answers).toEqual({ Q1: "no" });
     const sent = current().harness.inspection.sdk.callsTo("threads.send");
-    expect(JSON.stringify(sent[0])).toContain("Q1 (Keep the old HSS path as fallback?): no");
+    expect(JSON.stringify(sent[0])).toContain("Q1 (Keep the old billing path as fallback?): no");
     expect(JSON.stringify(sent[0])).toContain("Ship T2 first.");
     await expect(current().harness.behavior.callRpc("dump_refine", { id: dump.id })).rejects.toThrow(/still working/u);
 
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_1", projectId: "proj_cape" }),
-      lastAssistantText: proposalBlock([{ id: "T1", title: "Provision via sim service", subtasks: [{ title: "Add client" }] }, { id: "T2", title: "Hide deactivated lines" }]),
+      thread: makeThreadResponse({ id: "thr_1", projectId: "proj_acme" }),
+      lastAssistantText: proposalBlock([{ id: "T1", title: "Charge via payments service", subtasks: [{ title: "Add client" }] }, { id: "T2", title: "Hide stale invoices" }]),
     });
     fresh = (await board()).dumps[0]!;
     expect(fresh.status).toBe("ready");
@@ -1370,12 +1370,12 @@ describe("brain dumps", () => {
 
     const result = (await current().harness.behavior.callRpc("dump_finalize", {
       id: dump.id,
-      tickets: [{ id: "T1", title: "Provision via sim service (edited)", description: "d", tags: ["backend"], subtasks: [{ title: "Add client", description: "" }], dependsOn: [], estimate: null }],
+      tickets: [{ id: "T1", title: "Charge via payments service (edited)", description: "d", tags: ["backend"], subtasks: [{ title: "Add client", description: "" }], dependsOn: [], estimate: null }],
       columnId: "todo",
     })) as { dump: Dump; tickets: Ticket[] };
     expect(result.dump.status).toBe("done");
     expect(result.tickets).toHaveLength(1);
-    expect(result.tickets[0]).toMatchObject({ title: "Provision via sim service (edited)", columnId: "todo", projectId: "proj_cape", tags: ["backend"], children: { total: 1 } });
+    expect(result.tickets[0]).toMatchObject({ title: "Charge via payments service (edited)", columnId: "todo", projectId: "proj_acme", tags: ["backend"], children: { total: 1 } });
     expect(current().harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(1);
     expect((await board()).dumps).toEqual([]);
     const all = (await current().harness.behavior.callRpc("dumps_list", { includeClosed: true })) as { dumps: Dump[] };
@@ -1385,9 +1385,9 @@ describe("brain dumps", () => {
   it("marks a dump failed when the thread ends without a proposal, and discard archives the thread", async () => {
     await load();
     current().harness.sdk.stub("threads.archive", async () => ({ archived: 1 }));
-    const dump = (await current().harness.behavior.callRpc("dump_create", { text: "stuff", projectId: "proj_cape" })) as Dump;
+    const dump = (await current().harness.behavior.callRpc("dump_create", { text: "stuff", projectId: "proj_acme" })) as Dump;
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: "thr_1", projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: "thr_1", projectId: "proj_acme" }),
       lastAssistantText: "I need more information before I can plan.",
     });
     const failed = (await board()).dumps[0]!;
@@ -1411,7 +1411,7 @@ describe("delta ranges", () => {
 
 describe("change tour", () => {
   it("spawns one tour thread per head, parses its kanban-narrative block, and marks a moved head stale", async () => {
-    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" } })] }));
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { user: { login: "sean" } })] }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sync_now", null);
     const card = (await board()).tickets[0]!;
@@ -1423,7 +1423,7 @@ describe("change tour", () => {
     const again = (await current().harness.behavior.callRpc("narrative_generate", { ticketId: card.id })) as Narrative;
     expect(again.id).toBe(first.id);
     await current().harness.behavior.emitThreadEvent("thread.idle", {
-      thread: makeThreadResponse({ id: first.threadId, projectId: "proj_cape" }),
+      thread: makeThreadResponse({ id: first.threadId, projectId: "proj_acme" }),
       lastAssistantText: [
         "Here is the tour.",
         "```json kanban-narrative",
@@ -1433,7 +1433,7 @@ describe("change tour", () => {
     });
     const got = (await current().harness.behavior.callRpc("narrative_get", { ticketId: card.id })) as { narrative: Narrative | null; stale: boolean };
     expect(got.stale).toBe(false);
-    expect(got.narrative).toMatchObject({ status: "completed", headSha: "4c934cd4730c5004c7118a873e102b0b60fcc41f" });
+    expect(got.narrative).toMatchObject({ status: "completed", headSha: "9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c" });
     expect(got.narrative!.report).toMatchObject({ summary: "Adds `add`.", readingOrder: [{ path: "a.go", role: "key", lines: [2] }], watchOut: ["No tests."] });
     expect(parseNarrative("no block here")).toBeNull();
   });
@@ -1444,8 +1444,8 @@ describe("structural diff and symbols", () => {
     vi.stubGlobal(
       "fetch",
       stubGithub({
-        authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" } })],
-        contents: { "a.go@1111111111111111111111111111111111111111": "package a\nfunc old() {}\n", "a.go@4c934cd4730c5004c7118a873e102b0b60fcc41f": "package a\nfunc add() {}\n" },
+        authored: [searchItem("acme-co/widgets", 7, { user: { login: "sean" } })],
+        contents: { "a.go@1111111111111111111111111111111111111111": "package a\nfunc old() {}\n", "a.go@9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c": "package a\nfunc add() {}\n" },
       }),
     );
     await load({ autoStartThreads: false, difftPath: "/definitely/not/difft" });
@@ -1473,7 +1473,7 @@ describe("structural diff and symbols", () => {
     await load();
     current().harness.sdk.stub("system.config", async () => ({ primaryHostId: "host_1" }));
     current().harness.sdk.stub("environments.get", async () => ({ id: "env_thr_1", path: repo, hostId: "host_1", mergeBaseBranch: null }));
-    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Local work", projectId: "proj_cape", startThread: true })) as Ticket;
+    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Local work", projectId: "proj_acme", startThread: true })) as Ticket;
     const lookup = (await current().harness.behavior.callRpc("symbol_definitions", { ticketId: ticket.id, symbol: "add" })) as SymbolLookup;
     expect(lookup.searched).toBe("workspace");
     expect(lookup.open).toEqual({ kind: "environment", environmentId: "env_thr_1" });
@@ -1485,7 +1485,7 @@ describe("structural diff and symbols", () => {
     vi.stubGlobal(
       "fetch",
       stubGithub({
-        authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" } })],
+        authored: [searchItem("acme-co/widgets", 7, { user: { login: "sean" } })],
         codeSearch: [{ path: "internal/x/add.go", fragment: "package x\nfunc add(a, b int) int {\n\treturn a + b\n}" }],
       }),
     );
@@ -1495,7 +1495,7 @@ describe("structural diff and symbols", () => {
     const card = (await board()).tickets[0]!;
     const lookup = (await current().harness.behavior.callRpc("symbol_definitions", { ticketId: card.id, symbol: "add" })) as SymbolLookup;
     expect(lookup.searched).toBe("github");
-    expect(lookup.open).toEqual({ kind: "github", repo: "cape-co/cape", sha: "4c934cd4730c5004c7118a873e102b0b60fcc41f" });
+    expect(lookup.open).toEqual({ kind: "github", repo: "acme-co/widgets", sha: "9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c" });
     expect(lookup.definitions[0]).toMatchObject({ path: "internal/x/add.go", line: null, snippet: "func add(a, b int) int {" });
   });
 });
