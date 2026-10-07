@@ -21,6 +21,10 @@ const OVERLAY_LIST_WIDTH = 820;
 /** At or above this the request and response sit side by side. */
 const SIDE_BY_SIDE_WIDTH = 1650;
 const NO_METADATA: MetadataRow[] = [];
+const DEFAULT_LIST_WIDTH = 320;
+const MIN_LIST_WIDTH = 220;
+/** Dragging the list narrower than this collapses it. */
+const COLLAPSE_LIST_WIDTH = 160;
 const NO_OVERRIDES: Record<string, string> = {};
 
 function message(cause: unknown): string {
@@ -448,8 +452,12 @@ export function ClientView() {
   const [rootRef, width] = useWidth();
   const overlayList = width > 0 && width < OVERLAY_LIST_WIDTH;
   const sideBySide = width >= SIDE_BY_SIDE_WIDTH;
+  const [storedListWidth, setListWidth] = useStored<number>("listWidth", DEFAULT_LIST_WIDTH);
+  const [listCollapsed, setListCollapsed] = useStored<boolean>("listCollapsed", false);
+  const listWidth = Math.round(Math.min(Math.max(storedListWidth, MIN_LIST_WIDTH), Math.max(MIN_LIST_WIDTH, width * 0.6)));
+  const listDocked = !overlayList && !listCollapsed;
   // The request bar folds Form/JSON into its menu when the workspace beside the list is narrow.
-  const compactBar = width - (overlayList ? 0 : 320) < 780;
+  const compactBar = width - (listDocked ? listWidth : 0) < 780;
 
   const [overview, setOverview] = useState<Overview | null>(null);
   const [overviewError, setOverviewError] = useState<string | null>(null);
@@ -670,12 +678,41 @@ export function ClientView() {
   const loadingServices = current?.status === "loading";
   const methodCount = serviceData?.services.reduce((count, service) => count + service.methods.length, 0) ?? 0;
 
+  const startListResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = listWidth;
+    const previousSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    const move = (moveEvent: PointerEvent) => {
+      const next = startWidth + moveEvent.clientX - startX;
+      if (next < COLLAPSE_LIST_WIDTH) {
+        setListCollapsed(true);
+        stop();
+        return;
+      }
+      setListWidth(Math.max(MIN_LIST_WIDTH, next));
+    };
+    const stop = () => {
+      document.body.style.userSelect = previousSelect;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  };
+  const showList = () => {
+    if (overlayList) setListOpen(true);
+    else setListCollapsed(false);
+  };
+
   const list = (
     <aside
       className={cn(
-        "flex min-h-0 flex-col border-r border-border bg-background",
-        overlayList ? "absolute inset-y-0 left-0 z-20 w-80 max-w-[85%] shadow-xl" : "w-80 shrink-0",
+        "relative flex min-h-0 flex-col border-r border-border bg-background",
+        overlayList ? "absolute inset-y-0 left-0 z-20 w-80 max-w-[85%] shadow-xl" : "shrink-0",
       )}
+      style={overlayList ? undefined : { width: listWidth }}
     >
       <div className="flex items-center gap-1 border-b border-border px-1.5 py-1.5">
         <EndpointSwitcher
@@ -705,7 +742,17 @@ export function ClientView() {
           <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground" aria-label="Close method list" onClick={() => setListOpen(false)}>
             <Icon name="X" className="size-4" />
           </button>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground"
+            aria-label="Collapse method list"
+            title="Collapse method list"
+            onClick={() => setListCollapsed(true)}
+          >
+            <Icon name="PanelLeft" className="size-4" />
+          </button>
+        )}
       </div>
       {leftTab === "history" ? (
         <HistoryList selectedId={shown?.historyId ?? null} onOpen={openHistory} />
@@ -724,6 +771,17 @@ export function ClientView() {
         </div>
       ) : (
         <MethodList key={servicesKey ?? ""} services={serviceData.services} selected={method?.fullName ?? null} filterKey={sourceName ?? ""} onSelect={selectMethod} />
+      )}
+      {overlayList ? null : (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize method list"
+          title="Drag to resize · double-click to reset"
+          className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-ring/30"
+          onPointerDown={startListResize}
+          onDoubleClick={() => setListWidth(DEFAULT_LIST_WIDTH)}
+        />
       )}
     </aside>
   );
@@ -790,7 +848,7 @@ export function ClientView() {
       ) : null}
 
       <div className="relative flex min-h-0 flex-1">
-        {!overlayList || listOpen ? list : null}
+        {(overlayList ? listOpen : !listCollapsed) ? list : null}
         {method === null ? (
           <Centered>
             {serviceData === null ? (
@@ -805,27 +863,28 @@ export function ClientView() {
                 <p>
                   {methodCount} methods across {serviceData.services.length} services. Search by service or method name.
                 </p>
-                {overlayList ? (
-                  <Button variant="outline" size="sm" onClick={() => setListOpen(true)}>
+                {listDocked ? null : (
+                  <Button variant="outline" size="sm" onClick={showList}>
                     Browse methods
                   </Button>
-                ) : null}
+                )}
               </>
             )}
           </Centered>
         ) : (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-              {overlayList ? (
+              {listDocked ? null : (
                 <button
                   type="button"
                   className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground"
                   aria-label="Show method list"
-                  onClick={() => setListOpen(true)}
+                  title="Show method list"
+                  onClick={showList}
                 >
                   <Icon name="PanelLeft" className="size-4" />
                 </button>
-              ) : null}
+              )}
               <div className="flex min-w-0 items-center gap-1.5">
                 <h2 className="truncate text-sm font-semibold text-foreground" title={method.fullName}>
                   {method.name}
