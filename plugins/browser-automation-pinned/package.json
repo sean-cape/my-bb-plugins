@@ -1,0 +1,24 @@
+{
+  "name": "bb-plugin-browser-automation-pinned",
+  "version": "0.1.0",
+  "engines": {
+    "bb": ">=0.41",
+    "bbPluginSdk": ">=0.4.102"
+  },
+  "bb": {
+    "name": "Browser Automation (pinned 0.1.0 / bb 0.45.0)",
+    "description": "Let BB control the in-app browser and browsers on connected machines, with inline previews for headless sessions.",
+    "branding": {
+      "icon": "Globe"
+    },
+    "server": "./dist/server.js",
+    "app": "./dist/app.js",
+    "host": "./dist/host.js",
+    "skills": [
+      "skills"
+    ]
+  },
+  "private": true,
+  "type": "module",
+  "description": "Let BB control the in-app browser and browsers on connected machines, with inline previews for headless sessions."
+}

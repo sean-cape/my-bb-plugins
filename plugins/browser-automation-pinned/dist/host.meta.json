@@ -1,0 +1,12 @@
+{
+  "sdkMajor": 0,
+  "sdkVersion": "0.6.15",
+  "artifactFormatVersion": 1,
+  "pluginId": "browser-automation-pinned",
+  "pluginVersion": "0.1.0",
+  "builtWith": {
+    "bbVersion": "0.45.0",
+    "pluginSdkVersion": "0.6.15"
+  },
+  "artifactDigest": "d8baef44bc4e39cdb2453328c4013546404a4b6098cbbb2bdd4733fb3216e0b7"
+}
