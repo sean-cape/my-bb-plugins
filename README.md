@@ -9,6 +9,7 @@ Personal [bb](https://getbb.app) plugins, one directory each under `plugins/`.
 | `grouped-thread-list` | Fork of bb's thread-list plugin (desktop-v0.45.0) with a collapsible Projects group |
 | `vim-mode` | Vim keybindings for bb's prompt box and other text fields |
 | `browser-automation-pinned` | bb 0.45.0's built-in browser-automation plugin, frozen under its own id |
+| `grpc-client` | gRPC client (method browser, generated request forms, `bb grpc` CLI) on top of grpcurl, with option-driven auth profiles |
 
 ## Install
 

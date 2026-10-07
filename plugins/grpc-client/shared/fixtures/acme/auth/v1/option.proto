@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package acme.auth.v1;
+
+import "google/protobuf/descriptor.proto";
+
+enum AuthType {
+  AUTH_TYPE_INVALID = 0;
+  AUTH_TYPE_UNAUTHENTICATED = 1;
+  AUTH_TYPE_USER = 2;
+  AUTH_TYPE_ADMIN = 3;
+}
+
+message AuthOptions {
+  AuthType auth_type = 1;
+  string permission = 2;
+}
+
+extend google.protobuf.MethodOptions {
+  AuthOptions method_auth_options = 50000;
+}
+
+extend google.protobuf.ServiceOptions {
+  AuthOptions service_auth_options = 50000;
+}

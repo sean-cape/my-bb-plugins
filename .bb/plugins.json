@@ -7,6 +7,7 @@
     { "name": "obsidian", "source": "./plugins/obsidian" },
     { "name": "grouped-thread-list", "source": "./plugins/grouped-thread-list" },
     { "name": "vim-mode", "source": "./plugins/vim-mode" },
-    { "name": "browser-automation-pinned", "source": "./plugins/browser-automation-pinned" }
+    { "name": "browser-automation-pinned", "source": "./plugins/browser-automation-pinned" },
+    { "name": "grpc-client", "source": "./plugins/grpc-client" }
   ]
 }

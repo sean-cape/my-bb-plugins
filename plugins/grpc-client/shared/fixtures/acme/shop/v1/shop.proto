@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package acme.shop.v1;
+
+import "acme/auth/v1/option.proto";
+import "google/protobuf/timestamp.proto";
+
+// Manages orders.
+service OrderAPI {
+  option (acme.auth.v1.service_auth_options) = {auth_type: AUTH_TYPE_USER};
+
+  // Gets one order.
+  rpc GetOrder(GetOrderRequest) returns (Order);
+
+  // Lists every order; admins only.
+  rpc ListOrders(ListOrdersRequest) returns (stream Order) {
+    option (acme.auth.v1.method_auth_options) = {auth_type: AUTH_TYPE_ADMIN};
+  }
+
+  // Sets only the permission, so auth falls back to the service option.
+  rpc CancelOrder(GetOrderRequest) returns (Order) {
+    option (acme.auth.v1.method_auth_options) = {permission: "orders.cancel"};
+  }
+}
+
+service PingAPI {
+  rpc Ping(GetOrderRequest) returns (GetOrderRequest);
+}
+
+message GetOrderRequest {
+  // The order id.
+  string id = 1;
+}
+
+message ListOrdersRequest {
+  int32 page_size = 1;
+  optional string cursor = 2;
+}
+
+message Order {
+  enum Status {
+    STATUS_INVALID = 0;
+    STATUS_OPEN = 1;
+  }
+  string id = 1;
+  Status status = 2;
+  repeated LineItem items = 3;
+  map<string, string> labels = 4;
+  google.protobuf.Timestamp created_at = 5;
+  oneof payment {
+    string card = 6;
+    int64 credit_cents = 7;
+  }
+  Order parent = 8;
+}
+
+message LineItem {
+  string sku = 1;
+  uint32 quantity = 2;
+}
