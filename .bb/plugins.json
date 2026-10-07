@@ -1,0 +1,12 @@
+{
+  "$schema": "https://getbb.app/schemas/plugins.schema.json",
+  "schemaVersion": 1,
+  "name": "sean-cape-bb-plugins",
+  "plugins": [
+    { "name": "kanban", "source": "./plugins/kanban" },
+    { "name": "obsidian", "source": "./plugins/obsidian" },
+    { "name": "grouped-thread-list", "source": "./plugins/grouped-thread-list" },
+    { "name": "vim-mode", "source": "./plugins/vim-mode" },
+    { "name": "browser-automation-pinned", "source": "./plugins/browser-automation-pinned" }
+  ]
+}
