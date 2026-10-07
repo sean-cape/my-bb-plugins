@@ -299,7 +299,7 @@ export function MethodList({
             open={filtersOpen}
             onOpenChange={setFiltersOpen}
             label="Method filters"
-            className="left-auto right-0 w-80"
+            className="w-80"
             trigger={
               <button
                 type="button"
