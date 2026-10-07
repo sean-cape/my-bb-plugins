@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { toast } from "sonner";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
@@ -12,64 +12,16 @@ import { EditorOptionsContext, MessageEditor, inputClass } from "./MessageEditor
 import { MethodBadges, MethodList } from "./MethodList";
 import { exampleMessage, hasUnsafeIntegers, isObject, type Json, type JsonObject } from "./proto-json";
 import { EndpointSwitcher } from "./EndpointSwitcher";
+import { Popover } from "./Popover";
 import { ResponseView } from "./ResponseView";
+import { readStored, useStored, writeStored } from "./storage";
 
-const STORAGE_PREFIX = "bb-plugin-grpc-client:";
 /** Below this the method list becomes an overlay. */
 const OVERLAY_LIST_WIDTH = 820;
 /** At or above this the request and response sit side by side. */
 const SIDE_BY_SIDE_WIDTH = 1650;
 const NO_METADATA: MetadataRow[] = [];
 const NO_OVERRIDES: Record<string, string> = {};
-
-// localStorage-backed state shared by every hook reading the same key, so a
-// write from one place (opening a history entry) updates all readers.
-const storageListeners = new Set<(key: string) => void>();
-const storageCache = new Map<string, { raw: string | null; value: unknown }>();
-
-function readStored<T>(key: string, fallback: T): T {
-  let raw: string | null = null;
-  try {
-    raw = window.localStorage.getItem(STORAGE_PREFIX + key);
-  } catch {
-    // Storage can be unavailable; fall back to the default.
-  }
-  const cached = storageCache.get(key);
-  if (cached !== undefined && cached.raw === raw) return cached.value as T;
-  if (raw === null) return fallback;
-  try {
-    const value = JSON.parse(raw) as T;
-    storageCache.set(key, { raw, value });
-    return value;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStored(key: string, value: unknown): void {
-  try {
-    window.localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
-  } catch {
-    // Storage can be unavailable or full; the value then lasts only until reload.
-    storageCache.set(key, { raw: null, value });
-  }
-  for (const listener of storageListeners) listener(key);
-}
-
-function useStored<T>(key: string, fallback: T): [T, (value: T) => void] {
-  const [, rerender] = useReducer((count: number) => count + 1, 0);
-  useEffect(() => {
-    const listener = (changed: string) => {
-      if (changed === key) rerender();
-    };
-    storageListeners.add(listener);
-    return () => {
-      storageListeners.delete(listener);
-    };
-  }, [key]);
-  const update = useCallback((next: T) => writeStored(key, next), [key]);
-  return [readStored(key, fallback), update];
-}
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -161,22 +113,22 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
   );
 }
 
-function TextButton({ children, onClick, disabled, pressed }: { children: ReactNode; onClick: () => void; disabled?: boolean; pressed?: boolean }) {
+function MenuItem({ children, onClick, disabled, checked }: { children: ReactNode; onClick: () => void; disabled?: boolean; checked?: boolean }) {
   return (
     <button
       type="button"
+      role={checked === undefined ? "menuitem" : "menuitemcheckbox"}
+      aria-checked={checked}
       disabled={disabled}
-      aria-pressed={pressed}
-      className={cn(
-        "rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
-        pressed && "bg-state-active text-foreground",
-      )}
+      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-state-hover disabled:pointer-events-none disabled:opacity-50"
       onClick={onClick}
     >
-      {children}
+      <span className="min-w-0 flex-1">{children}</span>
+      {checked ? <Icon name="Check" className="size-3.5 shrink-0" /> : null}
     </button>
   );
 }
+
 
 interface MetadataRow extends MetadataEntry {
   enabled: boolean;
@@ -234,44 +186,88 @@ function MetadataEditor({ rows, endpoint, onChange }: { rows: MetadataRow[]; end
   );
 }
 
-function HistoryList({ onOpen }: { onOpen: (entry: HistoryEntry) => void }) {
+function formatWhen(at: number): string {
+  const date = new Date(at);
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return date.toDateString() === new Date().toDateString() ? time : `${date.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
+function HistoryList({ selectedId, onOpen }: { selectedId: number | null; onOpen: (entry: HistoryEntry) => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const refetch = useCallback(() => {
-    rpc.call("history", { limit: 100 }).then(
+    rpc.call("history", { limit: 200 }).then(
       (result) => setEntries(result.entries),
       () => setEntries([]),
     );
   }, [rpc]);
   useEffect(refetch, [refetch]);
   useRealtime("changed", refetch);
+  const remove = (id: number) => {
+    setEntries((current) => current?.filter((entry) => entry.id !== id) ?? null);
+    rpc.call("deleteHistory", { ids: [id] }).then(refetch, (cause) => {
+      toast.error(message(cause));
+      refetch();
+    });
+  };
   if (entries === null) return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
   if (entries.length === 0) return <p className="p-4 text-sm text-muted-foreground">Calls you make here or with `bb grpc call` appear here.</p>;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-      <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Recent calls</p>
-      {entries.map((entry) => (
-        <button
-          key={entry.id}
-          type="button"
-          className="flex w-full flex-col gap-0.5 rounded-md px-2 py-2 text-left hover:bg-state-hover"
-          title={entry.message || entry.method}
-          onClick={() => onOpen(entry)}
-        >
-          <span className="flex min-w-0 items-center gap-2 text-sm">
-            <span className={cn("size-2 shrink-0 rounded-full", entry.ok ? "bg-emerald-500" : "bg-destructive")} aria-hidden />
-            <span className="min-w-0 flex-1 truncate text-foreground">{entry.method.slice(entry.method.lastIndexOf("/") + 1)}</span>
-            <span className={cn("shrink-0 text-xs", entry.ok ? "text-muted-foreground" : "text-destructive")}>{entry.status}</span>
+      <div className="flex items-center justify-between px-2 pb-1">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Recent calls</p>
+        {confirmClear ? (
+          <span className="flex items-center gap-1 text-xs">
+            <button
+              type="button"
+              className="rounded px-1.5 py-0.5 text-destructive hover:bg-destructive/10"
+              onClick={() => {
+                setConfirmClear(false);
+                rpc.call("clearHistory").then(refetch, (cause) => toast.error(message(cause)));
+              }}
+            >
+              Delete all
+            </button>
+            <button type="button" className="rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground" onClick={() => setConfirmClear(false)}>
+              Cancel
+            </button>
           </span>
-          <span className="truncate pl-4 text-xs text-muted-foreground">
-            {entry.endpoint} · {new Date(entry.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · {entry.durationMs} ms
-            {entry.origin === "cli" ? " · CLI" : ""}
-          </span>
-        </button>
-      ))}
-      <div className="px-2 py-3">
-        <TextButton onClick={() => rpc.call("clearHistory").then(refetch, () => {})}>Clear history</TextButton>
+        ) : (
+          <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setConfirmClear(true)}>
+            Clear
+          </button>
+        )}
       </div>
+      {entries.map((entry) => (
+        <div key={entry.id} className={cn("group flex items-start rounded-md hover:bg-state-hover", entry.id === selectedId && "bg-state-active")}>
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-2 text-left"
+            title={entry.message || entry.method}
+            onClick={() => onOpen(entry)}
+          >
+            <span className="flex min-w-0 items-center gap-2 text-sm">
+              <span className={cn("size-2 shrink-0 rounded-full", entry.ok ? "bg-emerald-500" : "bg-destructive")} aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-foreground">{entry.method.slice(entry.method.lastIndexOf("/") + 1)}</span>
+              <span className={cn("shrink-0 text-xs", entry.ok ? "text-muted-foreground" : "text-destructive")}>{entry.status}</span>
+            </span>
+            <span className="truncate pl-4 text-xs text-muted-foreground">
+              {entry.endpoint} · {formatWhen(entry.at)} · {entry.durationMs} ms
+              {entry.origin === "cli" ? " · CLI" : ""}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="mr-1 mt-2 shrink-0 rounded p-1 text-muted-foreground opacity-0 hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+            aria-label={`Delete ${entry.method} from history`}
+            title="Delete from history"
+            onClick={() => remove(entry.id)}
+          >
+            <Icon name="Trash2" className="size-3.5" />
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -452,6 +448,8 @@ export function ClientView() {
   const [rootRef, width] = useWidth();
   const overlayList = width > 0 && width < OVERLAY_LIST_WIDTH;
   const sideBySide = width >= SIDE_BY_SIDE_WIDTH;
+  // The request bar folds Form/JSON into its menu when the workspace beside the list is narrow.
+  const compactBar = width - (overlayList ? 0 : 320) < 780;
 
   const [overview, setOverview] = useState<Overview | null>(null);
   const [overviewError, setOverviewError] = useState<string | null>(null);
@@ -559,7 +557,9 @@ export function ClientView() {
   const [leftTab, setLeftTab] = useState<"methods" | "history">("methods");
   const [listOpen, setListOpen] = useState(false);
   const [showComment, setShowComment] = useState(false);
-  const [results, setResults] = useState<Record<string, CallResult>>({});
+  const [moreOpen, setMoreOpen] = useState(false);
+  /** Latest result per endpoint + method; `recordedAt` marks one restored from history. */
+  const [results, setResults] = useState<Record<string, { result: CallResult; recordedAt: number | null; historyId: number | null }>>({});
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const resultKey = endpoint === null || method === null ? "" : `${endpoint.name}|${method.fullName}`;
@@ -585,7 +585,7 @@ export function ClientView() {
     const key = resultKey;
     rpc.call("invoke", callInput()).then(
       (result) => {
-        setResults((previous) => ({ ...previous, [key]: result }));
+        setResults((previous) => ({ ...previous, [key]: { result, recordedAt: null, historyId: null } }));
         setSending(false);
       },
       (cause) => {
@@ -648,9 +648,16 @@ export function ClientView() {
       setSourceOverrides({ ...sourceOverrides, [entry.endpoint]: entry.source });
       setStoredEndpoint(entry.endpoint);
     }
-    setLeftTab("methods");
     setRequestTab("body");
     setListOpen(false);
+    const key = `${entry.endpoint}|${entry.method}`;
+    rpc.call("historyResult", { id: entry.id }).then(
+      ({ result }) => {
+        if (result !== null) setResults((previous) => ({ ...previous, [key]: { result, recordedAt: entry.at, historyId: entry.id } }));
+        else toast("This call was recorded before responses were kept in history; only its request was restored.");
+      },
+      (cause) => toast.error(message(cause)),
+    );
   };
 
   if (overview === null) {
@@ -659,7 +666,7 @@ export function ClientView() {
   if (endpoint === null) return <EmptyConfig errors={overview.errors} />;
 
   const errors = [...overview.errors, ...(overviewError ? [overviewError] : [])];
-  const result = results[resultKey] ?? null;
+  const shown = results[resultKey] ?? null;
   const loadingServices = current?.status === "loading";
   const methodCount = serviceData?.services.reduce((count, service) => count + service.methods.length, 0) ?? 0;
 
@@ -701,7 +708,7 @@ export function ClientView() {
         ) : null}
       </div>
       {leftTab === "history" ? (
-        <HistoryList onOpen={openHistory} />
+        <HistoryList selectedId={shown?.historyId ?? null} onOpen={openHistory} />
       ) : current?.status === "error" && serviceData === null ? (
         <div className="space-y-3 p-4">
           <p className="text-sm font-medium text-foreground">Could not load the protos</p>
@@ -716,7 +723,7 @@ export function ClientView() {
           Loading protos…
         </div>
       ) : (
-        <MethodList key={servicesKey ?? ""} services={serviceData.services} selected={method?.fullName ?? null} onSelect={selectMethod} />
+        <MethodList key={servicesKey ?? ""} services={serviceData.services} selected={method?.fullName ?? null} filterKey={sourceName ?? ""} onSelect={selectMethod} />
       )}
     </aside>
   );
@@ -724,45 +731,6 @@ export function ClientView() {
   const requestPane =
     method === null ? null : (
       <>
-        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-1.5">
-          <Tabs
-            value={requestTab}
-            onChange={setRequestTab}
-            options={[
-              { id: "body", label: "Body" },
-              {
-                id: "metadata",
-                label: (
-                  <>
-                    Metadata{activeMetadata.length > 0 ? <span className="ml-1.5 text-xs tabular-nums text-muted-foreground">{activeMetadata.length}</span> : null}
-                  </>
-                ),
-              },
-              { id: "options", label: "Options" },
-            ]}
-          />
-          {requestTab === "body" ? (
-            <div className="ml-auto flex items-center gap-1">
-              {mode === "form" ? (
-                <TextButton pressed={showDocs} onClick={() => setShowDocs(!showDocs)}>
-                  Field docs
-                </TextButton>
-              ) : null}
-              <TextButton disabled={closure === null} onClick={fillExample}>
-                Example
-              </TextButton>
-              <TextButton onClick={() => setRequestText(defaultRequest)}>Clear</TextButton>
-              <Segmented
-                value={mode}
-                onChange={setMode}
-                options={[
-                  { id: "form", label: "Form" },
-                  { id: "json", label: "JSON" },
-                ]}
-              />
-            </div>
-          ) : null}
-        </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3">
           {requestTab === "body" ? (
             <EditorOptionsContext.Provider value={{ showDocs }}>
@@ -847,22 +815,22 @@ export function ClientView() {
           </Centered>
         ) : (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
               {overlayList ? (
                 <button
                   type="button"
-                  className="rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                  className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground"
                   aria-label="Show method list"
                   onClick={() => setListOpen(true)}
                 >
                   <Icon name="PanelLeft" className="size-4" />
                 </button>
               ) : null}
-              <div className="flex min-w-0 flex-1 items-center gap-2">
-                <h2 className="truncate text-base font-semibold text-foreground" title={method.fullName}>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <h2 className="truncate text-sm font-semibold text-foreground" title={method.fullName}>
                   {method.name}
                 </h2>
-                <MethodBadges method={method} showAuthName />
+                <MethodBadges method={method} showAuthName={!compactBar} />
                 {method.deprecated ? <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-px text-[10px] text-amber-800 dark:text-amber-200">deprecated</span> : null}
                 {method.comment ? (
                   <button
@@ -877,19 +845,99 @@ export function ClientView() {
                   </button>
                 ) : null}
               </div>
-              <button
-                type="button"
-                className="rounded-md p-2 text-muted-foreground hover:bg-state-hover hover:text-foreground"
-                aria-label="Copy as grpcurl command"
-                title="Copy as grpcurl command"
-                onClick={copyCommand}
-              >
-                <Icon name="Terminal" className="size-4" />
-              </button>
-              <Button size="sm" className={cn("px-3", endpoint.protected && "bg-amber-600 text-white hover:bg-amber-600/90")} disabled={sending} onClick={requestSend}>
-                <Icon name={sending ? "Spinner" : "grpc-client/send"} className="size-4" />
-                {sending ? "Sending" : endpoint.protected ? `Send to ${endpoint.name}` : "Send"}
-              </Button>
+              <span className="mx-1 h-4 w-px shrink-0 bg-border" aria-hidden />
+              <Tabs
+                value={requestTab}
+                onChange={setRequestTab}
+                options={[
+                  { id: "body", label: "Body" },
+                  {
+                    id: "metadata",
+                    label: (
+                      <>
+                        Metadata{activeMetadata.length > 0 ? <span className="ml-1.5 text-xs tabular-nums text-muted-foreground">{activeMetadata.length}</span> : null}
+                      </>
+                    ),
+                  },
+                  { id: "options", label: "Options" },
+                ]}
+              />
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                {requestTab === "body" && !compactBar ? (
+                  <Segmented
+                    value={mode}
+                    onChange={setMode}
+                    options={[
+                      { id: "form", label: "Form" },
+                      { id: "json", label: "JSON" },
+                    ]}
+                  />
+                ) : null}
+                <Popover
+                  open={moreOpen}
+                  onOpenChange={setMoreOpen}
+                  label="Request actions"
+                  className="left-auto right-0 w-56"
+                  trigger={
+                    <button
+                      type="button"
+                      className={cn("rounded-md p-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground", moreOpen && "bg-state-active text-foreground")}
+                      aria-label="More request actions"
+                      aria-expanded={moreOpen}
+                      title="More"
+                      onClick={() => setMoreOpen(!moreOpen)}
+                    >
+                      <Icon name="MoreHorizontal" className="size-4" />
+                    </button>
+                  }
+                >
+                  <MenuItem
+                    disabled={closure === null}
+                    onClick={() => {
+                      fillExample();
+                      setRequestTab("body");
+                      setMoreOpen(false);
+                    }}
+                  >
+                    Fill with example
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setRequestText(defaultRequest);
+                      setMoreOpen(false);
+                    }}
+                  >
+                    Clear request
+                  </MenuItem>
+                  <MenuItem checked={showDocs} onClick={() => setShowDocs(!showDocs)}>
+                    Show field docs
+                  </MenuItem>
+                  {compactBar ? (
+                    <MenuItem
+                      checked={mode === "json"}
+                      onClick={() => {
+                        setMode(mode === "json" ? "form" : "json");
+                        setRequestTab("body");
+                      }}
+                    >
+                      Edit as JSON
+                    </MenuItem>
+                  ) : null}
+                  <div className="my-1 h-px bg-border" />
+                  <MenuItem
+                    onClick={() => {
+                      copyCommand();
+                      setMoreOpen(false);
+                    }}
+                  >
+                    Copy as grpcurl command
+                  </MenuItem>
+                </Popover>
+                <Button size="sm" className={cn("ml-1 h-7 px-3", endpoint.protected && "bg-amber-600 text-white hover:bg-amber-600/90")} disabled={sending} onClick={requestSend}>
+                  <Icon name={sending ? "Spinner" : "grpc-client/send"} className="size-3.5" />
+                  {sending ? "Sending" : endpoint.protected ? `Send to ${endpoint.name}` : "Send"}
+                </Button>
+              </div>
             </div>
             {showComment && method.comment ? (
               <p className="whitespace-pre-line border-b border-border px-4 py-2 text-sm text-muted-foreground">
@@ -897,7 +945,7 @@ export function ClientView() {
                 {method.comment}
               </p>
             ) : null}
-            <SplitPane vertical={!sideBySide} first={requestPane} second={<ResponseView result={result} sending={sending} />} />
+            <SplitPane vertical={!sideBySide} first={requestPane} second={<ResponseView result={shown?.result ?? null} recordedAt={shown?.recordedAt ?? null} sending={sending} />} />
           </div>
         )}
       </div>

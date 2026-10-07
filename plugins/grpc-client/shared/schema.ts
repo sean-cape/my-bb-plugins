@@ -68,6 +68,8 @@ export const methodInfoSchema = z.object({
   auth: z.string().nullable(),
   /** Why that profile was picked, e.g. "AUTH_TYPE_ADMIN (method option)". */
   authReason: z.string().nullable(),
+  /** The auth option value a rule matched (e.g. "AUTH_TYPE_ADMIN"), for grouping and filtering. */
+  authValue: z.string().nullable(),
 });
 export type MethodInfo = z.infer<typeof methodInfoSchema>;
 

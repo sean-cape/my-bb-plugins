@@ -96,6 +96,8 @@ export const rpcContract = defineRpcContract({
     input: z.object({ limit: z.number().int().min(1).max(500).default(100) }),
     output: z.object({ entries: z.array(historyEntrySchema) }),
   },
+  historyResult: { input: z.object({ id: z.number().int() }), output: z.object({ result: callResultSchema.nullable() }) },
+  deleteHistory: { input: z.object({ ids: z.array(z.number().int()).min(1).max(500) }), output: z.object({ deleted: z.number() }) },
   clearHistory: { input: z.null(), output: z.object({ cleared: z.number() }) },
   resetAuth: { input: z.null(), output: z.object({ cleared: z.number() }) },
 });
@@ -103,6 +105,7 @@ export const rpcContract = defineRpcContract({
 /** Realtime channel the page refetches on. */
 const CHANGED = "changed";
 const HISTORY_LIMIT = 500;
+const HISTORY_RESULT_MAX_BYTES = 256 * 1024;
 const SENSITIVE_HEADER = /authorization|cookie|token|secret|password|api-?key|session|auth|jwt|assertion/i;
 // Worst cases on the host: a descriptor build, and a token command + refresh + command, each of
 // which may wait on an interactive SSO login.
@@ -184,6 +187,7 @@ export default async function plugin(bb: BbPluginApi) {
       message TEXT NOT NULL,
       duration_ms INTEGER NOT NULL
     )`,
+    `ALTER TABLE calls ADD COLUMN result TEXT`,
   ]);
 
   async function hostId(): Promise<string> {
@@ -253,8 +257,8 @@ export default async function plugin(bb: BbPluginApi) {
 
   function record(origin: string, config: Config, launch: Launch, input: z.infer<typeof callInput>, result: CallResult) {
     db.prepare(
-      `INSERT INTO calls (at, origin, endpoint, source, method, request, metadata, ok, status, message, duration_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO calls (at, origin, endpoint, source, method, request, metadata, ok, status, message, duration_ms, result)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       Date.now(),
       origin,
@@ -267,6 +271,7 @@ export default async function plugin(bb: BbPluginApi) {
       result.status.name,
       (result.error ?? result.status.message).slice(0, 2000),
       result.durationMs,
+      storedResult(result),
     );
     db.prepare(`DELETE FROM calls WHERE id <= (SELECT id FROM calls ORDER BY id DESC LIMIT 1 OFFSET ?)`).run(HISTORY_LIMIT);
     bb.realtime.publish(CHANGED, { reason: "history" });
@@ -302,13 +307,39 @@ export default async function plugin(bb: BbPluginApi) {
     return command;
   }
 
-  function history(limit: number): HistoryEntry[] {
+  /** The result as kept in history: request metadata is already masked by the host; huge bodies are dropped. */
+  function storedResult(result: CallResult): string {
+    const json = JSON.stringify(result);
+    if (Buffer.byteLength(json) <= HISTORY_RESULT_MAX_BYTES) return json;
+    const note = `(${result.responses.length} response message(s), ${Buffer.byteLength(json)} bytes: too large to keep in history)`;
+    return JSON.stringify({ ...result, responses: [note] });
+  }
+
+  function historyResult(id: number): CallResult | null {
+    const row = db.prepare(`SELECT result FROM calls WHERE id = ?`).get(id) as { result: string | null } | undefined;
+    if (row === undefined) throw new PluginCliError(`No history entry ${id}`, { code: "not_found", hint: "Run `bb grpc history` to see ids." });
+    if (row.result === null) return null;
+    const parsed = callResultSchema.safeParse(JSON.parse(row.result));
+    return parsed.success ? parsed.data : null;
+  }
+
+  function deleteHistory(ids: number[]): number {
+    const remove = db.prepare(`DELETE FROM calls WHERE id = ?`);
+    let deleted = 0;
+    db.transaction(() => {
+      for (const id of ids) deleted += remove.run(id).changes;
+    })();
+    if (deleted > 0) bb.realtime.publish(CHANGED, { reason: "history" });
+    return deleted;
+  }
+
+  function history(limit: number, id?: number): HistoryEntry[] {
     const rows = db
       .prepare(
         `SELECT id, at, origin, endpoint, source, method, request, metadata, ok, status, message, duration_ms
-         FROM calls ORDER BY id DESC LIMIT ?`,
+         FROM calls ${id === undefined ? "" : "WHERE id = ?"} ORDER BY id DESC LIMIT ?`,
       )
-      .all(limit) as {
+      .all(...(id === undefined ? [limit] : [id, limit])) as {
       id: number;
       at: number;
       origin: string;
@@ -365,7 +396,13 @@ export default async function plugin(bb: BbPluginApi) {
     invoke: (input) => invoke("ui", input),
     command: async (input) => ({ command: await copyCommand(input) }),
     history: ({ limit }) => ({ entries: history(limit) }),
-    clearHistory: () => ({ cleared: db.prepare(`DELETE FROM calls`).run().changes }),
+    historyResult: ({ id }) => ({ result: historyResult(id) }),
+    deleteHistory: ({ ids }) => ({ deleted: deleteHistory(ids) }),
+    clearHistory: () => {
+      const cleared = db.prepare(`DELETE FROM calls`).run().changes;
+      bb.realtime.publish(CHANGED, { reason: "history" });
+      return { cleared };
+    },
     resetAuth: async () => ({ cleared: await resetAuth() }),
   });
 
@@ -656,9 +693,46 @@ export default async function plugin(bb: BbPluginApi) {
             return {
               exitCode: 0,
               stdout: entries
-                .map((entry) => `${new Date(entry.at).toISOString()}  ${entry.endpoint}  ${entry.method}  ${entry.status}  ${entry.durationMs}ms  (${entry.origin})`)
+                .map((entry) => `#${entry.id}  ${new Date(entry.at).toISOString()}  ${entry.endpoint}  ${entry.method}  ${entry.status}  ${entry.durationMs}ms  (${entry.origin})`)
                 .join("\n"),
             };
+          },
+        }),
+
+        "history show": cliCommand({
+          summary: "Show one recorded call: its request and the response it got",
+          positionals: [{ name: "id", description: "History id from `bb grpc history` (the #number)", required: true }],
+          options: { json },
+          async run({ positionals, options }) {
+            const id = Number(positionals.id.replace(/^#/, ""));
+            if (!Number.isInteger(id)) throw new PluginCliError(`Invalid history id "${positionals.id}"`, { code: "invalid_value" });
+            const [entry] = history(1, id);
+            if (entry === undefined) throw new PluginCliError(`No history entry ${id}`, { code: "not_found", hint: "Run `bb grpc history` to see ids." });
+            const result = historyResult(id);
+            if (options.json) return { exitCode: 0, stdout: boundedJson({ entry, result }) };
+            const lines = [`#${entry.id}  ${new Date(entry.at).toISOString()}  ${entry.endpoint}  ${entry.method}  ${entry.status}  ${entry.durationMs}ms`, "", "request:", entry.request];
+            if (entry.metadata.length > 0) lines.push("", "metadata:", ...entry.metadata.map(({ name, value }) => `  ${name}: ${value}`));
+            lines.push("", "response:");
+            if (result === null) lines.push("  (not recorded)");
+            else {
+              if (!result.ok) lines.push(result.error ?? `${result.status.name}: ${result.status.message}`);
+              lines.push(...result.responses.map((response) => (typeof response === "string" ? response : JSON.stringify(response, null, 2))));
+            }
+            return { exitCode: 0, stdout: bounded(lines.join("\n")) };
+          },
+        }),
+
+        "history delete": cliCommand({
+          summary: "Delete history entries by id, or all of them with --all",
+          positionals: [{ name: "ids", description: "History ids (the #number)", variadic: true }],
+          options: { all: { type: "boolean", description: "Delete every history entry" } },
+          async run({ positionals, options }) {
+            if (options.all) return { exitCode: 0, stdout: `Deleted ${db.prepare(`DELETE FROM calls`).run().changes} entries.` };
+            const ids = positionals.ids.map((raw) => Number(raw.replace(/^#/, "")));
+            if (ids.length === 0 || ids.some((id) => !Number.isInteger(id))) {
+              throw new PluginCliError("Pass one or more numeric history ids, or --all", { code: "invalid_value" });
+            }
+            return { exitCode: 0, stdout: `Deleted ${deleteHistory(ids)} of ${ids.length} entries.` };
           },
         }),
 

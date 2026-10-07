@@ -24,6 +24,7 @@ test("auth rules prefer the method option, then fall back to the service option"
   assert.deepEqual([cancel?.auth, cancel?.authReason], ["subscriber", "AUTH_TYPE_USER (service option)"]);
   assert.deepEqual([get?.auth, get?.authReason], ["subscriber", "AUTH_TYPE_USER (service option)"]);
   assert.deepEqual([list?.auth, list?.authReason], ["okta", "AUTH_TYPE_ADMIN (method option)"]);
+  assert.equal(list?.authValue, "AUTH_TYPE_ADMIN");
   assert.equal(list?.kind, "server_streaming");
   assert.equal(get?.comment, "Gets one order.");
   assert.equal(orders.comment, "Manages orders.");

@@ -83,7 +83,7 @@ function formatSize(text: string): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-export function ResponseView({ result, sending }: { result: CallResult | null; sending: boolean }) {
+export function ResponseView({ result, recordedAt, sending }: { result: CallResult | null; recordedAt: number | null; sending: boolean }) {
   const [tab, setTab] = useState<Tab>("response");
   if (result === null) {
     return (
@@ -124,6 +124,11 @@ export function ResponseView({ result, sending }: { result: CallResult | null; s
           </span>
           <span className="tabular-nums text-muted-foreground">{formatDuration(result.durationMs)}</span>
           {body !== "" ? <span className="tabular-nums text-muted-foreground">{formatSize(body)}</span> : null}
+          {recordedAt !== null ? (
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" title={new Date(recordedAt).toLocaleString()}>
+              from history · {new Date(recordedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+            </span>
+          ) : null}
         </div>
         <div className="ml-auto flex items-center gap-1" role="tablist">
           {tabs.map((entry) => (

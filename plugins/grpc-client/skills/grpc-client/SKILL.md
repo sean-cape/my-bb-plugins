@@ -20,7 +20,9 @@ bb grpc call dev pkg.v1.FooAPI/GetFoo --data '{"id": "123"}'
 bb grpc call dev GetFoo --data-stdin < request.json  # unique method names work too
 bb grpc call dev pkg.v1.FooAPI/GetFoo --json         # status, headers, trailers, every response
 bb grpc command dev pkg.v1.FooAPI/GetFoo --data '{}' # copyable grpcurl command
-bb grpc history
+bb grpc history                                      # recent calls, with #ids
+bb grpc history show 42                              # one call's request and recorded response
+bb grpc history delete 42 43                         # or --all
 ```
 
 - Request JSON uses proto3 JSON mapping. Fields are lowerCamelCase or proto

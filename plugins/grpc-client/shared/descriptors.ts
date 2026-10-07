@@ -219,19 +219,21 @@ export function resolveAuth(
   method: DescMethod,
   rules: AuthRule[],
   endpoint: Endpoint,
-): { auth: string | null; reason: string | null } {
+): { auth: string | null; reason: string | null; value: string | null } {
   if (endpoint.auth !== undefined) {
-    return endpoint.auth === "none" ? { auth: null, reason: "disabled for endpoint" } : { auth: endpoint.auth, reason: "endpoint" };
+    return endpoint.auth === "none"
+      ? { auth: null, reason: "disabled for endpoint", value: null }
+      : { auth: endpoint.auth, reason: "endpoint", value: null };
   }
   for (const rule of rules) {
     const fromMethod = rule.methodOption ? optionFieldValue(registry, method, rule.methodOption, rule.field) : undefined;
     const value = fromMethod ?? (rule.serviceOption ? optionFieldValue(registry, method.parent, rule.serviceOption, rule.field) : undefined);
     if (value === undefined) continue;
     const where = fromMethod !== undefined ? "method option" : "service option";
-    if (!Object.hasOwn(rule.profiles, value)) return { auth: null, reason: `${value} (${where}, no profile mapped)` };
-    return { auth: rule.profiles[value] ?? null, reason: `${value} (${where})` };
+    if (!Object.hasOwn(rule.profiles, value)) return { auth: null, reason: `${value} (${where}, no profile mapped)`, value };
+    return { auth: rule.profiles[value] ?? null, reason: `${value} (${where})`, value };
   }
-  return { auth: null, reason: null };
+  return { auth: null, reason: null, value: null };
 }
 
 export function listServices(registry: FileRegistry, rules: AuthRule[], endpoint: Endpoint): ServiceInfo[] {
@@ -242,7 +244,7 @@ export function listServices(registry: FileRegistry, rules: AuthRule[], endpoint
         typeName: service.typeName,
         comment: commentFor(file, service.typeName),
         methods: service.methods.map((method): MethodInfo => {
-          const { auth, reason } = resolveAuth(registry, method, rules, endpoint);
+          const { auth, reason, value } = resolveAuth(registry, method, rules, endpoint);
           return {
             name: method.name,
             fullName: `${service.typeName}/${method.name}`,
@@ -253,6 +255,7 @@ export function listServices(registry: FileRegistry, rules: AuthRule[], endpoint
             comment: commentFor(file, `${service.typeName}.${method.name}`),
             auth,
             authReason: reason,
+            authValue: value,
           };
         }),
       });

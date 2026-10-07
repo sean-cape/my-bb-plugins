@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MethodInfo, ServiceInfo } from "../shared/schema";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { Popover } from "./Popover";
+import { useStored } from "./storage";
 
 const KIND_LABELS: Record<MethodInfo["kind"], string | null> = {
   unary: null,
@@ -32,6 +34,143 @@ function serviceName(typeName: string): string {
   return typeName.slice(typeName.lastIndexOf(".") + 1);
 }
 
+export interface MethodFilters {
+  /** Auth groups to show; empty shows every group. */
+  auth: string[];
+  /** Fully-qualified services to show; empty shows every service. */
+  services: string[];
+  hideDeprecated: boolean;
+}
+
+const NO_FILTERS: MethodFilters = { auth: [], services: [], hideDeprecated: false };
+
+/** The option value a rule matched, else the profile, so filters work with or without auth rules. */
+function authGroup(method: MethodInfo): string {
+  if (method.authValue !== null) return method.authValue;
+  return method.auth === null ? "none" : `profile:${method.auth}`;
+}
+
+/** "AUTH_TYPE_PARTNER_MNO" → "partner mno": strips the prefix every option value shares. */
+function groupLabeller(groups: string[]): (group: string) => string {
+  const values = groups.filter((group) => group !== "none" && !group.startsWith("profile:"));
+  let prefix = "";
+  if (values.length > 1) {
+    prefix = values.reduce((common, value) => {
+      let index = 0;
+      while (index < common.length && common[index] === value[index]) index += 1;
+      return common.slice(0, index);
+    });
+    prefix = prefix.slice(0, prefix.lastIndexOf("_") + 1);
+  }
+  return (group) => {
+    if (group === "none") return "no auth";
+    if (group.startsWith("profile:")) return group.slice("profile:".length);
+    return group.slice(prefix.length).replaceAll("_", " ").toLowerCase();
+  };
+}
+
+function passes(method: MethodInfo, filters: MethodFilters): boolean {
+  if (filters.hideDeprecated && method.deprecated) return false;
+  return filters.auth.length === 0 || filters.auth.includes(authGroup(method));
+}
+
+function toggled(list: string[], value: string): string[] {
+  return list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
+}
+
+function Checkbox({ checked, label, detail, count, onChange }: { checked: boolean; label: string; detail?: string; count?: number; onChange: () => void }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 hover:bg-state-hover">
+      <input type="checkbox" className="size-3.5 shrink-0 accent-foreground" checked={checked} onChange={onChange} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm text-foreground">{label}</span>
+        {detail ? <span className="block truncate text-[11px] text-muted-foreground">{detail}</span> : null}
+      </span>
+      {count !== undefined ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count}</span> : null}
+    </label>
+  );
+}
+
+function FilterPanel({
+  services,
+  filters,
+  onChange,
+  label,
+}: {
+  services: ServiceInfo[];
+  filters: MethodFilters;
+  onChange: (filters: MethodFilters) => void;
+  label: (group: string) => string;
+}) {
+  const [serviceQuery, setServiceQuery] = useState("");
+  const groups = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const service of services) for (const method of service.methods) counts.set(authGroup(method), (counts.get(authGroup(method)) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [services]);
+  const serviceRows = useMemo(() => {
+    const terms = serviceQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const rows = services
+      .map((service) => ({ service, count: service.methods.filter((method) => passes(method, { ...filters, services: [] })).length }))
+      .filter(({ service, count }) => (count > 0 || filters.services.includes(service.typeName)) && terms.every((term) => service.typeName.toLowerCase().includes(term)));
+    // Selected APIs first, so the current scope is visible without scrolling.
+    return rows.sort((a, b) => Number(filters.services.includes(b.service.typeName)) - Number(filters.services.includes(a.service.typeName)));
+  }, [services, filters, serviceQuery]);
+
+  return (
+    <div className="flex max-h-[min(32rem,70vh)] flex-col">
+      <div className="flex items-center justify-between px-2 pb-1 pt-1">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Auth type</span>
+        {filters.auth.length > 0 ? (
+          <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => onChange({ ...filters, auth: [] })}>
+            Any
+          </button>
+        ) : null}
+      </div>
+      {groups.map(([group, count]) => (
+        <Checkbox key={group} checked={filters.auth.includes(group)} label={label(group)} count={count} onChange={() => onChange({ ...filters, auth: toggled(filters.auth, group) })} />
+      ))}
+      <Checkbox
+        checked={filters.hideDeprecated}
+        label="Hide deprecated methods"
+        onChange={() => onChange({ ...filters, hideDeprecated: !filters.hideDeprecated })}
+      />
+      <div className="mt-1.5 flex items-center justify-between border-t border-border px-2 pb-1 pt-2">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          APIs{filters.services.length > 0 ? ` · ${filters.services.length} selected` : ""}
+        </span>
+        {filters.services.length > 0 ? (
+          <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => onChange({ ...filters, services: [] })}>
+            All
+          </button>
+        ) : null}
+      </div>
+      <div className="px-1 pb-1">
+        <input
+          className="h-7 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          placeholder="Find an API"
+          value={serviceQuery}
+          spellCheck={false}
+          onChange={(event) => setServiceQuery(event.target.value)}
+        />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {serviceRows.length === 0 ? <p className="px-2 py-2 text-xs text-muted-foreground">No APIs match.</p> : null}
+        {serviceRows.map(({ service, count }) => (
+          <Checkbox
+            key={service.typeName}
+            checked={filters.services.includes(service.typeName)}
+            label={serviceName(service.typeName)}
+            detail={service.typeName.slice(0, service.typeName.lastIndexOf("."))}
+            count={count}
+            onChange={() => onChange({ ...filters, services: toggled(filters.services, service.typeName) })}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MethodRow({ method, selected, detail, onSelect }: { method: MethodInfo; selected: boolean; detail?: string; onSelect: () => void }) {
   return (
     <button
@@ -56,13 +195,19 @@ function MethodRow({ method, selected, detail, onSelect }: { method: MethodInfo;
 export function MethodList({
   services,
   selected,
+  filterKey,
   onSelect,
 }: {
   services: ServiceInfo[];
   selected: string | null;
+  /** Filters persist per key (the proto source), since services differ between sources. */
+  filterKey: string;
   onSelect: (method: MethodInfo) => void;
 }) {
-  const [filter, setFilter] = useState("");
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useStored<MethodFilters>(`filters:${filterKey}`, NO_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchAll, setSearchAll] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     const open = selected === null ? undefined : services.find((service) => service.methods.some((method) => method.fullName === selected));
     return new Set(open === undefined ? [] : [open.typeName]);
@@ -72,15 +217,41 @@ export function MethodList({
     // Only on mount: later selections come from clicks on rows that are already visible.
     listRef.current?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: "center" });
   }, []);
+  useEffect(() => setSearchAll(false), [query]);
+
+  const label = useMemo(() => {
+    const groups = new Set<string>();
+    for (const service of services) for (const method of service.methods) groups.add(authGroup(method));
+    return groupLabeller([...groups]);
+  }, [services]);
 
   const total = useMemo(() => services.reduce((count, service) => count + service.methods.length, 0), [services]);
-  const matches = useMemo(() => {
-    const terms = filter.toLowerCase().split(/\s+/).filter(Boolean);
+  // Saved APIs that no longer exist in these protos must not hide everything.
+  const scope = useMemo(() => {
+    const known = new Set(services.map((service) => service.typeName));
+    return filters.services.filter((name) => known.has(name));
+  }, [services, filters.services]);
+  const active = filters.auth.length > 0 || scope.length > 0 || filters.hideDeprecated;
+  const visibleServices = useMemo(
+    () =>
+      services
+        .filter((service) => scope.length === 0 || scope.includes(service.typeName))
+        .map((service) => ({ service, methods: service.methods.filter((method) => passes(method, filters)) }))
+        .filter((entry) => entry.methods.length > 0),
+    [services, filters, scope],
+  );
+  const visibleCount = visibleServices.reduce((count, entry) => count + entry.methods.length, 0);
+
+  const search = useMemo(() => {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return null;
-    return services.flatMap((service) =>
-      service.methods.filter((method) => terms.every((term) => method.fullName.toLowerCase().includes(term))),
-    );
-  }, [services, filter]);
+    const matches = (method: MethodInfo) => terms.every((term) => method.fullName.toLowerCase().includes(term));
+    const inScope = visibleServices.flatMap((entry) => entry.methods.filter(matches));
+    const everywhere = services.flatMap((service) => service.methods.filter(matches));
+    return { inScope, everywhere };
+  }, [services, visibleServices, query]);
+  const results = search === null ? null : searchAll ? search.everywhere : search.inScope;
+  const hiddenMatches = search === null ? 0 : search.everywhere.length - search.inScope.length;
 
   const toggle = (typeName: string) =>
     setExpanded((current) => {
@@ -90,45 +261,96 @@ export function MethodList({
       return next;
     });
 
+  const summary = [
+    ...filters.auth.map(label),
+    ...(scope.length === 1 ? [serviceName(scope[0]!)] : scope.length > 1 ? [`${scope.length} APIs`] : []),
+    ...(filters.hideDeprecated ? ["no deprecated"] : []),
+  ].join(" · ");
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-2 pb-1.5 pt-2">
-        <div className="relative">
-          <Icon name="Search" className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-            placeholder={`Search ${total} methods`}
-            value={filter}
-            spellCheck={false}
-            onChange={(event) => setFilter(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setFilter("");
-              if (event.key === "Enter" && matches?.length) onSelect(matches[0]!);
-            }}
-          />
-          {filter !== "" ? (
+      <div className="space-y-1.5 px-2 pb-1.5 pt-2">
+        <div className="flex items-center gap-1">
+          <div className="relative min-w-0 flex-1">
+            <Icon name="Search" className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-7 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              placeholder={active ? `Search ${visibleCount} of ${total} methods` : `Search ${total} methods`}
+              value={query}
+              spellCheck={false}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setQuery("");
+                if (event.key === "Enter" && results?.length) onSelect(results[0]!);
+              }}
+            />
+            {query !== "" ? (
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+                onClick={() => setQuery("")}
+              >
+                <Icon name="X" className="size-3.5" />
+              </button>
+            ) : null}
+          </div>
+          <Popover
+            open={filtersOpen}
+            onOpenChange={setFiltersOpen}
+            label="Method filters"
+            className="left-auto right-0 w-80"
+            trigger={
+              <button
+                type="button"
+                className={cn(
+                  "flex h-8 items-center gap-1 rounded-md px-2 text-muted-foreground hover:bg-state-hover hover:text-foreground",
+                  (active || filtersOpen) && "bg-state-active text-foreground",
+                )}
+                aria-label="Filter methods"
+                aria-expanded={filtersOpen}
+                title="Filter methods"
+                onClick={() => setFiltersOpen(!filtersOpen)}
+              >
+                <Icon name="FilterHorizontal" className="size-4" />
+              </button>
+            }
+          >
+            <FilterPanel services={services} filters={{ ...filters, services: scope }} onChange={setFilters} label={label} />
+          </Popover>
+        </div>
+        {active ? (
+          <div className="flex items-center gap-1.5 px-1 text-xs">
+            <button type="button" className="min-w-0 flex-1 truncate text-left text-foreground/80 hover:text-foreground" title={summary} onClick={() => setFiltersOpen(true)}>
+              {summary}
+            </button>
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {visibleCount}/{total}
+            </span>
             <button
               type="button"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-              aria-label="Clear search"
-              onClick={() => setFilter("")}
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+              aria-label="Clear filters"
+              title="Clear filters"
+              onClick={() => setFilters(NO_FILTERS)}
             >
               <Icon name="X" className="size-3.5" />
             </button>
-          ) : null}
-        </div>
-        {matches !== null ? (
-          <p className="mt-1.5 px-1 text-xs text-muted-foreground">
-            {matches.length} of {total} methods{matches.length > 0 ? " · Enter opens the first" : ""}
+          </div>
+        ) : null}
+        {results !== null ? (
+          <p className="px-1 text-xs text-muted-foreground">
+            {results.length} match{results.length === 1 ? "" : "es"}
+            {searchAll && active ? " across all APIs" : ""}
+            {results.length > 0 ? " · Enter opens the first" : ""}
           </p>
         ) : null}
       </div>
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {matches !== null ? (
-          matches.length === 0 ? (
-            <p className="px-2 py-6 text-center text-sm text-muted-foreground">No methods match “{filter}”.</p>
-          ) : (
-            matches.map((method) => (
+        {results !== null ? (
+          <>
+            {results.length === 0 && hiddenMatches === 0 ? <p className="px-2 py-6 text-center text-sm text-muted-foreground">No methods match “{query}”.</p> : null}
+            {results.map((method) => (
               <MethodRow
                 key={method.fullName}
                 method={method}
@@ -136,30 +358,60 @@ export function MethodList({
                 detail={method.fullName.slice(0, method.fullName.indexOf("/"))}
                 onSelect={() => onSelect(method)}
               />
-            ))
-          )
+            ))}
+            {!searchAll && hiddenMatches > 0 ? (
+              <button
+                type="button"
+                className="mt-1 w-full rounded-md px-2 py-2 text-left text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                onClick={() => setSearchAll(true)}
+              >
+                {results.length === 0 ? "No matches in your filters. " : ""}Show {hiddenMatches} more outside your filters
+              </button>
+            ) : null}
+          </>
+        ) : visibleServices.length === 0 ? (
+          <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+            <p>No methods match these filters.</p>
+            <button type="button" className="mt-2 text-xs underline-offset-2 hover:text-foreground hover:underline" onClick={() => setFilters(NO_FILTERS)}>
+              Clear filters
+            </button>
+          </div>
         ) : (
-          services.map((service) => {
-            const open = expanded.has(service.typeName);
-            const containsSelected = service.methods.some((method) => method.fullName === selected);
+          visibleServices.map(({ service, methods }) => {
+            const open = expanded.has(service.typeName) || visibleServices.length === 1;
+            const containsSelected = methods.some((method) => method.fullName === selected);
+            const focused = scope.length === 1 && scope[0] === service.typeName;
             return (
               <div key={service.typeName}>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left hover:bg-state-hover"
-                  title={`${service.typeName}${service.comment ? `\n\n${service.comment}` : ""}`}
-                  onClick={() => toggle(service.typeName)}
-                  aria-expanded={open}
-                >
-                  <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className={cn("min-w-0 flex-1 truncate text-sm font-medium", containsSelected ? "text-foreground" : "text-foreground/90")}>
-                    {serviceName(service.typeName)}
-                  </span>
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{service.methods.length}</span>
-                </button>
+                <div className="group flex items-center rounded-md hover:bg-state-hover">
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1.5 text-left"
+                    title={`${service.typeName}${service.comment ? `\n\n${service.comment}` : ""}`}
+                    onClick={() => toggle(service.typeName)}
+                    aria-expanded={open}
+                  >
+                    <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className={cn("min-w-0 flex-1 truncate text-sm font-medium", containsSelected ? "text-foreground" : "text-foreground/90")}>
+                      {serviceName(service.typeName)}
+                    </span>
+                  </button>
+                  {focused ? null : (
+                    <button
+                      type="button"
+                      className="shrink-0 rounded p-1 text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                      aria-label={`Show only ${serviceName(service.typeName)}`}
+                      title="Show only this API"
+                      onClick={() => setFilters({ ...filters, services: [service.typeName] })}
+                    >
+                      <Icon name="Target" className="size-3.5" />
+                    </button>
+                  )}
+                  <span className="w-7 shrink-0 pr-1.5 text-right text-xs tabular-nums text-muted-foreground">{methods.length}</span>
+                </div>
                 {open ? (
                   <div className="mb-1 ml-3 border-l border-border pl-1.5">
-                    {service.methods.map((method) => (
+                    {methods.map((method) => (
                       <MethodRow key={method.fullName} method={method} selected={method.fullName === selected} onSelect={() => onSelect(method)} />
                     ))}
                   </div>
