@@ -7,9 +7,10 @@
 // between columns with `bb kanban move <column>`.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
   PluginCliError,
@@ -179,6 +180,14 @@ export function defaultSelected(finding: Finding): boolean {
 }
 
 export const selectionSchema = z.record(z.string(), z.boolean());
+/** Reviewer edits to a finding's wording; applied over the report before it is shown or handed to the apply thread. */
+export const findingEditSchema = z.object({
+  title: z.string().trim().min(1).max(300).optional(),
+  description: z.string().max(10_000).optional(),
+  fix: z.string().max(10_000).nullable().optional(),
+});
+export type FindingEdit = z.infer<typeof findingEditSchema>;
+export const findingEditsSchema = z.record(z.string(), findingEditSchema);
 
 /** The machine-readable report the code-review skill appends as a ```json review-findings block. */
 export const reviewReportSchema = z.object({
@@ -201,6 +210,128 @@ export const severityCountsSchema = z.object({
 export type SeverityCounts = z.infer<typeof severityCountsSchema>;
 
 const REPORT_BLOCK = /```json\s+review-findings\s*\n([\s\S]*?)\n```/u;
+
+/** One entry of the change tour: a file, how much attention it needs, and why. */
+const lineRangeSchema = z.tuple([z.number().int().min(1), z.number().int().min(1)]);
+/** A semantic label for a block of the diff that would otherwise read as a wall of red and green. */
+export const semanticChangeSchema = z.object({
+  kind: z.enum(["rename", "move", "signature", "reorder", "reformat", "extract", "inline", "logic"]).default("logic"),
+  label: z.string(),
+  oldLines: lineRangeSchema.nullable().default(null),
+  newLines: lineRangeSchema.nullable().default(null),
+});
+export type SemanticChange = z.infer<typeof semanticChangeSchema>;
+export const narrativeFileSchema = z.object({
+  path: z.string(),
+  role: z.enum(["key", "supporting", "mechanical"]).default("supporting"),
+  note: z.string().default(""),
+  /** New-side line numbers worth looking at first, if any. */
+  lines: z.array(z.number().int().min(1)).default([]),
+  /** 1 = skim, 5 = read every line (behaviour, concurrency, auth, migrations, error paths). */
+  risk: z.number().int().min(1).max(5).nullable().default(null),
+  changes: z.array(semanticChangeSchema).default([]),
+});
+/** The machine-readable tour an agent appends as a ```json kanban-narrative block. */
+export const narrativeReportSchema = z.object({
+  version: z.number().int().default(1),
+  summary: z.string(),
+  readingOrder: z.array(narrativeFileSchema).default([]),
+  watchOut: z.array(z.string()).default([]),
+});
+export type NarrativeReport = z.infer<typeof narrativeReportSchema>;
+export const narrativeSchema = z.object({
+  id: z.string(),
+  ticketId: z.string(),
+  threadId: z.string(),
+  status: z.enum(["running", "completed", "failed"]),
+  /** Diff head the tour describes; a different current head marks it stale. */
+  headSha: z.string().nullable(),
+  report: narrativeReportSchema.nullable(),
+  error: z.string().nullable(),
+  createdAt: z.number(),
+  completedAt: z.number().nullable(),
+});
+export type Narrative = z.infer<typeof narrativeSchema>;
+const NARRATIVE_BLOCK = /```json\s+kanban-narrative\s*\n([\s\S]*?)\n```/u;
+
+/** An agent's explanation of one hunk, keyed by the lines it covers on one side of the diff at one head. */
+export const hunkExplanationSchema = z.object({
+  id: z.string(),
+  ticketId: z.string(),
+  path: z.string(),
+  side: z.enum(["old", "new"]),
+  startLine: z.number().int(),
+  endLine: z.number().int(),
+  headSha: z.string().nullable(),
+  threadId: z.string(),
+  status: z.enum(["running", "completed", "failed"]),
+  body: z.string().nullable(),
+  createdAt: z.number(),
+  completedAt: z.number().nullable(),
+});
+export type HunkExplanation = z.infer<typeof hunkExplanationSchema>;
+
+/** What changed between the head the reviewer last looked at and the current one. */
+export const diffDeltaSchema = z.object({
+  fromSha: z.string(),
+  toSha: z.string(),
+  files: z.array(
+    z.object({
+      path: z.string(),
+      status: z.string(),
+      additions: z.number().int(),
+      deletions: z.number().int(),
+      /** New-side line ranges touched since `fromSha`. */
+      ranges: z.array(z.tuple([z.number().int(), z.number().int()])),
+    }),
+  ),
+});
+export type DiffDelta = z.infer<typeof diffDeltaSchema>;
+
+/** New-side line ranges a unified patch touches (added lines, and the insertion point of pure deletions). */
+export function newLineRangesFromPatch(patch: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let line = 0;
+  let open: [number, number] | null = null;
+  const close = () => {
+    if (open !== null) ranges.push(open);
+    open = null;
+  };
+  for (const raw of patch.split("\n")) {
+    const header = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u.exec(raw);
+    if (header !== null) {
+      close();
+      line = Number.parseInt(header[1]!, 10);
+      continue;
+    }
+    if (raw.startsWith("+")) {
+      if (open === null) open = [line, line];
+      else open[1] = line;
+      line += 1;
+    } else if (raw.startsWith("-")) {
+      if (open === null) open = [Math.max(1, line), Math.max(1, line)];
+    } else if (raw.startsWith("\\")) {
+      continue;
+    } else {
+      close();
+      line += 1;
+    }
+  }
+  close();
+  return ranges;
+}
+
+export function parseNarrative(body: string | null): NarrativeReport | null {
+  if (body === null) return null;
+  const match = NARRATIVE_BLOCK.exec(body);
+  if (match === null) return null;
+  try {
+    const parsed = narrativeReportSchema.safeParse(JSON.parse(match[1]!));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Pulls the structured report out of a review body; null when absent or malformed. */
 export function parseReviewReport(body: string | null): ReviewReport | null {
@@ -268,13 +399,15 @@ export const reviewSchema = z.object({
   selection: selectionSchema,
   /** Only the findings the user explicitly toggled. */
   selectionOverrides: selectionSchema,
+  /** Wording changes the user made per finding; `report.findings` already has them applied. */
+  findingEdits: findingEditsSchema,
   createdAt: z.number(),
   completedAt: z.number().nullable(),
   apply: reviewApplySchema.nullable(),
 });
 export type Review = z.infer<typeof reviewSchema>;
 export const reviewSummarySchema = reviewSchema
-  .omit({ body: true, report: true, selection: true, selectionOverrides: true })
+  .omit({ body: true, report: true, selection: true, selectionOverrides: true, findingEdits: true })
   .extend({
     hasBody: z.boolean(),
     counts: severityCountsSchema.nullable(),
@@ -474,8 +607,11 @@ export const structuralDiffSchema = z.object({
   status: z.enum(["unchanged", "changed", "created", "deleted"]).nullable(),
   oldText: z.string(),
   newText: z.string(),
-  /** Hunks of aligned line pairs; a null side means no corresponding line. */
-  chunks: z.array(z.array(z.object({ lhs: structuralLineSchema.nullable(), rhs: structuralLineSchema.nullable() }))),
+  /** Every row of the side-by-side view, old and new line numbers; a null side is a blank cell. Covers the whole file. */
+  aligned: z.array(z.tuple([z.number().int().nullable(), z.number().int().nullable()])),
+  /** Changed spans per side, keyed by line; lines absent here are unchanged. */
+  oldChanges: z.array(structuralLineSchema),
+  newChanges: z.array(structuralLineSchema),
 });
 export type StructuralDiff = z.infer<typeof structuralDiffSchema>;
 
@@ -483,6 +619,8 @@ export const symbolDefinitionSchema = z.object({
   path: z.string(),
   line: z.number().int().nullable(),
   snippet: z.string(),
+  /** Source around the definition for an inline peek: `lines[0]` is line `startLine`. Null when only GitHub search was available. */
+  context: z.object({ startLine: z.number().int(), lines: z.array(z.string()) }).nullable().default(null),
 });
 export const symbolLookupSchema = z.object({
   symbol: z.string(),
@@ -496,6 +634,14 @@ export const symbolLookupSchema = z.object({
   searched: z.enum(["workspace", "github", "none"]),
 });
 export type SymbolLookup = z.infer<typeof symbolLookupSchema>;
+export const symbolUsagesSchema = z.object({
+  symbol: z.string(),
+  usages: z.array(z.object({ path: z.string(), line: z.number().int(), snippet: z.string() })),
+  open: symbolLookupSchema.shape.open,
+  searched: z.enum(["workspace", "none"]),
+  truncated: z.boolean(),
+});
+export type SymbolUsages = z.infer<typeof symbolUsagesSchema>;
 
 /** A comment the user left on the card's diff. Posted to GitHub and/or handed to an apply thread on submit. */
 export const diffSideSchema = z.enum(["LEFT", "RIGHT"]);
@@ -625,9 +771,51 @@ export const rpcContract = defineRpcContract({
     input: z.object({ ticketId: z.string(), symbol: z.string().trim().min(1).max(200) }).strict(),
     output: symbolLookupSchema,
   },
+  /** Every whole-word occurrence of a symbol in the card's local checkout. */
+  symbol_usages: {
+    input: z.object({ ticketId: z.string(), symbol: z.string().trim().min(1).max(200) }).strict(),
+    output: symbolUsagesSchema,
+  },
+  /** A slice of a file in the card's local checkout, for widening an inline peek. */
+  symbol_peek_file: {
+    input: z.object({ ticketId: z.string(), path: z.string().min(1), startLine: z.number().int().min(1), endLine: z.number().int().min(1) }).strict(),
+    output: z.object({ startLine: z.number().int(), lines: z.array(z.string()), totalLines: z.number().int() }),
+  },
   diff_comments_list: {
     input: z.object({ ticketId: z.string() }).strict(),
     output: z.object({ comments: z.array(diffCommentSchema) }),
+  },
+  /** The agent-written tour of a card's changes: latest one, plus whether the diff head moved since. */
+  narrative_get: {
+    input: z.object({ ticketId: z.string() }).strict(),
+    output: z.object({ narrative: narrativeSchema.nullable(), stale: z.boolean() }),
+  },
+  narrative_generate: {
+    input: z.object({ ticketId: z.string() }).strict(),
+    output: narrativeSchema,
+  },
+  /** Agent explanations of hunks for the diff's current head. */
+  hunk_explanations_list: {
+    input: z.object({ ticketId: z.string() }).strict(),
+    output: z.object({ explanations: z.array(hunkExplanationSchema) }),
+  },
+  hunk_explain: {
+    input: z.object({ ticketId: z.string(), path: z.string().min(1), side: z.enum(["old", "new"]).default("new"), startLine: z.number().int().min(1), endLine: z.number().int().min(1) }).strict(),
+    output: hunkExplanationSchema,
+  },
+  /** Files and line ranges that changed since the reviewer's last viewed head; null when the head has not moved. */
+  diff_delta: {
+    input: z.object({ ticketId: z.string() }).strict(),
+    output: z.object({ delta: diffDeltaSchema.nullable() }),
+  },
+  /** Files the reviewer has ticked as viewed; marks on an older head carry over for files that did not change since. */
+  diff_viewed_list: {
+    input: z.object({ ticketId: z.string() }).strict(),
+    output: z.object({ paths: z.array(z.string()) }),
+  },
+  diff_viewed_set: {
+    input: z.object({ ticketId: z.string(), path: z.string().min(1), viewed: z.boolean() }).strict(),
+    output: z.object({ paths: z.array(z.string()) }),
   },
   diff_comment_add: {
     input: z
@@ -700,6 +888,11 @@ export const rpcContract = defineRpcContract({
   },
   review_reset_selection: {
     input: z.object({ reviewId: z.string() }).strict(),
+    output: reviewSchema,
+  },
+  /** Reword a finding before it is applied; `edit: null` restores the reviewer's original text. */
+  review_edit_finding: {
+    input: z.object({ reviewId: z.string(), findingId: z.string(), edit: findingEditSchema.nullable() }).strict(),
     output: reviewSchema,
   },
   review_apply: {
@@ -928,6 +1121,32 @@ interface TicketRow {
   updated_at: number;
 }
 
+interface HunkExplanationRow {
+  id: string;
+  ticket_id: string;
+  path: string;
+  side: "old" | "new";
+  start_line: number;
+  end_line: number;
+  head_sha: string | null;
+  thread_id: string;
+  status: "running" | "completed" | "failed";
+  body: string | null;
+  created_at: number;
+  completed_at: number | null;
+}
+
+interface NarrativeRow {
+  id: string;
+  ticket_id: string;
+  thread_id: string;
+  status: "running" | "completed" | "failed";
+  head_sha: string | null;
+  body: string | null;
+  created_at: number;
+  completed_at: number | null;
+}
+
 interface ReviewRow {
   id: string;
   ticket_id: string;
@@ -947,6 +1166,7 @@ interface ReviewRow {
   apply_finding_ids: string | null;
   apply_push: number | null;
   selection_overrides: string | null;
+  finding_edits: string | null;
 }
 
 interface PrCommentRow {
@@ -1112,8 +1332,35 @@ function effectiveSelection(report: ReviewReport | null, overrides: Record<strin
   return Object.fromEntries(report.findings.map((finding) => [finding.id, overrides[finding.id] ?? defaultSelected(finding)]));
 }
 
+function parseFindingEdits(raw: string | null): Record<string, FindingEdit> {
+  try {
+    const parsed = findingEditsSchema.safeParse(JSON.parse(raw ?? "{}"));
+    return parsed.success ? parsed.data : {};
+  } catch {
+    return {};
+  }
+}
+
+function applyFindingEdits(report: ReviewReport | null, edits: Record<string, FindingEdit>): ReviewReport | null {
+  if (report === null || Object.keys(edits).length === 0) return report;
+  return {
+    ...report,
+    findings: report.findings.map((finding) => {
+      const edit = edits[finding.id];
+      if (edit === undefined) return finding;
+      return {
+        ...finding,
+        title: edit.title ?? finding.title,
+        description: edit.description ?? finding.description,
+        fix: edit.fix === undefined ? finding.fix : edit.fix,
+      };
+    }),
+  };
+}
+
 function rowToReview(row: ReviewRow): Review {
-  const report = parseReviewReport(row.body);
+  const findingEdits = parseFindingEdits(row.finding_edits);
+  const report = applyFindingEdits(parseReviewReport(row.body), findingEdits);
   const selectionOverrides = parseSelection(row.selection_overrides);
   return {
     id: row.id,
@@ -1128,6 +1375,7 @@ function rowToReview(row: ReviewRow): Review {
     report,
     selection: effectiveSelection(report, selectionOverrides),
     selectionOverrides,
+    findingEdits,
     createdAt: row.created_at,
     completedAt: row.completed_at,
     apply:
@@ -1315,11 +1563,24 @@ export default async function plugin(bb: BbPluginApi) {
         "When on, a thread is spawned in the matching project as soon as a PR card is created. The agent briefs itself on the PR and waits.",
       default: true,
     },
+    autoCreateProjects: {
+      type: "boolean",
+      label: "Create a project for each new repository",
+      description:
+        "When a PR card's repository matches no project's git remote, clone it and create a project for it so threads, reviews and applies can run there.",
+      default: true,
+    },
+    cloneDir: {
+      type: "string",
+      label: "Clone directory",
+      description: "Where auto-created projects are cloned. Empty uses <bb data dir>/plugins/kanban/repos/<owner>/<repo>.",
+      default: "",
+    },
     defaultProject: {
       type: "project",
       label: "Fallback project",
       description:
-        "Used for PR cards whose repository does not match any project's git remote, and as the default for ad hoc tickets.",
+        "Used for PR cards whose repository does not match any project's git remote (and auto-creation is off), and as the default for ad hoc tickets.",
     },
     difftPath: {
       type: "string",
@@ -1468,6 +1729,42 @@ export default async function plugin(bb: BbPluginApi) {
       updated_at INTEGER NOT NULL
     )`,
     `CREATE INDEX IF NOT EXISTS dumps_thread ON dumps(thread_id)`,
+    `CREATE TABLE IF NOT EXISTS diff_viewed (
+      ticket_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      head_sha TEXT NOT NULL,
+      viewed_at INTEGER NOT NULL,
+      PRIMARY KEY (ticket_id, path)
+    )`,
+    `CREATE TABLE IF NOT EXISTS narratives (
+      id TEXT PRIMARY KEY,
+      ticket_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      head_sha TEXT,
+      body TEXT,
+      created_at INTEGER NOT NULL,
+      completed_at INTEGER
+    )`,
+    `CREATE INDEX IF NOT EXISTS narratives_ticket ON narratives(ticket_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS narratives_thread ON narratives(thread_id)`,
+    `ALTER TABLE reviews ADD COLUMN finding_edits TEXT`,
+    `CREATE TABLE IF NOT EXISTS hunk_explanations (
+      id TEXT PRIMARY KEY,
+      ticket_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      side TEXT NOT NULL,
+      start_line INTEGER NOT NULL,
+      end_line INTEGER NOT NULL,
+      head_sha TEXT,
+      thread_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      body TEXT,
+      created_at INTEGER NOT NULL,
+      completed_at INTEGER
+    )`,
+    `CREATE INDEX IF NOT EXISTS hunk_explanations_ticket ON hunk_explanations(ticket_id, head_sha)`,
+    `CREATE INDEX IF NOT EXISTS hunk_explanations_thread ON hunk_explanations(thread_id)`,
   ]);
 
   const stmts = {
@@ -1571,6 +1868,7 @@ export default async function plugin(bb: BbPluginApi) {
       `UPDATE reviews SET apply_thread_id = ?, apply_started_at = ?, apply_finding_ids = ?, apply_push = ?, apply_completed_at = NULL, apply_pushed_commit = NULL WHERE id = ?`,
     ),
     setSelectionOverrides: db.prepare<[string | null, string]>(`UPDATE reviews SET selection_overrides = ? WHERE id = ?`),
+    setFindingEdits: db.prepare<[string | null, string]>(`UPDATE reviews SET finding_edits = ? WHERE id = ?`),
     completeApply: db.prepare<[number, string | null, string]>(
       `UPDATE reviews SET apply_completed_at = ?, apply_pushed_commit = ? WHERE id = ?`,
     ),
@@ -1625,6 +1923,39 @@ export default async function plugin(bb: BbPluginApi) {
     updateDiffComment: db.prepare<[string, number | null, number, string]>(`UPDATE diff_comments SET body = ?, line = ?, updated_at = ? WHERE id = ?`),
     deleteDiffComment: db.prepare<[string]>(`DELETE FROM diff_comments WHERE id = ?`),
     deleteDiffCommentsForTicket: db.prepare<[string]>(`DELETE FROM diff_comments WHERE ticket_id = ?`),
+    viewedPathsForHead: db.prepare<[string, string], { path: string }>(`SELECT path FROM diff_viewed WHERE ticket_id = ? AND head_sha = ? ORDER BY path`),
+    upsertViewed: db.prepare<[string, string, string, number]>(
+      `INSERT INTO diff_viewed (ticket_id, path, head_sha, viewed_at) VALUES (?, ?, ?, ?) ON CONFLICT(ticket_id, path) DO UPDATE SET head_sha = excluded.head_sha, viewed_at = excluded.viewed_at`,
+    ),
+    deleteViewed: db.prepare<[string, string]>(`DELETE FROM diff_viewed WHERE ticket_id = ? AND path = ?`),
+    deleteViewedForTicket: db.prepare<[string]>(`DELETE FROM diff_viewed WHERE ticket_id = ?`),
+    moveDiffComments: db.prepare<[string, string]>(`UPDATE diff_comments SET ticket_id = ? WHERE ticket_id = ?`),
+    unprojectedPrsForRepo: db.prepare<[string], TicketRow>(`SELECT * FROM tickets WHERE pr_repo = ? AND project_id IS NULL AND thread_id IS NULL`),
+    setProjectIfUnset: db.prepare<[string, number, string]>(`UPDATE tickets SET project_id = ?, updated_at = ? WHERE id = ? AND project_id IS NULL`),
+    moveViewed: db.prepare<[string, string]>(`UPDATE diff_viewed SET ticket_id = ? WHERE ticket_id = ?`),
+    insertNarrative: db.prepare(
+      `INSERT INTO narratives (id, ticket_id, thread_id, status, head_sha, created_at) VALUES (@id, @ticket_id, @thread_id, 'running', @head_sha, @created_at)`,
+    ),
+    latestNarrative: db.prepare<[string], NarrativeRow>(`SELECT * FROM narratives WHERE ticket_id = ? ORDER BY created_at DESC LIMIT 1`),
+    narrativeByThread: db.prepare<[string], NarrativeRow>(`SELECT * FROM narratives WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1`),
+    completeNarrative: db.prepare<[string | null, number, string]>(`UPDATE narratives SET status = 'completed', body = ?, completed_at = ? WHERE id = ?`),
+    failNarrative: db.prepare<[string | null, number, string]>(`UPDATE narratives SET status = 'failed', body = ?, completed_at = ? WHERE id = ?`),
+    deleteNarrativesForTicket: db.prepare<[string]>(`DELETE FROM narratives WHERE ticket_id = ?`),
+    moveNarratives: db.prepare<[string, string]>(`UPDATE narratives SET ticket_id = ? WHERE ticket_id = ?`),
+    insertExplanation: db.prepare(
+      `INSERT INTO hunk_explanations (id, ticket_id, path, side, start_line, end_line, head_sha, thread_id, status, created_at)
+       VALUES (@id, @ticket_id, @path, @side, @start_line, @end_line, @head_sha, @thread_id, 'running', @created_at)`,
+    ),
+    explanationsForHead: db.prepare<[string, string | null], HunkExplanationRow>(
+      `SELECT * FROM hunk_explanations WHERE ticket_id = ? AND head_sha IS ? ORDER BY created_at`,
+    ),
+    explanationByThread: db.prepare<[string], HunkExplanationRow>(`SELECT * FROM hunk_explanations WHERE thread_id = ? LIMIT 1`),
+    completeExplanation: db.prepare<[string | null, number, string]>(`UPDATE hunk_explanations SET status = 'completed', body = ?, completed_at = ? WHERE id = ?`),
+    failExplanation: db.prepare<[string | null, number, string]>(`UPDATE hunk_explanations SET status = 'failed', body = ?, completed_at = ? WHERE id = ?`),
+    deleteExplanationsForTicket: db.prepare<[string]>(`DELETE FROM hunk_explanations WHERE ticket_id = ?`),
+    moveExplanations: db.prepare<[string, string]>(`UPDATE hunk_explanations SET ticket_id = ? WHERE ticket_id = ?`),
+    viewedHeads: db.prepare<[string], { head_sha: string; viewed_at: number }>(`SELECT head_sha, MAX(viewed_at) AS viewed_at FROM diff_viewed WHERE ticket_id = ? GROUP BY head_sha ORDER BY viewed_at DESC`),
+    viewedPathsNotForHead: db.prepare<[string, string], { path: string; head_sha: string }>(`SELECT path, head_sha FROM diff_viewed WHERE ticket_id = ? AND head_sha != ?`),
     markDiffCommentPosted: db.prepare<[number, string | null, string]>(`UPDATE diff_comments SET posted_at = ?, posted_url = ? WHERE id = ?`),
     assignDiffCommentsApply: db.prepare<[string, string]>(
       `UPDATE diff_comments SET apply_id = ? WHERE id IN (SELECT value FROM json_each(?))`,
@@ -1741,6 +2072,65 @@ export default async function plugin(bb: BbPluginApi) {
     const row = stmts.byId.get(id);
     if (row === undefined) throw new Error(`No ticket with id ${id}`);
     return hydrate(row);
+  }
+
+  const THREAD_SUBJECT_PREFIX = "thread:";
+
+  /**
+   * The diff page accepts a card id or `thread:<threadId>`. A thread with a card resolves to that card; a thread
+   * without one gets a transient card-shaped subject so the diff, comments and viewed marks work before any card exists.
+   */
+  async function resolveDiffSubject(id: string): Promise<Ticket> {
+    if (!id.startsWith(THREAD_SUBJECT_PREFIX)) return getTicket(id);
+    const threadId = id.slice(THREAD_SUBJECT_PREFIX.length);
+    const linked = stmts.byThread.get(threadId);
+    if (linked !== undefined) return hydrate(linked);
+    const thread = await bb.sdk.threads.get({ threadId });
+    const now = Date.now();
+    return {
+      id,
+      title: thread.title ?? "Thread changes",
+      description: "",
+      columnId: "",
+      kind: "adhoc",
+      tags: [],
+      sourceId: null,
+      threadId,
+      reviewThreadId: null,
+      latestReview: null,
+      comments: null,
+      parentId: null,
+      children: { total: 0, done: 0, withThread: 0 },
+      pendingDiffComments: stmts.pendingDiffCommentCount.get(id)?.n ?? 0,
+      canPostToGithub: false,
+      projectId: thread.projectId,
+      pr: null,
+      jira: null,
+      position: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  /** Submitting comments needs a real card (the apply thread is tracked on it); create one for a bare thread and move its diff state over. */
+  async function ensureCardForSubject(subject: Ticket): Promise<Ticket> {
+    if (!subject.id.startsWith(THREAD_SUBJECT_PREFIX) || subject.threadId === null) return subject;
+    const columns = await getColumns();
+    const created = createTicket({
+      title: subject.title,
+      description: "",
+      columnId: columns[0]!.id,
+      kind: "adhoc",
+      threadId: subject.threadId,
+      projectId: subject.projectId,
+      pr: null,
+    });
+    stmts.moveDiffComments.run(created.id, subject.id);
+    stmts.moveViewed.run(created.id, subject.id);
+    stmts.moveNarratives.run(created.id, subject.id);
+    stmts.moveExplanations.run(created.id, subject.id);
+    publish();
+    return getTicket(created.id);
   }
 
   function nextPosition(columnId: string): number {
@@ -2321,16 +2711,262 @@ export default async function plugin(bb: BbPluginApi) {
     language?: string;
     status?: string;
     chunks?: Array<Array<{ lhs?: DifftLine | null; rhs?: DifftLine | null }>>;
+    aligned_lines?: Array<[number | null, number | null]>;
   }
 
   const structuralCache = new Map<string, StructuralDiff>();
+
+  function rowToNarrative(row: NarrativeRow): Narrative {
+    const report = row.status === "completed" ? parseNarrative(row.body) : null;
+    return {
+      id: row.id,
+      ticketId: row.ticket_id,
+      threadId: row.thread_id,
+      status: row.status,
+      headSha: row.head_sha,
+      report,
+      error: row.status === "failed" ? (row.body === null ? "The tour thread ended without writing a tour." : `The tour thread replied without a kanban-narrative block. Its last message:\n\n${row.body.slice(0, 2000)}`) : null,
+      createdAt: row.created_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  async function latestNarrative(subject: Ticket): Promise<{ narrative: Narrative | null; stale: boolean }> {
+    const row = stmts.latestNarrative.get(subject.id);
+    if (row === undefined) return { narrative: null, stale: false };
+    const head = (await ticketDiff(subject, false)).headSha;
+    return { narrative: rowToNarrative(row), stale: head !== null && row.head_sha !== null && head !== row.head_sha };
+  }
+
+  /** One agent reads the diff and writes the tour; the thread.idle handler parses its final message. */
+  async function spawnNarrative(subject: Ticket): Promise<Narrative> {
+    const running = stmts.latestNarrative.get(subject.id);
+    if (running !== undefined && running.status === "running") return rowToNarrative(running);
+    const diff = await ticketDiff(subject, false);
+    if (diff.files.length === 0) throw new Error(diff.message ?? "There are no changes to describe.");
+    const paths = diff.files.map((file) => `- ${file.path} (+${file.additions} −${file.deletions}${file.status === "modified" ? "" : `, ${file.status}`})`).join("\n");
+    const deliverable = [
+      "",
+      "Your final message must end with a ```json kanban-narrative block shaped like:",
+      "```json kanban-narrative",
+      '{"version":1,"summary":"2–4 sentences: what the change does and why, as a reviewer needs to know it.","readingOrder":[{"path":"exact/path/from/the/list","role":"key|supporting|mechanical","note":"one sentence on what to look at here","lines":[42],"risk":3,"changes":[{"kind":"rename|move|signature|reorder|reformat|extract|inline|logic","label":"renamed esimImsiToHssImsis to esimImsisToHssImsis and made it take a slice","oldLines":[170,180],"newLines":[170,178]}]}],"watchOut":["anything risky or easy to miss"]}',
+      "```",
+      "Rules: list every changed file exactly once using the paths above, in the order a reviewer should read them; `key` files carry the behaviour change, `supporting` files follow from them, `mechanical` files are renames, generated code, lockfiles or formatting. `lines` are new-side line numbers.",
+      "`risk` is 1–5 for how closely a reviewer must read the file: 5 for behaviour changes in auth, money, concurrency, data migrations or error handling; 3 for ordinary logic; 1 for generated code, lockfiles, pure renames or formatting.",
+      "`changes` names blocks of the file's diff that look like big red/green walls but are really one semantic edit, so the viewer can label them instead: a rename (say both names), a moved block, a signature change (say what changed), a reorder, a reformat, an extraction or inlining. Give old-side and new-side line ranges from `git diff`'s hunk headers; omit blocks that are plain new logic. Leave `changes` empty when nothing qualifies.",
+      "Be concrete and brief; do not change any code, and do not post anything to GitHub.",
+      `This tour belongs to kanban card ${subject.id}.`,
+    ];
+    let thread: { id: string };
+    if (subject.pr !== null) {
+      const projectId = await projectForTicket(subject, null);
+      const { repo, number, url } = subject.pr;
+      thread = await bb.sdk.threads.spawn({
+        projectId,
+        environment: await freshWorktree(projectId),
+        prompt: [
+          `Write a reviewer's tour of pull request ${repo}#${number}: "${subject.title}" (${url}).`,
+          "",
+          "Setup (this worktree is disposable). The `gh` and `git fetch` steps need your GitHub credentials, which the sandbox hides; running them with the sandbox disabled is expected and authorized here.",
+          `1. \`BASE=$(gh pr view ${number} --repo ${repo} --json baseRefName --jq .baseRefName)\``,
+          `2. \`git fetch origin "$BASE" "pull/${number}/head"\` and \`git checkout --detach FETCH_HEAD\``,
+          `3. Read \`gh pr view ${number} --repo ${repo}\` for the description, then \`git diff origin/$BASE...HEAD\` and the files it touches:`,
+          paths,
+          ...deliverable,
+        ].join("\n"),
+        title: `Tour ${repo.split("/")[1]}#${number}: ${subject.title}`.slice(0, 200),
+        ...(subject.threadId === null ? {} : { parentThreadId: subject.threadId }),
+        pluginMetadata: { ticketId: subject.id, role: "narrative" },
+      });
+    } else {
+      if (subject.threadId === null || subject.projectId === null) throw new Error("This card has no thread to read the changes from.");
+      const cardThread = await bb.sdk.threads.get({ threadId: subject.threadId });
+      if (cardThread.environmentId === null) throw new Error("The card's thread has no environment yet.");
+      thread = await bb.sdk.threads.spawn({
+        projectId: subject.projectId,
+        environment: { type: "reuse", environmentId: cardThread.environmentId },
+        prompt: [
+          `Write a reviewer's tour of the changes on this branch${diff.baseRef === null ? "" : ` relative to ${diff.baseRef}`}: "${subject.title}".`,
+          "",
+          `Read ${diff.baseRef === null ? "`git diff` and `git status`" : `\`git diff ${diff.baseRef}...HEAD\` plus any uncommitted changes (\`git diff\`, \`git status\`)`} and the files touched:`,
+          paths,
+          ...deliverable,
+        ].join("\n"),
+        title: `Tour: ${subject.title}`.slice(0, 200),
+        parentThreadId: subject.threadId,
+        pluginMetadata: { ticketId: subject.id, role: "narrative" },
+      });
+    }
+    const id = randomUUID().slice(0, 8);
+    stmts.insertNarrative.run({ id, ticket_id: subject.id, thread_id: thread.id, head_sha: diff.headSha, created_at: Date.now() });
+    publish();
+    return rowToNarrative(stmts.latestNarrative.get(subject.id)!);
+  }
+
+  /** Viewed marks are scoped to the PR head so a push resets them; environment diffs have no head and keep theirs. */
+  async function viewedHeadKey(ticket: Ticket): Promise<string> {
+    return (await ticketDiff(ticket, false)).headSha ?? "env";
+  }
+
+  const deltaCache = new Map<string, DiffDelta>();
+
+  /** GitHub's compare of two PR heads, reduced to per-file new-side ranges. Null for environment diffs or unknown shas. */
+  async function compareHeads(ticket: Ticket, fromSha: string, toSha: string): Promise<DiffDelta | null> {
+    if (ticket.pr === null || fromSha === toSha) return null;
+    const key = `${ticket.pr.repo}:${fromSha}..${toSha}`;
+    const cached = deltaCache.get(key);
+    if (cached !== undefined) return cached;
+    const auth = await resolveToken();
+    if (auth === null) return null;
+    let response: { files?: Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }> };
+    try {
+      response = await github(`/repos/${ticket.pr.repo}/compare/${fromSha}...${toSha}`, auth.token);
+    } catch (error) {
+      bb.log.warn(`could not compare ${key}: ${String(error)}`);
+      return null;
+    }
+    const delta: DiffDelta = {
+      fromSha,
+      toSha,
+      files: (response.files ?? []).map((file) => ({
+        path: file.filename,
+        status: file.status,
+        additions: file.additions,
+        deletions: file.deletions,
+        ranges: file.patch === undefined ? [] : newLineRangesFromPatch(file.patch),
+      })),
+    };
+    deltaCache.set(key, delta);
+    return delta;
+  }
+
+  /** The head the reviewer last ticked files on, when it differs from the current one. */
+  async function lastViewedHead(ticket: Ticket, currentHead: string): Promise<string | null> {
+    const heads = stmts.viewedHeads.all(ticket.id).filter((row) => row.head_sha !== currentHead && row.head_sha !== "env");
+    return heads[0]?.head_sha ?? null;
+  }
+
+  async function diffDelta(ticket: Ticket): Promise<DiffDelta | null> {
+    const head = (await ticketDiff(ticket, false)).headSha;
+    if (head === null) return null;
+    const from = await lastViewedHead(ticket, head);
+    if (from === null) return null;
+    return compareHeads(ticket, from, head);
+  }
+
+  /** Marks made on an older head still count for files that did not change since; promote them so the UI and later calls see one head. */
+  async function carryOverViewed(ticket: Ticket, head: string): Promise<void> {
+    if (head === "env") return;
+    const stale = stmts.viewedPathsNotForHead.all(ticket.id, head);
+    if (stale.length === 0) return;
+    const now = Date.now();
+    const byHead = new Map<string, string[]>();
+    for (const row of stale) byHead.set(row.head_sha, [...(byHead.get(row.head_sha) ?? []), row.path]);
+    for (const [fromSha, paths] of byHead) {
+      const delta = fromSha === "env" ? null : await compareHeads(ticket, fromSha, head);
+      if (delta === null) {
+        for (const path of paths) stmts.deleteViewed.run(ticket.id, path);
+        continue;
+      }
+      const changed = new Set(delta.files.map((file) => file.path));
+      for (const path of paths) {
+        if (changed.has(path)) stmts.deleteViewed.run(ticket.id, path);
+        else stmts.upsertViewed.run(ticket.id, path, head, now);
+      }
+    }
+  }
+
+  function rowToExplanation(row: HunkExplanationRow): HunkExplanation {
+    return {
+      id: row.id,
+      ticketId: row.ticket_id,
+      path: row.path,
+      side: row.side,
+      startLine: row.start_line,
+      endLine: row.end_line,
+      headSha: row.head_sha,
+      threadId: row.thread_id,
+      status: row.status,
+      body: row.body,
+      createdAt: row.created_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  /** A checkout that already has the subject's code: its latest review or tour thread, else the card thread, else nothing. */
+  async function reusableEnvironment(subject: Ticket): Promise<string | null> {
+    const candidates = [
+      stmts.latestCompletedReview.get(subject.id)?.thread_id ?? null,
+      stmts.latestNarrative.get(subject.id)?.thread_id ?? null,
+      subject.threadId,
+    ].filter((id): id is string => id !== null);
+    for (const threadId of candidates) {
+      try {
+        const thread = await bb.sdk.threads.get({ threadId });
+        if (thread.environmentId !== null && thread.archivedAt === null) return thread.environmentId;
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /** One short agent thread explains a hunk; the thread.idle handler stores its final message as the explanation. */
+  async function explainHunk(subject: Ticket, path: string, side: "old" | "new", startLine: number, endLine: number): Promise<HunkExplanation> {
+    const diff = await ticketDiff(subject, false);
+    const existing = stmts.explanationsForHead
+      .all(subject.id, diff.headSha)
+      .find((row) => row.path === path && row.side === side && row.start_line === startLine && row.end_line === endLine && row.status !== "failed");
+    if (existing !== undefined) return rowToExplanation(existing);
+    const where = `${path} lines ${startLine}–${endLine} (${side === "new" ? "the new version, as checked out" : "the OLD version: look at these lines in the base, e.g. `git show origin/$BASE:" + path + "`"})`;
+    const ask = [
+      `Explain the change at ${where} to a code reviewer: what it does, why it is there (read the surrounding function and use \`git grep\` to find the call sites that depend on it), and anything subtle. Keep it under 150 words of plain Markdown; no headings, no code changes, no GitHub posts.`,
+      "Your final message must be only the explanation.",
+      `This belongs to kanban card ${subject.id}.`,
+    ];
+    const environmentId = await reusableEnvironment(subject);
+    const title = `Explain ${path.split("/").pop()}:${startLine} — ${subject.title}`.slice(0, 200);
+    let thread: { id: string };
+    if (environmentId !== null) {
+      const projectId = subject.projectId ?? (subject.pr === null ? null : await projectForTicket(subject, null));
+      if (projectId === null) throw new Error("This card has no project to run the explanation in.");
+      thread = await bb.sdk.threads.spawn({
+        projectId,
+        environment: { type: "reuse", environmentId },
+        prompt: [subject.pr === null ? "" : `This checkout has pull request ${subject.pr.repo}#${subject.pr.number} checked out. \`BASE=$(gh pr view ${subject.pr.number} --repo ${subject.pr.repo} --json baseRefName --jq .baseRefName)\` if you need the base.`, ...ask].filter((line) => line !== "").join("\n"),
+        title,
+        ...(subject.threadId === null ? {} : { parentThreadId: subject.threadId }),
+        pluginMetadata: { ticketId: subject.id, role: "explain" },
+      });
+    } else if (subject.pr !== null) {
+      const projectId = await projectForTicket(subject, null);
+      const { repo, number } = subject.pr;
+      thread = await bb.sdk.threads.spawn({
+        projectId,
+        environment: await freshWorktree(projectId),
+        prompt: [
+          `Setup first (disposable worktree; GitHub steps may need the sandbox disabled, which is authorized): \`BASE=$(gh pr view ${number} --repo ${repo} --json baseRefName --jq .baseRefName)\`; \`git fetch origin "$BASE" "pull/${number}/head"\`; \`git checkout --detach FETCH_HEAD\`.`,
+          ...ask,
+        ].join("\n"),
+        title,
+        ...(subject.threadId === null ? {} : { parentThreadId: subject.threadId }),
+        pluginMetadata: { ticketId: subject.id, role: "explain" },
+      });
+    } else {
+      throw new Error("No checkout to explain from; start the card's thread first.");
+    }
+    const id = randomUUID().slice(0, 8);
+    stmts.insertExplanation.run({ id, ticket_id: subject.id, path, side, start_line: startLine, end_line: endLine, head_sha: diff.headSha, thread_id: thread.id, created_at: Date.now() });
+    publish();
+    return rowToExplanation(stmts.explanationsForHead.all(subject.id, diff.headSha).find((row) => row.id === id)!);
+  }
 
   async function structuralDiff(ticket: Ticket, path: string): Promise<StructuralDiff> {
     const sides = await fileSides(ticket, path);
     const cacheKey = `${ticket.id}:${path}:${sides.headSha ?? "env"}:${(sides.old ?? "").length}:${(sides.new ?? "").length}`;
     const cached = structuralCache.get(cacheKey);
     if (cached !== undefined && sides.headSha !== null) return cached;
-    const base: StructuralDiff = { available: false, reason: null, language: null, status: null, oldText: sides.old ?? "", newText: sides.new ?? "", chunks: [] };
+    const base: StructuralDiff = { available: false, reason: null, language: null, status: null, oldText: sides.old ?? "", newText: sides.new ?? "", aligned: [], oldChanges: [], newChanges: [] };
     if (sides.old === null && sides.new === null) return { ...base, reason: "This file has no text content on either side (binary or oversized)." };
     const { difftPath } = await settings.get();
     const dir = await mkdtemp(join(tmpdir(), "kanban-difft-"));
@@ -2343,7 +2979,9 @@ export default async function plugin(bb: BbPluginApi) {
       let stdout: string;
       try {
         ({ stdout } = await execFileAsync(difftPath, ["--display", "json", "--context", "3", "--color", "never", oldFile, newFile], {
-          env: { ...process.env, DFT_UNSTABLE: "yes" },
+          // The default parse-error limit of 0 drops to a text diff whenever the grammar lags the language
+          // (e.g. Go 1.26 `new(expr)`); tree-sitter recovers from errors well enough to keep the structural view.
+          env: { ...process.env, DFT_UNSTABLE: "yes", DFT_PARSE_ERROR_LIMIT: "10000" },
           timeout: 30_000,
           maxBuffer: 64 * 1024 * 1024,
         }));
@@ -2363,20 +3001,43 @@ export default async function plugin(bb: BbPluginApi) {
       }
       const oldLines = (sides.old ?? "").split("\n").length;
       const newLines = (sides.new ?? "").split("\n").length;
+      const pairs = (parsed.chunks ?? []).flat();
       // difftastic's JSON uses 0-based line numbers; guard against a build that already emits 1-based ones.
-      const numbers = (parsed.chunks ?? []).flat().flatMap((pair) => [pair.lhs?.line_number, pair.rhs?.line_number]).filter((n): n is number => typeof n === "number");
+      const numbers = [...pairs.flatMap((pair) => [pair.lhs?.line_number, pair.rhs?.line_number]), ...(parsed.aligned_lines ?? []).flat()].filter((n): n is number => typeof n === "number");
       const zeroBased = numbers.length === 0 || numbers.some((n) => n === 0) || Math.max(...numbers) < Math.max(oldLines, newLines);
-      const toLine = (line: DifftLine | null | undefined): StructuralDiff["chunks"][number][number]["lhs"] =>
-        line === null || line === undefined
-          ? null
-          : { line: line.line_number + (zeroBased ? 1 : 0), changes: line.changes.map((change) => ({ start: change.start, end: change.end, highlight: change.highlight })) };
+      const shift = (n: number | null | undefined): number | null => (typeof n === "number" ? n + (zeroBased ? 1 : 0) : null);
+      const collect = (side: "lhs" | "rhs"): StructuralDiff["oldChanges"] => {
+        const byLine = new Map<number, StructuralDiff["oldChanges"][number]>();
+        for (const pair of pairs) {
+          const line = pair[side];
+          if (line === null || line === undefined) continue;
+          const number = shift(line.line_number)!;
+          const entry = byLine.get(number) ?? { line: number, changes: [] };
+          entry.changes.push(...line.changes.map((change) => ({ start: change.start, end: change.end, highlight: change.highlight })));
+          byLine.set(number, entry);
+        }
+        return [...byLine.values()].sort((a, b) => a.line - b.line);
+      };
+      // difftastic emits no alignment and no chunks for a created or deleted file: every line is the change.
+      const wholeFile: StructuralDiff["aligned"] | null =
+        sides.old === null || sides.old === "" ? Array.from({ length: newLines }, (_, i) => [null, i + 1] as [number | null, number | null])
+        : sides.new === null || sides.new === "" ? Array.from({ length: oldLines }, (_, i) => [i + 1, null] as [number | null, number | null])
+        : null;
+      // Older difftastic builds lack aligned_lines; fall back to the changed pairs alone, which loses context but still renders.
+      const aligned: StructuralDiff["aligned"] =
+        wholeFile ??
+        (parsed.aligned_lines ?? pairs.map((pair) => [pair.lhs?.line_number ?? null, pair.rhs?.line_number ?? null] as [number | null, number | null]))
+          .map(([lhs, rhs]) => [shift(lhs), shift(rhs)] as [number | null, number | null])
+          .filter(([lhs, rhs]) => (lhs === null || lhs <= oldLines) && (rhs === null || rhs <= newLines) && !(lhs === null && rhs === null));
       const status = parsed.status === "unchanged" || parsed.status === "changed" || parsed.status === "created" || parsed.status === "deleted" ? parsed.status : "changed";
       const result: StructuralDiff = {
         ...base,
         available: true,
         language: parsed.language ?? null,
         status,
-        chunks: (parsed.chunks ?? []).map((chunk) => chunk.map((pair) => ({ lhs: toLine(pair.lhs), rhs: toLine(pair.rhs) }))),
+        aligned,
+        oldChanges: collect("lhs"),
+        newChanges: collect("rhs"),
       };
       structuralCache.set(cacheKey, result);
       return result;
@@ -2388,21 +3049,24 @@ export default async function plugin(bb: BbPluginApi) {
   /** Where a symbol is defined: `git grep` in a local workspace of the card, else GitHub code search for PR cards. */
   async function symbolDefinitions(ticket: Ticket, symbol: string): Promise<SymbolLookup> {
     const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    // POSIX ERE only: macOS git grep uses the BSD regex engine, where `\s` and `\b` silently never match.
+    const ws = "[[:space:]]";
+    const end = `([^[:alnum:]_]|$)`;
     // Definition shapes across the languages this board sees most; intentionally generous, ranked by the UI.
     const pattern = [
-      `^\\s*(export\\s+)?(default\\s+)?(async\\s+)?(function|class|interface|type|enum|const|let|var)\\s+${escaped}\\b`,
-      `^\\s*func\\s+(\\([^)]*\\)\\s*)?${escaped}\\s*[(\\[]`,
-      `^\\s*(type|var|const)\\s+${escaped}\\b`,
-      `^\\s*${escaped}\\s+(struct|interface)\\b`,
-      `^\\s*(def|class)\\s+${escaped}\\b`,
-      `^\\s*(pub\\s+)?(fn|struct|enum|trait|type|const|static)\\s+${escaped}\\b`,
-      `^\\s*(public|private|protected|static|final|abstract|\\s)*\\s*(class|interface|enum|record)\\s+${escaped}\\b`,
+      `^${ws}*(export${ws}+)?(default${ws}+)?(async${ws}+)?(function|class|interface|type|enum|const|let|var)${ws}+${escaped}${end}`,
+      `^${ws}*func${ws}+(\\([^)]*\\)${ws}*)?${escaped}${ws}*[(\\[]`,
+      `^${ws}*(type|var|const)${ws}+${escaped}${end}`,
+      `^${ws}*${escaped}${ws}+(struct|interface)${end}`,
+      `^${ws}*(def|class)${ws}+${escaped}${end}`,
+      `^${ws}*(pub${ws}+)?(fn|struct|enum|trait|type|const|static)${ws}+${escaped}${end}`,
+      `^${ws}*((public|private|protected|static|final|abstract)${ws}+)*(class|interface|enum|record)${ws}+${escaped}${end}`,
     ].join("|");
     const localDir = await localWorkspaceDir(ticket);
     if (localDir !== null) {
       try {
         const { stdout } = await execFileAsync("git", ["grep", "-n", "-I", "-E", "--", pattern], { cwd: localDir.path, timeout: 15_000, maxBuffer: 8 * 1024 * 1024 });
-        const definitions = stdout
+        const found = stdout
           .split("\n")
           .filter((line) => line !== "")
           .slice(0, 40)
@@ -2411,6 +3075,12 @@ export default async function plugin(bb: BbPluginApi) {
             return match === null ? null : { path: match[1]!, line: Number.parseInt(match[2]!, 10), snippet: match[3]!.trim().slice(0, 200) };
           })
           .filter((entry): entry is { path: string; line: number; snippet: string } => entry !== null);
+        const definitions = await Promise.all(
+          found.map(async (entry) => ({
+            ...entry,
+            context: await fileSlice(localDir.path, entry.path, entry.line - PEEK_BEFORE, entry.line + PEEK_AFTER),
+          })),
+        );
         return { symbol, definitions, open: { kind: "environment", environmentId: localDir.environmentId }, searched: "workspace" };
       } catch (error) {
         // git grep exits 1 when nothing matched; anything else falls through to GitHub.
@@ -2430,6 +3100,7 @@ export default async function plugin(bb: BbPluginApi) {
             path: item.path,
             line: null,
             snippet: (item.text_matches?.[0]?.fragment ?? "").split("\n").find((line) => line.includes(symbol))?.trim().slice(0, 200) ?? "",
+            context: null,
           }));
           return { symbol, definitions, open: { kind: "github", repo: ticket.pr.repo, sha: diff.headSha ?? "HEAD" }, searched: "github" };
         }
@@ -2439,10 +3110,53 @@ export default async function plugin(bb: BbPluginApi) {
     return { symbol, definitions: [], open: { kind: "none" }, searched: "none" };
   }
 
-  /** A checkout of the card's code on this server machine: the card thread's environment, else its latest review's. */
+  const PEEK_BEFORE = 2;
+  const PEEK_AFTER = 18;
+  const USAGE_LIMIT = 300;
+
+  /** Lines `[from, to]` (1-based, clamped) of a file in a checkout, or null when unreadable. */
+  async function fileSlice(dir: string, path: string, from: number, to: number): Promise<{ startLine: number; lines: string[] } | null> {
+    try {
+      const text = await readFile(join(dir, path), "utf8");
+      const all = text.split("\n");
+      const start = Math.max(1, from);
+      const end = Math.min(all.length, Math.max(start, to));
+      return { startLine: start, lines: all.slice(start - 1, end) };
+    } catch {
+      return null;
+    }
+  }
+
+  async function symbolUsages(ticket: Ticket, symbol: string): Promise<SymbolUsages> {
+    const localDir = await localWorkspaceDir(ticket);
+    if (localDir === null) return { symbol, usages: [], open: { kind: "none" }, searched: "none", truncated: false };
+    try {
+      const { stdout } = await execFileAsync("git", ["grep", "-n", "-w", "-I", "-F", "--", symbol], { cwd: localDir.path, timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+      const lines = stdout.split("\n").filter((line) => line !== "");
+      const usages = lines
+        .slice(0, USAGE_LIMIT)
+        .map((line) => {
+          const match = /^(.+?):(\d+):(.*)$/u.exec(line);
+          return match === null ? null : { path: match[1]!, line: Number.parseInt(match[2]!, 10), snippet: match[3]!.trim().slice(0, 200) };
+        })
+        .filter((entry): entry is { path: string; line: number; snippet: string } => entry !== null);
+      return { symbol, usages, open: { kind: "environment", environmentId: localDir.environmentId }, searched: "workspace", truncated: lines.length > USAGE_LIMIT };
+    } catch (error) {
+      if ((error as { code?: number }).code === 1) return { symbol, usages: [], open: { kind: "environment", environmentId: localDir.environmentId }, searched: "workspace", truncated: false };
+      throw error;
+    }
+  }
+
+  /**
+   * A checkout of the card's code on this server machine: the card thread's environment, else its latest review's.
+   * For PR cards, a checkout that does not contain the PR head is only used when no candidate does, since the
+   * card thread's worktree often lags the PR branch and would miss symbols the PR introduces.
+   */
   async function localWorkspaceDir(ticket: Ticket): Promise<{ path: string; environmentId: string } | null> {
     const config = await bb.sdk.system.config();
     const candidates = [ticket.threadId, ticket.latestReview?.threadId ?? null].filter((id): id is string => id !== null);
+    const headSha = ticket.pr === null ? null : (await ticketDiff(ticket, false)).headSha;
+    let stale: { path: string; environmentId: string } | null = null;
     for (const threadId of candidates) {
       try {
         const thread = await bb.sdk.threads.get({ threadId });
@@ -2450,12 +3164,24 @@ export default async function plugin(bb: BbPluginApi) {
         const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
         const path = (environment as { workspacePath?: string | null; path?: string | null }).workspacePath ?? (environment as { path?: string | null }).path ?? null;
         const hostId = (environment as { hostId?: string | null }).hostId ?? null;
-        if (path !== null && (hostId === null || hostId === config.primaryHostId)) return { path, environmentId: thread.environmentId };
+        if (path === null || (hostId !== null && hostId !== config.primaryHostId)) continue;
+        const found = { path, environmentId: thread.environmentId };
+        if (headSha === null || (await containsCommit(path, headSha))) return found;
+        stale ??= found;
       } catch {
         continue;
       }
     }
-    return null;
+    return stale;
+  }
+
+  async function containsCommit(dir: string, sha: string): Promise<boolean> {
+    try {
+      await execFileAsync("git", ["merge-base", "--is-ancestor", sha, "HEAD"], { cwd: dir, timeout: 10_000 });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Post pending diff comments to the PR as one GitHub review. Inline where a line is given, otherwise in the review body. */
@@ -2775,12 +3501,13 @@ export default async function plugin(bb: BbPluginApi) {
     if (ticket.projectId !== null) return ticket.projectId;
     const parentProject = ticket.parentId === null ? null : (stmts.byId.get(ticket.parentId)?.project_id ?? null);
     if (parentProject !== null) return parentProject;
-    const resolved = ticket.pr === null ? null : await resolveProjectForRepo(ticket.pr.repo);
+    const resolved = ticket.pr === null ? null : await ensureProjectForRepo(ticket.pr.repo);
     if (resolved === null) {
       throw new Error(
-        `No project matches ${ticket.pr?.repo ?? "this card"}. Pick a project, or set the fallback project in the plugin settings.`,
+        `No project matches ${ticket.pr?.repo ?? "this card"}. Pick a project, turn on project auto-creation, or set the fallback project in the plugin settings.`,
       );
     }
+    stmts.setProjectIfUnset.run(resolved, Date.now(), ticket.id);
     return resolved;
   }
 
@@ -2808,13 +3535,86 @@ export default async function plugin(bb: BbPluginApi) {
     return typeof defaultProject === "string" && defaultProject !== "" ? defaultProject : null;
   }
 
-  async function resolveProjectForRepo(repo: string, sourceProjectId: string | null = null): Promise<string | null> {
+  async function projectMatchingRepo(repo: string): Promise<string | null> {
     const projects = await bb.sdk.projects.list();
-    const match = projects.find(
-      (project) => githubRepoFromRemote(project.gitRemoteUrl) === repo,
-    );
-    if (match !== undefined) return match.id;
+    return projects.find((project) => githubRepoFromRemote(project.gitRemoteUrl) === repo)?.id ?? null;
+  }
+
+  /**
+   * Sync-time resolution: a matching project, else (with auto-creation on) null for now while the clone runs in the
+   * background and fills the card in, else the fallback.
+   */
+  async function resolveProjectForRepo(repo: string, sourceProjectId: string | null = null): Promise<string | null> {
+    const match = await projectMatchingRepo(repo);
+    if (match !== null) return match;
+    const { autoCreateProjects } = await settings.get();
+    if (autoCreateProjects === true) {
+      void ensureProjectForRepo(repo).then(
+        (projectId) => {
+          if (projectId !== null) void adoptProjectForRepo(repo, projectId);
+        },
+        (error) => bb.log.warn(`could not create a project for ${repo}: ${String(error)}`),
+      );
+      return null;
+    }
     return fallbackProject(sourceProjectId);
+  }
+
+  /** Give every project-less card for `repo` the project, and start their threads if sync would have. */
+  async function adoptProjectForRepo(repo: string, projectId: string): Promise<void> {
+    const rows = stmts.unprojectedPrsForRepo.all(repo);
+    if (rows.length === 0) return;
+    const now = Date.now();
+    for (const row of rows) stmts.setProjectIfUnset.run(projectId, now, row.id);
+    publish();
+    const { autoStartThreads } = await settings.get();
+    if (autoStartThreads !== true) return;
+    for (const row of rows) {
+      try {
+        await spawnThreadForTicket(row.id, projectId);
+      } catch (error) {
+        bb.log.warn(`could not start a thread for ticket ${row.id}: ${String(error)}`);
+      }
+    }
+  }
+
+  const projectCreations = new Map<string, Promise<string | null>>();
+
+  /** A project whose remote is `repo`: the existing one, or one created from a fresh clone when auto-creation is on. */
+  async function ensureProjectForRepo(repo: string): Promise<string | null> {
+    const match = await projectMatchingRepo(repo);
+    if (match !== null) return match;
+    const { autoCreateProjects } = await settings.get();
+    if (autoCreateProjects !== true) return fallbackProject(null);
+    let pending = projectCreations.get(repo);
+    if (pending === undefined) {
+      pending = createProjectForRepo(repo).finally(() => projectCreations.delete(repo));
+      projectCreations.set(repo, pending);
+    }
+    return pending;
+  }
+
+  async function createProjectForRepo(repo: string): Promise<string | null> {
+    const [owner, name] = repo.split("/");
+    if (owner === undefined || name === undefined || name === "") throw new Error(`Not a GitHub repository: ${repo}`);
+    const config = await bb.sdk.system.config();
+    if (config.primaryHostId === null) throw new Error("bb has no primary host to clone on");
+    const { cloneDir } = await settings.get();
+    const base = typeof cloneDir === "string" && cloneDir.trim() !== "" ? cloneDir.trim() : join(config.dataDir, "plugins", bb.pluginId, "repos");
+    const dir = join(base, owner, name);
+    // Match the transport the user's other projects use so the same credentials work.
+    const projects = await bb.sdk.projects.list();
+    const useSsh = projects.some((project) => project.gitRemoteUrl?.startsWith("git@github.com:") === true);
+    const url = useSsh ? `git@github.com:${repo}.git` : `https://github.com/${repo}.git`;
+    if (!existsSync(join(dir, ".git"))) {
+      await mkdir(dirname(dir), { recursive: true });
+      bb.log.info(`cloning ${url} to ${dir} for a new project`);
+      // Blobless clone: fast and small; worktrees fetch file contents on checkout.
+      await execFileAsync("git", ["clone", "--filter=blob:none", "--", url, dir], { timeout: 20 * 60_000, maxBuffer: 16 * 1024 * 1024 });
+    }
+    const created = await bb.sdk.projects.create({ name, source: { hostId: config.primaryHostId, path: dir, type: "local_path" } });
+    bb.log.info(`created project ${created.name} (${created.id}) for ${repo}`);
+    return created.id;
   }
 
   // ---- GitHub sync -------------------------------------------------------
@@ -3048,6 +3848,9 @@ export default async function plugin(bb: BbPluginApi) {
         stmts.setPr.run(item.title, item.html_url, pr.state, pr.role, pr.author, item.updated_at, now, existing.id);
         mergeTags(existing, sourceTags);
       }
+      // Cards still without a project (created before auto-creation, or whose clone failed): try again each sync.
+      const unprojectedRepos = new Set(stmts.openPrs.all().filter((row) => row.project_id === null && row.pr_repo !== null).map((row) => row.pr_repo!));
+      for (const repo of unprojectedRepos) void resolveProjectForRepo(repo).then((projectId) => (projectId === null ? undefined : adoptProjectForRepo(repo, projectId)));
       // Comments: refetch when the PR's updated_at moved (comments bump it) or never fetched.
       for (const row of stmts.openPrs.all()) {
         if (row.comments_synced_for !== null && row.comments_synced_for === row.pr_updated_at) continue;
@@ -3247,6 +4050,21 @@ export default async function plugin(bb: BbPluginApi) {
       publish();
       return;
     }
+    const explanationRow = stmts.explanationByThread.get(thread.id);
+    if (explanationRow !== undefined && explanationRow.status === "running") {
+      const text = lastAssistantText?.trim() ?? "";
+      if (text === "") stmts.failExplanation.run(null, Date.now(), explanationRow.id);
+      else stmts.completeExplanation.run(text, Date.now(), explanationRow.id);
+      publish();
+      return;
+    }
+    const narrativeRow = stmts.narrativeByThread.get(thread.id);
+    if (narrativeRow !== undefined && narrativeRow.status === "running") {
+      if (parseNarrative(lastAssistantText) === null) stmts.failNarrative.run(lastAssistantText, Date.now(), narrativeRow.id);
+      else stmts.completeNarrative.run(lastAssistantText, Date.now(), narrativeRow.id);
+      publish();
+      return;
+    }
     const row = stmts.reviewByThread.get(thread.id);
     if (row === undefined || row.status !== "running") return;
     const report = parseReviewReport(lastAssistantText);
@@ -3425,6 +4243,9 @@ export default async function plugin(bb: BbPluginApi) {
       stmts.deleteCommentsForTicket.run(id);
       stmts.deleteCommentAppliesForTicket.run(id);
       stmts.deleteDiffCommentsForTicket.run(id);
+      stmts.deleteViewedForTicket.run(id);
+      stmts.deleteNarrativesForTicket.run(id);
+      stmts.deleteExplanationsForTicket.run(id);
       const result = stmts.remove.run(id);
       if (result.changes > 0) publish();
       return { deleted: result.changes > 0 };
@@ -3449,12 +4270,59 @@ export default async function plugin(bb: BbPluginApi) {
       publish();
       return rowToReview(stmts.reviewById.get(reviewId)!);
     },
-    diff_get: ({ ticketId, refresh }) => ticketDiff(getTicket(ticketId), refresh),
-    diff_structural: ({ ticketId, path }) => structuralDiff(getTicket(ticketId), path),
-    symbol_definitions: ({ ticketId, symbol }) => symbolDefinitions(getTicket(ticketId), symbol),
+    review_edit_finding: ({ reviewId, findingId, edit }) => {
+      const row = stmts.reviewById.get(reviewId);
+      if (row === undefined) throw new Error(`No review with id ${reviewId}`);
+      const original = parseReviewReport(row.body);
+      if (original === null || !original.findings.some((finding) => finding.id === findingId)) {
+        throw new Error(`Review ${reviewId} has no finding ${findingId}`);
+      }
+      const edits = parseFindingEdits(row.finding_edits);
+      if (edit === null) delete edits[findingId];
+      else edits[findingId] = { ...edits[findingId], ...edit };
+      stmts.setFindingEdits.run(Object.keys(edits).length === 0 ? null : JSON.stringify(edits), reviewId);
+      publish();
+      return rowToReview(stmts.reviewById.get(reviewId)!);
+    },
+    diff_get: async ({ ticketId, refresh }) => ticketDiff(await resolveDiffSubject(ticketId), refresh),
+    diff_structural: async ({ ticketId, path }) => structuralDiff(await resolveDiffSubject(ticketId), path),
+    symbol_definitions: async ({ ticketId, symbol }) => symbolDefinitions(await resolveDiffSubject(ticketId), symbol),
+    symbol_usages: async ({ ticketId, symbol }) => symbolUsages(await resolveDiffSubject(ticketId), symbol),
+    symbol_peek_file: async ({ ticketId, path, startLine, endLine }) => {
+      const localDir = await localWorkspaceDir(await resolveDiffSubject(ticketId));
+      if (localDir === null) throw new Error("No local checkout to read from.");
+      if (path.includes("..") || path.startsWith("/")) throw new Error("Invalid path");
+      const text = await readFile(join(localDir.path, path), "utf8");
+      const all = text.split("\n");
+      const start = Math.max(1, Math.min(startLine, endLine));
+      const end = Math.min(all.length, Math.max(startLine, endLine));
+      return { startLine: start, lines: all.slice(start - 1, end), totalLines: all.length };
+    },
     diff_comments_list: ({ ticketId }) => ({ comments: stmts.diffCommentsForTicket.all(ticketId).map(rowToDiffComment) }),
-    diff_comment_add: ({ ticketId, path, line, side, body }) => {
-      getTicket(ticketId);
+    narrative_get: async ({ ticketId }) => latestNarrative(await resolveDiffSubject(ticketId)),
+    narrative_generate: async ({ ticketId }) => spawnNarrative(await resolveDiffSubject(ticketId)),
+    hunk_explanations_list: async ({ ticketId }) => {
+      const ticket = await resolveDiffSubject(ticketId);
+      const head = (await ticketDiff(ticket, false)).headSha;
+      return { explanations: stmts.explanationsForHead.all(ticket.id, head).map(rowToExplanation) };
+    },
+    hunk_explain: async ({ ticketId, path, side, startLine, endLine }) => explainHunk(await resolveDiffSubject(ticketId), path, side, Math.min(startLine, endLine), Math.max(startLine, endLine)),
+    diff_delta: async ({ ticketId }) => ({ delta: await diffDelta(await resolveDiffSubject(ticketId)) }),
+    diff_viewed_list: async ({ ticketId }) => {
+      const ticket = await resolveDiffSubject(ticketId);
+      const head = await viewedHeadKey(ticket);
+      await carryOverViewed(ticket, head);
+      return { paths: stmts.viewedPathsForHead.all(ticket.id, head).map((row) => row.path) };
+    },
+    diff_viewed_set: async ({ ticketId, path, viewed }) => {
+      const ticket = await resolveDiffSubject(ticketId);
+      const head = await viewedHeadKey(ticket);
+      if (viewed) stmts.upsertViewed.run(ticket.id, path, head, Date.now());
+      else stmts.deleteViewed.run(ticket.id, path);
+      return { paths: stmts.viewedPathsForHead.all(ticket.id, head).map((row) => row.path) };
+    },
+    diff_comment_add: async ({ ticketId, path, line, side, body }) => {
+      await resolveDiffSubject(ticketId);
       const now = Date.now();
       const id = randomUUID().slice(0, 8);
       stmts.insertDiffComment.run({ id, ticket_id: ticketId, path, line, side: line === null ? "RIGHT" : side, body, created_at: now, updated_at: now });
@@ -3475,7 +4343,7 @@ export default async function plugin(bb: BbPluginApi) {
       return { deleted: result.changes > 0 };
     },
     diff_comments_submit: async ({ ticketId, postToGithub, address, autoApprove, push }) => {
-      const ticket = getTicket(ticketId);
+      const ticket = await ensureCardForSubject(await resolveDiffSubject(ticketId));
       const pending = stmts.pendingDiffComments.all(ticket.id).map(rowToDiffComment);
       if (pending.length === 0) throw new Error("No pending comments to submit");
       if (!postToGithub && !address) throw new Error("Choose at least one of: post to GitHub, address with a thread");

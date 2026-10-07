@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createFakePluginHost,
   makePluginAgentConfigurationContext,
   makeThreadResponse,
 } from "@get-bb/plugin-sdk/testing";
-import plugin, { adfToText, defaultSelected, githubRepoFromRemote, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CommentApply, type DiffComment, type Dump, type Finding, type PrComment, type Review, type StructuralDiff, type SymbolLookup, type Ticket, type TicketDiff } from "./server";
+import plugin, { adfToText, defaultSelected, githubRepoFromRemote, newLineRangesFromPatch, parseNarrative, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CommentApply, type DiffComment, type Dump, type Finding, type Narrative, type PrComment, type Review, type StructuralDiff, type SymbolLookup, type Ticket, type TicketDiff } from "./server";
 
 type Host = ReturnType<typeof createFakePluginHost>;
 
@@ -514,7 +518,7 @@ describe("PR review", () => {
 
   it("refuses to review a card without a PR and asks for a project when none matches", async () => {
     vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("other/repo", 1)] }));
-    await load({ autoStartThreads: false });
+    await load({ autoStartThreads: false, autoCreateProjects: false });
     const adhoc = (await current().harness.behavior.callRpc("ticket_create", { title: "A" })) as Ticket;
     await expect(current().harness.behavior.callRpc("ticket_review_pr", { id: adhoc.id })).rejects.toThrow(/Only PR cards/u);
 
@@ -523,6 +527,27 @@ describe("PR review", () => {
     await expect(current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id })).rejects.toThrow(/No project matches/u);
     const reviewed = (await current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id, projectId: "proj_cape" })) as Ticket;
     expect(reviewed.reviewThreadId).toBe("thr_1");
+  });
+
+  it("creates a project for a repository no project matches and adopts its cards", async () => {
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("other/repo", 1)] }));
+    const clones = await mkdtemp(join(tmpdir(), "kanban-clones-"));
+    // A `.git` directory at the clone path means the plugin skips `git clone` and goes straight to creating the project.
+    await mkdir(join(clones, "other", "repo", ".git"), { recursive: true });
+    await load({ autoStartThreads: false, cloneDir: clones });
+    const created: Array<{ name: string; source: { path: string; hostId: string } }> = [];
+    current().harness.sdk.stub("system.config", async () => ({ primaryHostId: "host_1", dataDir: clones }));
+    current().harness.sdk.stub("projects.create", async (args: { name: string; source: { path: string; hostId: string } }) => {
+      created.push(args);
+      return { id: "proj_repo", name: args.name, gitRemoteUrl: "git@github.com:other/repo.git", sources: [{ id: "src_1", hostId: "host_1", path: args.source.path, isDefault: true }] };
+    });
+    await current().harness.behavior.callRpc("sync_now", null);
+    await vi.waitFor(async () => {
+      const card = (await board()).tickets.find((ticket) => ticket.pr !== null)!;
+      expect(card.projectId).toBe("proj_repo");
+    });
+    expect(created).toEqual([{ name: "repo", source: { hostId: "host_1", path: join(clones, "other", "repo"), type: "local_path" } }]);
+    await rm(clones, { recursive: true, force: true });
   });
 
   it("starts a review from the CLI using the thread's card", async () => {
@@ -1374,6 +1399,46 @@ describe("brain dumps", () => {
   });
 });
 
+describe("delta ranges", () => {
+  it("turns a unified patch into new-side line ranges, including the insertion point of pure deletions", () => {
+    const patch = ["@@ -10,4 +10,5 @@ ctx", " a", "-b", "+B", "+B2", " c", " d", "@@ -40,3 +41,2 @@", " x", "-y", " z"].join("\n");
+    expect(newLineRangesFromPatch(patch)).toEqual([
+      [11, 12],
+      [42, 42],
+    ]);
+  });
+});
+
+describe("change tour", () => {
+  it("spawns one tour thread per head, parses its kanban-narrative block, and marks a moved head stale", async () => {
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("cape-co/cape", 7, { user: { login: "sean" } })] }));
+    await load({ autoStartThreads: false });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const card = (await board()).tickets[0]!;
+    const first = (await current().harness.behavior.callRpc("narrative_generate", { ticketId: card.id })) as Narrative;
+    expect(first.status).toBe("running");
+    expect(String(spawned.at(-1)!.prompt)).toContain("kanban-narrative");
+    expect(String(spawned.at(-1)!.prompt)).toContain("a.go");
+    // A second request while one is running returns the running tour instead of spawning again.
+    const again = (await current().harness.behavior.callRpc("narrative_generate", { ticketId: card.id })) as Narrative;
+    expect(again.id).toBe(first.id);
+    await current().harness.behavior.emitThreadEvent("thread.idle", {
+      thread: makeThreadResponse({ id: first.threadId, projectId: "proj_cape" }),
+      lastAssistantText: [
+        "Here is the tour.",
+        "```json kanban-narrative",
+        JSON.stringify({ version: 1, summary: "Adds `add`.", readingOrder: [{ path: "a.go", role: "key", note: "The new function.", lines: [2] }], watchOut: ["No tests."] }),
+        "```",
+      ].join("\n"),
+    });
+    const got = (await current().harness.behavior.callRpc("narrative_get", { ticketId: card.id })) as { narrative: Narrative | null; stale: boolean };
+    expect(got.stale).toBe(false);
+    expect(got.narrative).toMatchObject({ status: "completed", headSha: "4c934cd4730c5004c7118a873e102b0b60fcc41f" });
+    expect(got.narrative!.report).toMatchObject({ summary: "Adds `add`.", readingOrder: [{ path: "a.go", role: "key", lines: [2] }], watchOut: ["No tests."] });
+    expect(parseNarrative("no block here")).toBeNull();
+  });
+});
+
 describe("structural diff and symbols", () => {
   it("reports a clear reason when difftastic is not installed and still returns both file sides", async () => {
     vi.stubGlobal(
@@ -1392,6 +1457,28 @@ describe("structural diff and symbols", () => {
     expect(result.oldText).toContain("func old()");
     expect(result.newText).toContain("func add()");
     await expect(current().harness.behavior.callRpc("diff_structural", { ticketId: card.id, path: "nope.go" })).rejects.toThrow(/not in this card's diff/u);
+  });
+
+  it("finds definitions with git grep in a thread's local checkout (POSIX regex, Go/TS/Python shapes)", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "kanban-symbols-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
+    git("init", "-q");
+    git("config", "user.email", "t@example.com");
+    git("config", "user.name", "t");
+    await writeFile(join(repo, "a.go"), "package a\n\nfunc add(a, b int) int { return a + b }\n\nfunc (s *Svc) add() {}\n\ntype addRequest struct{}\n");
+    await writeFile(join(repo, "b.ts"), "export async function add(a: number) {}\nconst addition = 1;\n");
+    await writeFile(join(repo, "c.py"), "def add(self):\n    pass\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init");
+    await load();
+    current().harness.sdk.stub("system.config", async () => ({ primaryHostId: "host_1" }));
+    current().harness.sdk.stub("environments.get", async () => ({ id: "env_thr_1", path: repo, hostId: "host_1", mergeBaseBranch: null }));
+    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Local work", projectId: "proj_cape", startThread: true })) as Ticket;
+    const lookup = (await current().harness.behavior.callRpc("symbol_definitions", { ticketId: ticket.id, symbol: "add" })) as SymbolLookup;
+    expect(lookup.searched).toBe("workspace");
+    expect(lookup.open).toEqual({ kind: "environment", environmentId: "env_thr_1" });
+    expect(lookup.definitions.map((definition) => `${definition.path}:${definition.line}`)).toEqual(["a.go:3", "a.go:5", "b.ts:1", "c.py:1"]);
+    await rm(repo, { recursive: true, force: true });
   });
 
   it("falls back to GitHub code search for symbol definitions when no local checkout exists", async () => {

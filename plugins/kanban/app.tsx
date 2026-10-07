@@ -4,7 +4,7 @@
 // backed by a thread, whose live status shows on the card. Cards drag between
 // columns; the same moves are available to agents through `bb kanban move`.
 import { Component, Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { DragEvent, FormEvent, ReactNode } from "react";
+import type { DragEvent, FormEvent, ReactNode, RefObject } from "react";
 import {
   Markdown,
   definePluginApp,
@@ -22,10 +22,13 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import * as Tooltip from "@radix-ui/react-tooltip";
+import { getSharedHighlighter } from "@pierre/diffs";
+import type { ThemedToken } from "@pierre/diffs";
 import { PatchDiff, useWorkerPool } from "@pierre/diffs/react";
 import type { DiffLineAnnotation } from "@pierre/diffs/react";
 import { toast } from "sonner";
-import type { Board, Column, CommentApply, DiffComment, DiffFile, Dump, Finding, FindingSeverity, PrComment, ProposedTicket, Review, Source, SourceKind, StructuralDiff, SymbolLookup, Ticket, TicketDiff, rpcContract } from "./server";
+import type { Board, Column, CommentApply, DiffComment, DiffDelta, DiffFile, Dump, Finding, FindingSeverity, HunkExplanation, Narrative, PrComment, ProposedTicket, Review, SemanticChange, Source, SourceKind, StructuralDiff, SymbolLookup, SymbolUsages, Ticket, TicketDiff, rpcContract } from "./server";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -90,6 +93,10 @@ interface PageUiState {
   showSubtasks: boolean;
   newTicketColumn: string | null;
   diffView: "unified" | "split";
+  /** Wrap long lines (GitHub default) or scroll them horizontally. */
+  diffWrap: boolean;
+  /** Show the latest review's findings inline in the diff. */
+  showFindings: boolean;
   diffReloadNonce: number;
   diffLoading: boolean;
 }
@@ -100,13 +107,25 @@ const pageUi = (() => {
   } catch {
     showSubtasks = false;
   }
-  let diffMode: "text" | "structural" = "text";
+  let diffMode: "text" | "structural" = "structural";
   try {
-    diffMode = window.localStorage.getItem("kanban:diffMode") === "structural" ? "structural" : "text";
+    diffMode = window.localStorage.getItem("kanban:diffMode") === "text" ? "text" : "structural";
   } catch {
-    diffMode = "text";
+    diffMode = "structural";
   }
-  let state: PageUiState = { dialog: null, newTicketColumn: null, showSubtasks, diffMode, diffView: "unified", diffReloadNonce: 0, diffLoading: false };
+  let diffWrap = true;
+  try {
+    diffWrap = window.localStorage.getItem("kanban:diffWrap") !== "false";
+  } catch {
+    diffWrap = true;
+  }
+  let showFindings = true;
+  try {
+    showFindings = window.localStorage.getItem("kanban:showFindings") !== "false";
+  } catch {
+    showFindings = true;
+  }
+  let state: PageUiState = { dialog: null, newTicketColumn: null, showSubtasks, diffMode, diffView: "unified", diffWrap, showFindings, diffReloadNonce: 0, diffLoading: false };
   const listeners = new Set<() => void>();
   return {
     get: () => state,
@@ -122,6 +141,20 @@ const pageUi = (() => {
       if (patch.showSubtasks !== undefined) {
         try {
           window.localStorage.setItem("kanban:showSubtasks", String(patch.showSubtasks));
+        } catch {
+          // ignore
+        }
+      }
+      if (patch.diffWrap !== undefined) {
+        try {
+          window.localStorage.setItem("kanban:diffWrap", String(patch.diffWrap));
+        } catch {
+          // ignore
+        }
+      }
+      if (patch.showFindings !== undefined) {
+        try {
+          window.localStorage.setItem("kanban:showFindings", String(patch.showFindings));
         } catch {
           // ignore
         }
@@ -577,28 +610,6 @@ function SeverityCountBadges({ counts }: { counts: NonNullable<Ticket["latestRev
   );
 }
 
-function ReviewScoreBadges({ scores, compact = false }: { scores: NonNullable<Ticket["latestReview"]>["scores"]; compact?: boolean }) {
-  if (scores === null) return null;
-  const tone = (value: number): "success" | "neutral" | "warning" => (value >= 4 ? "success" : value >= 3 ? "neutral" : "warning");
-  const importanceTone = (value: number): "danger" | "warning" | "neutral" => (value >= 5 ? "danger" : value >= 4 ? "warning" : "neutral");
-  return (
-    <>
-      <Badge
-        tone={importanceTone(scores.maxImportance)}
-        title={`Highest importance across ${scores.scored} scored finding(s); mean ${scores.meanImportance}/5`}
-      >
-        {compact ? "imp" : "importance"} {scores.maxImportance}/5
-      </Badge>
-      <Badge
-        tone={tone(scores.meanScopeFit)}
-        title={`Average scope fit across ${scores.scored} scored finding(s): 5 = fixes stay inside the PR, 1 = separate work`}
-      >
-        {compact ? "scope" : "scope fit"} {scores.meanScopeFit}/5
-      </Badge>
-    </>
-  );
-}
-
 function ReviewBadge({ ticket }: { ticket: Ticket }) {
   const review = ticket.latestReview;
   if (review === null) return null;
@@ -629,15 +640,6 @@ function locationLabel(location: Finding["locations"][number]): string {
   return `${location.file}:${location.startLine}-${location.endLine}`;
 }
 
-function ScoreBadge({ label, value, title }: { label: string; value: number | null; title: string }) {
-  if (value === null) return null;
-  return (
-    <Badge tone={value >= 4 ? "success" : value >= 3 ? "neutral" : "warning"} title={title}>
-      {label} {value}/5
-    </Badge>
-  );
-}
-
 function FindingCard({
   finding,
   selected,
@@ -662,9 +664,12 @@ function FindingCard({
         ) : null}
         <Badge tone={SEVERITY_TONE[finding.severity]}>{finding.id}</Badge>
         <span className="min-w-0 flex-1 text-sm font-medium leading-5">{finding.title}</span>
-        <ScoreBadge label="importance" value={finding.importance} title="How much it matters to fix before merge (1–5)" />
-        <ScoreBadge label="scope" value={finding.scopeFit} title="How well the fix stays inside this PR's scope (5 = local edit, 1 = separate piece of work)" />
-        {overridden ? <Badge title="You changed this from the suggested selection">manual</Badge> : null}
+        {finding.importance !== null && finding.scopeFit !== null ? (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground" title="importance / scope fit (1–5)">
+            {finding.importance}/{finding.scopeFit}
+          </span>
+        ) : null}
+        {overridden ? <span className="shrink-0 text-xs text-muted-foreground" title="You changed this from the suggested selection">manual</span> : null}
       </div>
       {finding.locations.length > 0 ? (
         <div className="mt-1 flex flex-wrap gap-1">
@@ -714,9 +719,8 @@ function StructuredReview({
       {report.summary !== "" ? <Markdown content={report.summary} className="text-sm" /> : null}
       {report.findings.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span>
-            <span className="font-medium text-foreground tabular-nums">{selectedCount}</span> of {report.findings.length} selected for the apply round
-            {overriddenCount > 0 ? ` (${overriddenCount} changed by you)` : " (suggested: critical, or importance ≥ 3 and scope ≥ 3)"}
+          <span title={overriddenCount > 0 ? `${overriddenCount} changed by you` : "Suggested: critical, or importance ≥ 3 and scope ≥ 3"}>
+            <span className="font-medium text-foreground tabular-nums">{selectedCount}</span> of {report.findings.length} selected
           </span>
           {onReset !== null && overriddenCount > 0 ? (
             <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onReset}>
@@ -725,19 +729,6 @@ function StructuredReview({
           ) : null}
         </div>
       ) : null}
-      <div className="flex flex-wrap gap-1 text-xs text-muted-foreground">
-        {report.reviewers.map((reviewer) => (
-          <Badge key={reviewer} tone="accent">
-            {reviewer}
-          </Badge>
-        ))}
-        {report.skippedReviewers.map((skipped) => (
-          <Badge key={skipped.name} title={skipped.reason}>
-            {skipped.name} skipped
-          </Badge>
-        ))}
-        {report.range !== null ? <code className="ml-auto">{report.range}</code> : null}
-      </div>
       {grouped.length === 0 ? <p className="text-sm text-muted-foreground">No findings.</p> : null}
       {grouped.map(({ severity, findings }) => (
         <section key={severity} aria-label={SEVERITY_LABEL[severity]}>
@@ -765,18 +756,13 @@ function StructuredReview({
 }
 
 function ReviewStatusChips({ review }: { review: Ticket["latestReview"] }) {
-  if (review === null) return <Badge>Not reviewed</Badge>;
+  if (review === null) return null;
   if (review.status === "running") return <Badge tone="accent">Reviewing…</Badge>;
-  if (review.status === "failed") return <Badge tone="danger">Review failed</Badge>;
+  if (review.status === "failed") return <Badge tone="danger">failed</Badge>;
   return (
-    <>
-      <Badge title={`Reviewed at commit ${review.commitSha ?? "unknown"}`}>
-        {shortSha(review.commitSha)}
-        {review.sinceCommitSha !== null ? ` since ${shortSha(review.sinceCommitSha)}` : ""}
-      </Badge>
+    <span className="inline-flex items-center gap-1" title={`Reviewed at ${review.commitSha ?? "unknown"}${review.sinceCommitSha !== null ? ` (since ${review.sinceCommitSha})` : ""}`}>
       <SeverityCountBadges counts={review.counts} />
-      <ReviewScoreBadges scores={review.scores} />
-    </>
+    </span>
   );
 }
 
@@ -799,9 +785,9 @@ function ReviewPanel({
 }) {
   const [autoApprove, setAutoApprove] = useState(false);
   const [push, setPush] = usePushPreference();
-  const [showFindings, setShowFindings] = useState(false);
   const [reviews, setReviews] = useState<Review[] | null>(null);
   const review = ticket.latestReview;
+  const showFindings = review !== null && review.hasBody;
   useEffect(() => {
     if (!showFindings) return;
     let cancelled = false;
@@ -882,21 +868,20 @@ function ReviewPanel({
   );
 
   return (
-    <Group title="Code review" summary={<ReviewStatusChips review={review} />} menu={menu} defaultOpen={review !== null}>
+    <Group title="Code review" summary={<ReviewStatusChips review={review} />} menu={menu} defaultOpen>
       {review === null ? (
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="secondary" className={COMPACT} disabled={!canStart} onClick={() => startReview("full")}>
-            <Icon name="kanban-search-check" className="size-3.5" />
-            Review this PR
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {canReview ? "Checks the PR out in a fresh worktree and runs the code-review skill." : "Start the card's thread in a project first; reviews run there."}
+          <span title={canReview ? "Runs the code-review skill on the PR in its own worktree" : "Start the card's thread in a project first; reviews run there"}>
+            <Button type="button" variant="secondary" className={COMPACT} disabled={!canStart} onClick={() => startReview("full")}>
+              <Icon name="kanban-search-check" className="size-3.5" />
+              Review this PR
+            </Button>
           </span>
         </div>
       ) : review.status === "running" ? (
         <button type="button" onClick={() => onOpenThread(review.threadId)} className="flex items-center gap-2 text-left text-sm text-muted-foreground hover:text-foreground">
           <ThreadStatusDot thread={threads.get(review.threadId)} />
-          The review thread is running. Open it to watch progress.
+          Reviewing… open thread
         </button>
       ) : review.status === "failed" ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -911,25 +896,21 @@ function ReviewPanel({
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className={COMPACT}
-              disabled={pending || applying || !review.hasBody || selectedCount === 0}
-              onClick={() =>
-                void run(() => rpc.call("review_apply", { ticketId: ticket.id, reviewId: review.id, autoApprove, push }), "Apply thread started")
-              }
-            >
-              <Icon name="kanban-wrench" className="size-3.5" />
-              {applying ? "Applying…" : `Apply ${selectedCount ?? ""}${selectedCount === null ? "review" : selectedCount === 1 ? " finding" : " findings"}`}
-            </Button>
-            <PushToggle push={push} onChange={setPush} disabled={pending || applying} />
-            {review.hasBody ? (
-              <Button type="button" variant="ghost" className={COMPACT} onClick={() => setShowFindings((open) => !open)}>
-                <Icon name={showFindings ? "ChevronUp" : "ChevronDown"} className="size-4" />
-                {showFindings ? "Hide findings" : `Show ${findingCount ?? ""} findings`}
+            <span title={selectedCount === 0 ? "Tick at least one finding to apply" : autoApprove ? "Applies the selected findings, skipping the triage confirmation" : "Applies the selected findings"}>
+              <Button
+                type="button"
+                variant="secondary"
+                className={COMPACT}
+                disabled={pending || applying || !review.hasBody || selectedCount === 0}
+                onClick={() =>
+                  void run(() => rpc.call("review_apply", { ticketId: ticket.id, reviewId: review.id, autoApprove, push }), "Apply thread started")
+                }
+              >
+                <Icon name="kanban-wrench" className="size-3.5" />
+                {applying ? "Applying…" : `Apply ${selectedCount ?? ""}${selectedCount === null ? "review" : selectedCount === 1 ? " finding" : " findings"}`}
               </Button>
-            ) : null}
+            </span>
+            <PushToggle push={push} onChange={setPush} disabled={pending || applying} />
             {review.apply !== null ? (
               <button
                 type="button"
@@ -945,10 +926,8 @@ function ReviewPanel({
               </button>
             ) : null}
           </div>
-          {selectedCount === 0 ? <p className="text-xs text-muted-foreground">No findings are selected. Tick at least one to enable apply.</p> : null}
-          {autoApprove ? <p className="text-xs text-muted-foreground">Apply will skip the triage confirmation.</p> : null}
           {showFindings ? (
-            <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
+            <div className="flex flex-col gap-3 text-sm">
               {reviews === null ? (
                 <p className="text-muted-foreground">Loading…</p>
               ) : (
@@ -1102,9 +1081,9 @@ function CommentsPanel({
   const [push, setPush] = usePushPreference();
   const [autoApprove, setAutoApprove] = useState(false);
   const [showAddressed, setShowAddressed] = useState(false);
-  const [open, setOpen] = useState(false);
   const [data, setData] = useState<{ comments: PrComment[]; applies: CommentApply[] } | null>(null);
   const counts = ticket.comments;
+  const open = (counts?.total ?? 0) > 0;
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -1133,43 +1112,38 @@ function CommentsPanel({
   const repliesOf = (id: string) => comments.filter((comment) => comment.inReplyTo === id);
   const addressedCount = comments.filter((comment) => comment.addressedAt !== null).length;
 
-  if (counts === null) return null;
+  if (counts === null || counts.total === 0) return null;
   return (
     <Group
       title="PR comments"
       summary={
         <>
-          {counts.total === 0 ? <Badge>none yet</Badge> : null}
           {counts.open > 0 ? <Badge tone="warning">{counts.open} open</Badge> : null}
-          {counts.total > 0 && counts.open === 0 ? <Badge tone="success">all addressed</Badge> : null}
+          {counts.open === 0 ? <Badge tone="success">all addressed</Badge> : null}
         </>
       }
-      defaultOpen={counts.open > 0}
+      defaultOpen
     >
-      {counts.total === 0 ? (
-        <p className="text-xs text-muted-foreground">Comments appear here after the next sync once someone comments on the PR.</p>
-      ) : (
+      {(
         <>
           <div className="flex flex-wrap items-center gap-2">
             {counts.open > 0 || running !== null ? (
               <>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className={COMPACT}
-                  disabled={pending || !canApply || counts.selected === 0 || running !== null}
-                  onClick={() => void run(() => rpc.call("comments_apply", { ticketId: ticket.id, autoApprove, push }), "Apply thread started")}
-                >
-                  <Icon name="kanban-wrench" className="size-3.5" />
-                  {running !== null ? "Applying…" : `Apply ${counts.selected} comment${counts.selected === 1 ? "" : "s"}`}
-                </Button>
+                <span title={!canApply ? "Start the card's thread in a project first; the apply thread runs there" : counts.selected === 0 ? "Tick at least one comment to apply" : "Applies the selected comments"}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className={COMPACT}
+                    disabled={pending || !canApply || counts.selected === 0 || running !== null}
+                    onClick={() => void run(() => rpc.call("comments_apply", { ticketId: ticket.id, autoApprove, push }), "Apply thread started")}
+                  >
+                    <Icon name="kanban-wrench" className="size-3.5" />
+                    {running !== null ? "Applying…" : `Apply ${counts.selected} comment${counts.selected === 1 ? "" : "s"}`}
+                  </Button>
+                </span>
                 <PushToggle push={push} onChange={setPush} disabled={pending || running !== null} />
               </>
             ) : null}
-            <Button type="button" variant="ghost" className={COMPACT} onClick={() => setOpen((value) => !value)}>
-              <Icon name={open ? "ChevronUp" : "ChevronDown"} className="size-4" />
-              {open ? "Hide comments" : `Show ${counts.total} comment${counts.total === 1 ? "" : "s"}`}
-            </Button>
             {last !== null ? (
               <button
                 type="button"
@@ -1185,12 +1159,10 @@ function CommentsPanel({
               </button>
             ) : null}
           </div>
-          {!canApply ? <p className="text-xs text-muted-foreground">Start the card's thread in a project first; the apply thread runs there.</p> : null}
-          {counts.selected === 0 && counts.open > 0 ? <p className="text-xs text-muted-foreground">No comments are selected. Tick at least one to enable apply.</p> : null}
           {open ? (
-            <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
+            <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                <span>{counts.selected} selected for the apply round (suggested: everything others wrote that is not yet addressed)</span>
+                <span title="Suggested: everything others wrote that is not yet addressed">{counts.selected} selected</span>
                 {addressedCount > 0 ? (
                   <label className="ml-auto inline-flex items-center gap-1.5">
                     <Checkbox checked={showAddressed} onCheckedChange={(checked) => setShowAddressed(checked === true)} aria-label="Show addressed comments" />
@@ -1199,7 +1171,7 @@ function CommentsPanel({
                 ) : null}
                 <label className="inline-flex items-center gap-1.5">
                   <Checkbox checked={autoApprove} onCheckedChange={(checked) => setAutoApprove(checked === true)} aria-label="Skip triage confirmation when applying" />
-                  Skip triage confirmation
+                  Skip triage
                 </label>
               </div>
               {data === null ? (
@@ -1265,53 +1237,6 @@ function DiffStats({ files }: { files: readonly DiffFile[] }) {
   );
 }
 
-function ChangesGroup({ ticket, rpc, onOpenDiff }: { ticket: Ticket; rpc: Rpc; onOpenDiff: (ticketId: string) => void }) {
-  void rpc;
-  const { diff, error, loading } = useTicketDiff(ticket.id, true);
-  return (
-    <Group
-      title="Changes"
-      summary={
-        diff !== null && diff.files.length > 0 ? (
-          <DiffStats files={diff.files} />
-        ) : loading ? (
-          <span className="text-xs text-muted-foreground">loading…</span>
-        ) : (
-          <span className="text-xs text-muted-foreground">none</span>
-        )
-      }
-      defaultOpen={false}
-    >
-      {error !== null ? <p className="text-xs text-destructive">{error}</p> : null}
-      {diff?.message !== null && diff?.message !== undefined ? <p className="text-xs text-muted-foreground">{diff.message}</p> : null}
-      {diff !== null && diff.files.length > 0 ? (
-        <ul className="flex max-h-48 flex-col gap-0.5 overflow-y-auto text-xs">
-          {diff.files.map((file) => (
-            <li key={file.path} className="flex items-center gap-2">
-              <button type="button" className="min-w-0 flex-1 truncate text-left font-mono hover:underline" onClick={() => onOpenDiff(ticket.id)}>
-                {file.path}
-              </button>
-              <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">+{file.additions}</span>
-              <span className="shrink-0 tabular-nums text-red-600 dark:text-red-400">−{file.deletions}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="secondary" className={COMPACT} onClick={() => onOpenDiff(ticket.id)}>
-          <Icon name="kanban-diff" className="size-3.5" />
-          Open full diff
-        </Button>
-        {ticket.pendingDiffComments > 0 ? (
-          <span className="text-xs text-muted-foreground">
-            {ticket.pendingDiffComments} comment{ticket.pendingDiffComments === 1 ? "" : "s"} waiting to be submitted
-          </span>
-        ) : null}
-      </div>
-    </Group>
-  );
-}
-
 function DiffCommentForm({
   path,
   line,
@@ -1370,30 +1295,286 @@ function DiffCommentForm({
   );
 }
 
-function DiffCommentItem({ comment, onDelete }: { comment: DiffComment; onDelete: () => void }) {
+const COMMENT_STATE_DOT: Record<"pending" | "submitted" | "posted" | "addressed", string> = {
+  pending: "bg-amber-500",
+  submitted: "bg-sky-500",
+  posted: "bg-sky-500",
+  addressed: "bg-emerald-500",
+};
+
+/** One of the reviewer's own diff comments: a one-line strip that expands to the full text, editable while still pending. */
+function DiffCommentItem({ comment, onDelete, onEdit }: { comment: DiffComment; onDelete: () => void; onEdit: ((body: string) => Promise<void>) | null }) {
   const state = comment.addressedAt !== null ? "addressed" : comment.applyId !== null ? "submitted" : comment.postedAt !== null ? "posted" : "pending";
+  const [open, setOpen] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(comment.body);
+  const [saving, setSaving] = useState(false);
+  const firstLine = comment.body.split("\n").find((line) => line.trim() !== "") ?? "";
+  const where = comment.line === null ? "file" : `${comment.side === "LEFT" ? "old " : ""}L${comment.line}`;
+  const save = async () => {
+    if (onEdit === null || draft.trim() === "" || draft === comment.body) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onEdit(draft.trim());
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
-    <li className={cn("my-1 flex flex-col gap-1 rounded-md border border-border bg-card p-2.5 text-sm", state !== "pending" && "opacity-70")}>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <code>{comment.line === null ? "whole file" : `${comment.side === "LEFT" ? "old " : ""}line ${comment.line}`}</code>
-        {state === "pending" ? <Badge tone="warning">pending</Badge> : state === "submitted" ? <Badge tone="accent">submitted</Badge> : state === "posted" ? <Badge tone="accent">posted</Badge> : <Badge tone="success">addressed</Badge>}
+    <li data-comment-anchor="" data-comment-state={state} className={cn("my-0.5 border-l-2 pl-2 text-sm", state === "pending" ? "border-amber-500/70" : "border-border", state !== "pending" && "opacity-70")}>
+      <div className="flex items-center gap-2 py-0.5 text-xs">
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+          <Icon name="ChevronDown" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", !open && "-rotate-90")} />
+          <span className={cn("size-1.5 shrink-0 rounded-full", COMMENT_STATE_DOT[state])} title={state} />
+          <span className="shrink-0 font-mono text-muted-foreground">{where}</span>
+          {!open ? <span className="min-w-0 flex-1 truncate text-foreground">{firstLine}</span> : <span className="min-w-0 flex-1 text-muted-foreground">your comment · {state}</span>}
+        </button>
         {comment.postedUrl !== null ? (
-          <ExternalLink href={comment.postedUrl} className="hover:text-foreground">
+          <ExternalLink href={comment.postedUrl} className="text-muted-foreground hover:text-foreground">
             <Icon name="ExternalLink" className="size-3" />
           </ExternalLink>
         ) : null}
+        {state === "pending" && onEdit !== null && !editing ? (
+          <button
+            type="button"
+            className="rounded px-1 text-muted-foreground hover:bg-state-hover hover:text-foreground"
+            onClick={() => {
+              setDraft(comment.body);
+              setEditing(true);
+              setOpen(true);
+            }}
+          >
+            Edit
+          </button>
+        ) : null}
         {state === "pending" ? (
-          <button type="button" aria-label="Delete comment" className="ml-auto flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-destructive" onClick={onDelete}>
-            <Icon name="Trash2" className="size-3.5" />
+          <button type="button" aria-label="Delete comment" className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-destructive" onClick={onDelete}>
+            <Icon name="Trash2" className="size-3" />
           </button>
         ) : null}
       </div>
-      <Markdown content={comment.body} className="text-sm" />
+      {open && !editing ? <Markdown content={comment.body} className="pb-1.5 text-sm" /> : null}
+      {editing ? (
+        <div className="flex flex-col gap-1.5 pb-1.5">
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            rows={Math.min(12, Math.max(3, draft.split("\n").length + 1))}
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void save();
+              if (event.key === "Escape") setEditing(false);
+            }}
+          />
+          <div className="flex gap-2">
+            <Button type="button" className={COMPACT} disabled={saving || draft.trim() === ""} onClick={() => void save()}>
+              Save
+            </Button>
+            <Button type="button" variant="ghost" className={COMPACT} onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </li>
   );
 }
 
-type AnnotationMeta = { kind: "comment"; comment: DiffComment } | { kind: "composer" };
+type AnnotationMeta = { kind: "comment"; comment: DiffComment } | { kind: "composer" } | { kind: "finding"; finding: InlineFinding };
+
+/** A review finding placed in the diff, with the apply-round selection it carries. */
+interface InlineFinding {
+  reviewId: string;
+  finding: Finding;
+  selected: boolean;
+  overridden: boolean;
+  edited: boolean;
+  /** From a review that ran after the reviewer last looked. */
+  isNew: boolean;
+  /** Its lines changed since the reviewer last looked. */
+  touched: boolean;
+}
+
+type FindingEditPatch = { title: string; description: string; fix: string | null };
+
+const SEVERITY_DOT: Record<FindingSeverity, string> = { critical: "bg-red-500", important: "bg-amber-500", minor: "bg-slate-400" };
+const SEVERITY_BORDER: Record<FindingSeverity, string> = { critical: "border-red-500/70", important: "border-amber-500/70", minor: "border-border" };
+
+/**
+ * A review finding under the line it is about: one quiet strip (checkbox, severity, title, scores) that expands to the
+ * description and fix, with inline editing of the wording the apply thread will receive.
+ */
+function FindingAnnotation({ item, onToggle, onEdit }: { item: InlineFinding; onToggle: (selected: boolean) => void; onEdit: (edit: FindingEditPatch | null) => Promise<void> }) {
+  const { finding } = item;
+  const [open, setOpen] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<FindingEditPatch>({ title: finding.title, description: finding.description, fix: finding.fix });
+  const [saving, setSaving] = useState(false);
+  const beginEdit = () => {
+    setDraft({ title: finding.title, description: finding.description, fix: finding.fix });
+    setEditing(true);
+    setOpen(true);
+  };
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onEdit({ title: draft.title.trim(), description: draft.description, fix: draft.fix === null || draft.fix.trim() === "" ? null : draft.fix });
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const field = "w-full rounded-md border border-border bg-background px-2 py-1 text-xs";
+  return (
+    <div data-finding-anchor="" className={cn("my-0.5 border-l-2 pl-2 text-sm", SEVERITY_BORDER[finding.severity], !item.selected && "opacity-60")}>
+      <div className="flex items-center gap-2 py-0.5 text-xs">
+        <Checkbox checked={item.selected} onCheckedChange={(checked) => onToggle(checked === true)} aria-label={`${item.selected ? "Exclude" : "Include"} ${finding.id} in the apply round`} className="size-3.5" />
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+          <Icon name="ChevronDown" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", !open && "-rotate-90")} />
+          <span className={cn("size-1.5 shrink-0 rounded-full", SEVERITY_DOT[finding.severity])} title={SEVERITY_LABEL[finding.severity]} />
+          <span className="shrink-0 font-mono text-muted-foreground">{finding.id}</span>
+          <span className="min-w-0 flex-1 truncate text-foreground">{finding.title}</span>
+        </button>
+        {finding.importance !== null && finding.scopeFit !== null ? (
+          <span className="shrink-0 tabular-nums text-muted-foreground" title="importance / scope fit (1–5)">
+            {finding.importance}/{finding.scopeFit}
+          </span>
+        ) : null}
+        {item.isNew ? <span className="shrink-0 rounded border border-sky-500/50 px-1 text-[10px] text-sky-700 dark:text-sky-300" title="Reported since you last looked">new</span> : null}
+        {item.touched ? <span className="shrink-0 rounded border border-amber-500/50 px-1 text-[10px] text-amber-700 dark:text-amber-300" title="These lines changed since you last looked">touched</span> : null}
+        {item.edited ? <span className="shrink-0 text-muted-foreground" title="You reworded this finding">edited</span> : null}
+        {item.overridden ? <span className="shrink-0 text-muted-foreground" title="You changed this from the suggested selection">manual</span> : null}
+        {!editing ? (
+          <button type="button" className="rounded px-1 text-muted-foreground hover:bg-state-hover hover:text-foreground" onClick={beginEdit}>
+            Edit
+          </button>
+        ) : null}
+      </div>
+      {open && !editing ? (
+        <div className="flex flex-col gap-1 pb-1.5 text-sm">
+          {finding.description !== "" ? <Markdown content={finding.description} /> : <p className="text-muted-foreground">No description.</p>}
+          {finding.fix !== null && finding.fix !== "" ? (
+            <div className="flex gap-1.5">
+              <Icon name="kanban-wrench" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+              <Markdown content={finding.fix} className="min-w-0 flex-1" />
+            </div>
+          ) : null}
+          {item.edited ? (
+            <button type="button" className="self-start text-xs text-muted-foreground hover:underline" onClick={() => void onEdit(null)}>
+              Revert to the reviewer's wording
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {editing ? (
+        <div className="flex flex-col gap-1.5 pb-1.5">
+          <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className={field} aria-label="Finding title" />
+          <textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} rows={4} className={cn(field, "font-mono")} aria-label="Finding description" placeholder="Description (Markdown)" />
+          <textarea value={draft.fix ?? ""} onChange={(event) => setDraft({ ...draft, fix: event.target.value })} rows={3} className={cn(field, "font-mono")} aria-label="Suggested fix" placeholder="Suggested fix (optional)" />
+          <div className="flex gap-2">
+            <Button type="button" className={COMPACT} disabled={saving || draft.title.trim() === ""} onClick={() => void save()}>
+              Save
+            </Button>
+            <Button type="button" variant="ghost" className={COMPACT} onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Findings of the latest completed review grouped by file; `null` line means the whole file. */
+/** An agent's explanation of a hunk, as a collapsible strip under the hunk header. */
+function ExplanationStrip({ explanation }: { explanation: HunkExplanation }) {
+  const [open, setOpen] = useState(true);
+  const firstLine = (explanation.body ?? "").split("\n").find((line) => line.trim() !== "") ?? "";
+  return (
+    <div className="my-0.5 border-l-2 border-sky-500/60 pl-2 text-sm">
+      <button type="button" className="flex w-full items-center gap-2 py-0.5 text-left text-xs" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <Icon name="ChevronDown" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", !open && "-rotate-90")} />
+        <span className="shrink-0 text-muted-foreground">explanation</span>
+        {!open ? <span className="min-w-0 flex-1 truncate text-foreground">{firstLine}</span> : null}
+      </button>
+      {open ? <Markdown content={explanation.body ?? ""} className="pb-1.5 text-sm" /> : null}
+    </div>
+  );
+}
+
+/**
+ * The reviews whose findings still stand: the latest full review plus every incremental one after it, oldest first.
+ * Earlier full reviews are superseded.
+ */
+function activeReviews(reviews: Review[]): Review[] {
+  const completed = reviews.filter((review) => review.status === "completed" && review.report !== null).sort((a, b) => a.createdAt - b.createdAt);
+  let lastFull = -1;
+  completed.forEach((review, index) => {
+    if (review.sinceCommitSha === null) lastFull = index;
+  });
+  return lastFull === -1 ? completed : completed.slice(lastFull);
+}
+
+function rangesOverlap(start: number, end: number, ranges: Array<[number, number]>): boolean {
+  return ranges.some(([from, to]) => start <= to && end >= from);
+}
+
+function inlineFindingsByPath(reviews: Review[], delta: DiffDelta | null): Map<string, Array<{ item: InlineFinding; line: number | null }>> {
+  const byPath = new Map<string, Array<{ item: InlineFinding; line: number | null }>>();
+  const active = activeReviews(reviews);
+  const newest = active.at(-1) ?? null;
+  const changedRanges = new Map((delta?.files ?? []).map((file) => [file.path, file.ranges]));
+  for (const review of active) {
+    if (review.report === null) continue;
+    for (const finding of review.report.findings) {
+      const touched = finding.locations.some((location) => {
+        const ranges = changedRanges.get(location.file);
+        return ranges !== undefined && location.startLine !== null && rangesOverlap(location.startLine, location.endLine ?? location.startLine, ranges);
+      });
+      const item: InlineFinding = {
+        reviewId: review.id,
+        finding,
+        selected: review.selection[finding.id] ?? false,
+        overridden: finding.id in review.selectionOverrides,
+        edited: finding.id in review.findingEdits,
+        isNew: newest !== null && review.id === newest.id && newest.sinceCommitSha !== null,
+        touched,
+      };
+      for (const location of finding.locations) {
+        const list = byPath.get(location.file) ?? [];
+        list.push({ item, line: location.startLine });
+        byPath.set(location.file, list);
+      }
+    }
+  }
+  return byPath;
+}
+
+const SEMANTIC_KIND_LABEL: Record<SemanticChange["kind"], string> = {
+  rename: "rename",
+  move: "move",
+  signature: "signature",
+  reorder: "reorder",
+  reformat: "reformat",
+  extract: "extract",
+  inline: "inline",
+  logic: "logic",
+};
+
+/** Risk 1–5 → tint for a file row; null (unscored) → none. */
+function riskTint(risk: number | null): string {
+  if (risk === null) return "";
+  if (risk >= 5) return "bg-red-500/15";
+  if (risk === 4) return "bg-orange-500/12";
+  if (risk === 3) return "bg-amber-500/10";
+  if (risk === 2) return "bg-emerald-500/8";
+  return "bg-emerald-500/12";
+}
+const RISK_DOT: Record<number, string> = { 1: "bg-emerald-500", 2: "bg-emerald-400", 3: "bg-amber-500", 4: "bg-orange-500", 5: "bg-red-500" };
 
 /**
  * The Pierre theme names the host itself renders with. bb registers its code
@@ -1458,6 +1639,11 @@ function AnnotatedPatch({
   themes,
   themeMode,
   disableWorkerPool,
+  wrap,
+  findings,
+  onToggleFinding,
+  onEditFinding,
+  onEditComment,
   comments,
   composer,
   onStartComment,
@@ -1471,6 +1657,11 @@ function AnnotatedPatch({
   themes: { dark: string; light: string };
   themeMode: "dark" | "light";
   disableWorkerPool: boolean;
+  wrap: boolean;
+  findings: Array<{ item: InlineFinding; line: number | null }>;
+  onToggleFinding: (item: InlineFinding, selected: boolean) => void;
+  onEditFinding: (item: InlineFinding, edit: FindingEditPatch | null) => Promise<void>;
+  onEditComment: (id: string, body: string) => Promise<void>;
   comments: DiffComment[];
   composer: { line: number | null; side: "LEFT" | "RIGHT" } | null;
   onStartComment: (line: number | null, side: "LEFT" | "RIGHT") => void;
@@ -1493,8 +1684,11 @@ function AnnotatedPatch({
     if (composer !== null && composer.line !== null) {
       list.push({ side: toSide(composer.side), lineNumber: composer.line, metadata: { kind: "composer" } });
     }
+    for (const entry of findings) {
+      if (entry.line !== null) list.push({ side: "additions", lineNumber: entry.line, metadata: { kind: "finding", finding: entry.item } });
+    }
     return list;
-  }, [comments, composer]);
+  }, [comments, composer, findings]);
   const selected = composer !== null && composer.line !== null ? { start: composer.line, end: composer.line, side: toSide(composer.side), endSide: toSide(composer.side) } : undefined;
   const options = useMemo(
     () => ({
@@ -1502,13 +1696,13 @@ function AnnotatedPatch({
       theme: themes,
       themeType: themeMode,
       disableFileHeader: true,
-      overflow: "scroll" as const,
+      overflow: wrap ? ("wrap" as const) : ("scroll" as const),
       lineHoverHighlight: "both" as const,
       enableGutterUtility: true,
       onGutterUtilityClick: (range: { start: number; side?: "deletions" | "additions" }) => onStartComment(range.start, fromSide(range.side ?? "additions")),
       onLineNumberClick: (props: { lineNumber: number; annotationSide: "deletions" | "additions" }) => onStartComment(props.lineNumber, fromSide(props.annotationSide)),
     }),
-    [view, themes, themeMode, onStartComment],
+    [view, themes, themeMode, wrap, onStartComment],
   );
   return (
     <>
@@ -1520,7 +1714,7 @@ function AnnotatedPatch({
       {fileLevel.length > 0 ? (
         <ul className="px-3">
           {fileLevel.map((comment) => (
-            <DiffCommentItem key={comment.id} comment={comment} onDelete={() => onDeleteComment(comment.id)} />
+            <DiffCommentItem key={comment.id} comment={comment} onDelete={() => onDeleteComment(comment.id)} onEdit={(body) => onEditComment(comment.id, body)} />
           ))}
         </ul>
       ) : null}
@@ -1535,10 +1729,14 @@ function AnnotatedPatch({
         if (annotation.metadata.kind === "composer") {
           return <DiffCommentForm path={path} line={composer?.line ?? null} side={composer?.side ?? "RIGHT"} onSubmit={onSubmitComposer} onCancel={onCancelComposer} />;
         }
+        if (annotation.metadata.kind === "finding") {
+          const item = annotation.metadata.finding;
+          return <FindingAnnotation item={item} onToggle={(selected) => onToggleFinding(item, selected)} onEdit={(edit) => onEditFinding(item, edit)} />;
+        }
         const { comment } = annotation.metadata;
         return (
           <ul className="list-none">
-            <DiffCommentItem comment={comment} onDelete={() => onDeleteComment(comment.id)} />
+            <DiffCommentItem comment={comment} onDelete={() => onDeleteComment(comment.id)} onEdit={(body) => onEditComment(comment.id, body)} />
           </ul>
         );
       }}
@@ -1557,32 +1755,190 @@ const HIGHLIGHT_CLASS: Record<string, string> = {
   normal: "",
 };
 const IDENTIFIER = /[A-Za-z_$][A-Za-z0-9_$]*/gu;
+const STRUCTURAL_CONTEXT = 3;
+const STRUCTURAL_EXPAND_STEP = 20;
+/** Whole-file adds and deletes longer than this show a preview and a "show more" bar instead of a wall of one colour. */
+const LARGE_FILE_PREVIEW_ROWS = 60;
+/** Height of a file's sticky header; keyboard jumps land content just below it. */
+const DIFF_STICKY_HEADER_PX = 36;
+const FILE_TREE_DEFAULT_WIDTH = 288;
+const FILE_TREE_MIN_WIDTH = 180;
+const FILE_TREE_MAX_WIDTH = 720;
+/** A run of identical deleted and added lines at least this long reads as a move rather than a rewrite. */
+const MOVE_MIN_LINES = 3;
 
-/** One side's line: changed spans tinted by difftastic, identifiers made ⌘-clickable. */
+const DEFINITION_LINE_PATTERNS: RegExp[] = [
+  /^\s*(?:(?:export|default|async|pub(?:\([^)]*\))?|static|public|private|protected|abstract|final|override|unsafe|const|declare)\s+)*(?:function\*?|class|interface|type|enum|struct|trait|impl|fn|func|def|module|namespace|describe|it|test|contract|object)\b/u,
+  /^\s+(?:(?:public|private|protected|static|async|override|final|abstract|synchronized)\s+)*[\w<>[\],.? ]*\b[A-Za-z_$][\w$]*\s*\([^)]*\)\s*(?::\s*[^{;]+)?\{\s*$/u,
+];
+
+/** The nearest definition line above `line` with shallower indentation: what GitHub prints after `@@` in a hunk header. */
+function enclosingDefinition(lines: string[], line: number): string | null {
+  const indentOf = (text: string) => text.length - text.trimStart().length;
+  let start = line - 1;
+  while (start < lines.length && (lines[start] ?? "").trim() === "") start += 1;
+  const indent = indentOf(lines[start] ?? "");
+  for (let i = Math.min(start, lines.length - 1) - 1; i >= 0; i--) {
+    const text = lines[i] ?? "";
+    if (text.trim() === "") continue;
+    const depth = indentOf(text);
+    if (depth >= indent && indent > 0) continue;
+    if (DEFINITION_LINE_PATTERNS.some((pattern) => pattern.test(text))) return text.trim();
+    if (depth === 0 && indent === 0) break;
+  }
+  return null;
+}
+
+interface MovedRow {
+  /** Row index of the matching line on the other side. */
+  counterpart: number;
+  /** Line number on the other side, for the label. */
+  counterpartLine: number;
+  first: boolean;
+}
+
+/** Pair up blocks of pure deletions with identical blocks of pure additions; difftastic reports both as novel. */
+function detectMoves(rows: Array<{ index: number; lhs: number | null; rhs: number | null }>, oldLines: string[], newLines: string[]): Map<number, MovedRow> {
+  const moved = new Map<number, MovedRow>();
+  const addedByText = new Map<string, number[]>();
+  for (const row of rows) {
+    if (row.lhs !== null || row.rhs === null) continue;
+    const text = (newLines[row.rhs - 1] ?? "").trim();
+    if (text === "") continue;
+    const list = addedByText.get(text) ?? [];
+    list.push(row.index);
+    addedByText.set(text, list);
+  }
+  const isDeleted = (index: number) => rows[index] !== undefined && rows[index]!.rhs === null && rows[index]!.lhs !== null;
+  const isAdded = (index: number) => rows[index] !== undefined && rows[index]!.lhs === null && rows[index]!.rhs !== null;
+  const textAt = (index: number) => {
+    const row = rows[index]!;
+    return (row.lhs !== null ? oldLines[row.lhs - 1] : newLines[row.rhs! - 1])?.trim() ?? "";
+  };
+  for (let i = 0; i < rows.length; i++) {
+    if (!isDeleted(i) || moved.has(i)) continue;
+    const text = textAt(i);
+    if (text === "") continue;
+    for (const j of addedByText.get(text) ?? []) {
+      if (moved.has(j)) continue;
+      let length = 0;
+      let nonBlank = 0;
+      while (isDeleted(i + length) && isAdded(j + length) && !moved.has(i + length) && !moved.has(j + length) && textAt(i + length) === textAt(j + length)) {
+        if (textAt(i + length) !== "") nonBlank += 1;
+        length += 1;
+      }
+      if (length < MOVE_MIN_LINES || nonBlank < 2) continue;
+      for (let k = 0; k < length; k++) {
+        moved.set(i + k, { counterpart: j + k, counterpartLine: rows[j + k]!.rhs!, first: k === 0 });
+        moved.set(j + k, { counterpart: i + k, counterpartLine: rows[i + k]!.lhs!, first: k === 0 });
+      }
+      i += length - 1;
+      break;
+    }
+  }
+  return moved;
+}
+/** Files longer than this skip Shiki; tokenising both sides of a huge generated file stalls the page. */
+const SHIKI_MAX_LINES = 5000;
+
+const SHIKI_LANG_BY_EXTENSION: Record<string, string> = {
+  go: "go", ts: "typescript", mts: "typescript", cts: "typescript", tsx: "tsx", js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "jsx",
+  py: "python", rs: "rust", java: "java", kt: "kotlin", kts: "kotlin", rb: "ruby", php: "php", cs: "csharp", swift: "swift", scala: "scala",
+  c: "c", h: "c", cc: "cpp", cpp: "cpp", cxx: "cpp", hpp: "cpp", hh: "cpp", m: "objective-c",
+  sh: "shellscript", bash: "shellscript", zsh: "shellscript", fish: "fish", ps1: "powershell",
+  yaml: "yaml", yml: "yaml", json: "json", jsonc: "jsonc", toml: "toml", xml: "xml", ini: "ini", env: "dotenv",
+  md: "markdown", mdx: "mdx", html: "html", htm: "html", css: "css", scss: "scss", less: "less", vue: "vue", svelte: "svelte",
+  sql: "sql", proto: "proto", graphql: "graphql", gql: "graphql", tf: "terraform", hcl: "hcl", dockerfile: "docker", lua: "lua", r: "r", dart: "dart", ex: "elixir", exs: "elixir", erl: "erlang", hs: "haskell", zig: "zig", nix: "nix", cmake: "cmake", make: "makefile", mk: "makefile",
+};
+
+const GENERATED_PATH_PATTERNS: RegExp[] = [
+  /(^|\/)(node_modules|vendor|dist|build|__snapshots__|\.yarn)\//u,
+  /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum|Cargo\.lock|poetry\.lock|Pipfile\.lock|Gemfile\.lock|composer\.lock|flake\.lock|bun\.lockb?)$/u,
+  /\.(pb|pb\.gw|pb\.validate|sql|gen|generated|g|min|d|snap|map|swagger|openapi)\.(go|ts|js|py|dart|json|yaml|yml|css|rb|kt|swift)$/u,
+  /(^|\/)(zz_generated|wire_gen)[^/]*\.go$/u,
+  /(^|\/)(mock_[^/]+\.go|[^/]+_mock\.go|[^/]+\.mock\.ts|[^/]+_string\.go|[^/]+_pb2(_grpc)?\.py|[^/]+_generated\.[^/]+|[^/]+\.generated\.[^/]+)$/u,
+];
+
+/** Lockfiles, vendored trees, protobuf and other generated output: collapsed by default so hand-written changes stand out. */
+function isGeneratedPath(path: string): boolean {
+  return GENERATED_PATH_PATTERNS.some((pattern) => pattern.test(path));
+}
+
+function shikiLangFor(path: string): string | null {
+  const base = path.split("/").pop() ?? path;
+  const lower = base.toLowerCase();
+  if (lower === "dockerfile" || lower.startsWith("dockerfile.")) return "docker";
+  if (lower === "makefile") return "makefile";
+  const extension = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
+  return SHIKI_LANG_BY_EXTENSION[extension] ?? null;
+}
+
+type LineTokens = Array<{ content: string; color: string | undefined }>;
+
+/** Shiki tokens per line from the host's shared highlighter; null while loading or when the language is unknown. */
+function useShikiTokens(code: string, lang: string | null, theme: string): LineTokens[] | null {
+  const [state, setState] = useState<{ key: string; tokens: LineTokens[] } | null>(null);
+  const key = `${lang ?? ""}\u0000${theme}\u0000${code.length}\u0000${code.slice(0, 2000)}`;
+  useEffect(() => {
+    if (lang === null || code === "" || code.split("\n").length > SHIKI_MAX_LINES) return;
+    let cancelled = false;
+    getSharedHighlighter({ themes: [theme as never], langs: [lang as never] })
+      .then((highlighter) => {
+        if (cancelled) return;
+        const lines = highlighter.codeToTokensBase(code, { lang: lang as never, theme: theme as never }) as ThemedToken[][];
+        setState({ key, tokens: lines.map((line) => line.map((token) => ({ content: token.content, color: token.color }))) });
+      })
+      .catch(() => {
+        // Unknown grammar or theme: fall back to unhighlighted text rather than failing the file.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, lang, theme, key]);
+  return state !== null && state.key === key ? state.tokens : null;
+}
+
+/** One side's line: Shiki colours per token, changed spans tinted by difftastic, identifiers made ⌘-clickable. */
 function StructuralLine({
   text,
   changes,
+  tokens,
   side,
   onSymbol,
+  onSymbolHover,
 }: {
   text: string;
-  changes: StructuralDiff["chunks"][number][number]["lhs"];
+  changes: StructuralDiff["oldChanges"][number] | null;
+  tokens: LineTokens | null;
   side: "LEFT" | "RIGHT";
   onSymbol: (symbol: string, anchor: HTMLElement) => void;
+  onSymbolHover?: (symbol: string | null, anchor: HTMLElement | null) => void;
 }) {
-  // Build segments: [start,end) ranges with a highlight kind, gaps are plain.
+  // Segment boundaries come from both the Shiki tokens and difftastic's changed spans so each piece has one colour and one tint.
   const spans = (changes?.changes ?? []).slice().sort((a, b) => a.start - b.start);
-  const segments: Array<{ text: string; changed: boolean; highlight: string }> = [];
-  let cursor = 0;
+  const cuts = new Set<number>([0, text.length]);
   for (const span of spans) {
-    const start = Math.max(cursor, Math.min(span.start, text.length));
-    const end = Math.max(start, Math.min(span.end, text.length));
-    if (start > cursor) segments.push({ text: text.slice(cursor, start), changed: false, highlight: "normal" });
-    if (end > start) segments.push({ text: text.slice(start, end), changed: true, highlight: span.highlight });
-    cursor = end;
+    cuts.add(Math.min(span.start, text.length));
+    cuts.add(Math.min(span.end, text.length));
   }
-  if (cursor < text.length) segments.push({ text: text.slice(cursor), changed: false, highlight: "normal" });
-  if (segments.length === 0) segments.push({ text: "", changed: false, highlight: "normal" });
+  const tokenStarts: Array<{ start: number; end: number; color: string | undefined }> = [];
+  let offset = 0;
+  for (const token of tokens ?? []) {
+    tokenStarts.push({ start: offset, end: offset + token.content.length, color: token.color });
+    offset += token.content.length;
+    cuts.add(Math.min(offset, text.length));
+  }
+  const bounds = [...cuts].sort((a, b) => a - b);
+  const segments: Array<{ text: string; changed: boolean; highlight: string; color: string | undefined }> = [];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const start = bounds[i]!;
+    const end = bounds[i + 1]!;
+    if (end <= start) continue;
+    const span = spans.find((entry) => entry.start <= start && entry.end >= end);
+    const token = tokenStarts.find((entry) => entry.start <= start && entry.end >= end);
+    segments.push({ text: text.slice(start, end), changed: span !== undefined, highlight: span?.highlight ?? "normal", color: token?.color });
+  }
+  if (segments.length === 0) segments.push({ text: "", changed: false, highlight: "normal", color: undefined });
   const renderTokens = (segment: string, key: string) => {
     const parts: ReactNode[] = [];
     let last = 0;
@@ -1601,6 +1957,8 @@ function StructuralLine({
             event.stopPropagation();
             onSymbol(word, event.currentTarget);
           }}
+          onPointerEnter={(event) => onSymbolHover?.(word, event.currentTarget)}
+          onPointerLeave={() => onSymbolHover?.(null, null)}
         >
           {word}
         </span>,
@@ -1615,8 +1973,9 @@ function StructuralLine({
       {segments.map((segment, index) => (
         <span
           key={index}
+          style={segment.color !== undefined ? { color: segment.color } : undefined}
           className={cn(
-            HIGHLIGHT_CLASS[segment.highlight] ?? "",
+            segment.color === undefined ? (HIGHLIGHT_CLASS[segment.highlight] ?? "") : "",
             segment.changed && (side === "LEFT" ? "rounded-sm bg-red-500/25" : "rounded-sm bg-emerald-500/25"),
           )}
         >
@@ -1624,6 +1983,295 @@ function StructuralLine({
         </span>
       ))}
     </>
+  );
+}
+
+/** Per-symbol results shared by the hover preview and the peek panel. */
+interface SymbolData {
+  lookup: SymbolLookup | null;
+  usages: SymbolUsages | null;
+  error: string | null;
+}
+
+/** A source location shown in the peek's code pane, with the lines fetched so far. */
+interface PeekTarget {
+  path: string;
+  line: number | null;
+  startLine: number;
+  lines: string[];
+}
+
+/** Code lines with numbers and Shiki colouring; identifiers stay ⌘-clickable so you can keep drilling down. */
+function PeekCode({
+  target,
+  highlightLine,
+  onSymbol,
+  onSymbolHover,
+  onWiden,
+}: {
+  target: PeekTarget;
+  highlightLine: number | null;
+  onSymbol: (symbol: string, anchor: HTMLElement) => void;
+  onSymbolHover: (symbol: string | null, anchor: HTMLElement | null) => void;
+  onWiden: (direction: "up" | "down") => void;
+}) {
+  const codeTheme = useCodeTheme();
+  const pierreThemes = useHostPierreThemes(codeTheme.mode);
+  const themeName = codeTheme.mode === "dark" ? pierreThemes.dark : pierreThemes.light;
+  const tokens = useShikiTokens(target.lines.join("\n"), shikiLangFor(target.path), themeName);
+  const widen = (direction: "up" | "down") => (
+    <button type="button" className="block w-full bg-sky-500/10 py-px text-center text-[11px] text-sky-700 hover:bg-sky-500/20 dark:text-sky-300" onClick={() => onWiden(direction)}>
+      {direction === "up" ? "↑" : "↓"} 20 more lines
+    </button>
+  );
+  return (
+    <div className="min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5">
+      {target.startLine > 1 ? widen("up") : null}
+      <table className="w-full border-collapse">
+        <tbody>
+          {target.lines.map((text, index) => {
+            const line = target.startLine + index;
+            return (
+              <tr key={line} className={cn(line === highlightLine && "bg-amber-500/15")}>
+                <td className="w-12 select-none pr-2 text-right align-top text-muted-foreground/70">{line}</td>
+                <td className="whitespace-pre pl-2 pr-3 align-top">
+                  <StructuralLine text={text} changes={null} tokens={tokens?.[index] ?? null} side="RIGHT" onSymbol={onSymbol} onSymbolHover={onSymbolHover} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {widen("down")}
+    </div>
+  );
+}
+
+/**
+ * Inline peek under the clicked line, like an editor's "peek definition": a list of definitions or usages on the left,
+ * the selected one's source on the right, a trail of symbols you drilled through, and a way out to the full file.
+ */
+function SymbolPeek({
+  ticketId,
+  trail,
+  data,
+  onNavigate,
+  onBack,
+  onClose,
+  onOpenFile,
+  onSymbolHover,
+}: {
+  ticketId: string;
+  trail: string[];
+  data: SymbolData | undefined;
+  onNavigate: (symbol: string) => void;
+  onBack: () => void;
+  onClose: () => void;
+  onOpenFile: (lookup: SymbolLookup, definition: SymbolLookup["definitions"][number]) => void;
+  onSymbolHover: (symbol: string | null, anchor: HTMLElement | null) => void;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const symbol = trail.at(-1)!;
+  const [tab, setTab] = useState<"definition" | "usages">("definition");
+  const [selected, setSelected] = useState(0);
+  const [target, setTarget] = useState<PeekTarget | null>(null);
+  const definitions = data?.lookup?.definitions ?? [];
+  const usages = data?.usages?.usages ?? [];
+  // Reset to the first definition whenever the symbol changes.
+  useEffect(() => {
+    setTab("definition");
+    setSelected(0);
+    setTarget(null);
+  }, [symbol]);
+  const items = tab === "definition" ? definitions : usages;
+  const current = items[selected] ?? items[0] ?? null;
+  // Definitions arrive with context; usages (and widening) fetch a slice on demand.
+  useEffect(() => {
+    if (current === null) {
+      setTarget(null);
+      return;
+    }
+    const context = "context" in current ? current.context : null;
+    if (context !== null && context !== undefined) {
+      setTarget({ path: current.path, line: current.line, startLine: context.startLine, lines: context.lines });
+      return;
+    }
+    if (current.line === null) {
+      setTarget({ path: current.path, line: null, startLine: 1, lines: [current.snippet] });
+      return;
+    }
+    let cancelled = false;
+    rpc.call("symbol_peek_file", { ticketId, path: current.path, startLine: Math.max(1, current.line - 4), endLine: current.line + 16 }).then(
+      (slice) => {
+        if (!cancelled) setTarget({ path: current.path, line: current.line, startLine: slice.startLine, lines: slice.lines });
+      },
+      (cause: unknown) => {
+        if (!cancelled) setTarget({ path: current.path, line: current.line, startLine: current.line!, lines: [current.snippet] });
+        void cause;
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [current, rpc, ticketId]);
+  const widen = (direction: "up" | "down") => {
+    if (target === null) return;
+    const startLine = direction === "up" ? Math.max(1, target.startLine - 20) : target.startLine + target.lines.length;
+    const endLine = direction === "up" ? target.startLine - 1 : target.startLine + target.lines.length + 19;
+    if (endLine < startLine) return;
+    rpc.call("symbol_peek_file", { ticketId, path: target.path, startLine, endLine }).then(
+      (slice) => {
+        if (slice.lines.length === 0) return;
+        setTarget((existing) =>
+          existing === null
+            ? existing
+            : direction === "up"
+              ? { ...existing, startLine: slice.startLine, lines: [...slice.lines, ...existing.lines] }
+              : { ...existing, lines: [...existing.lines, ...slice.lines] },
+        );
+      },
+      (cause: unknown) => toast.error(errorMessage(cause)),
+    );
+  };
+  const byFile = new Map<string, Array<{ index: number; line: number | null; snippet: string }>>();
+  items.forEach((item, index) => {
+    const list = byFile.get(item.path) ?? [];
+    list.push({ index, line: item.line, snippet: item.snippet });
+    byFile.set(item.path, list);
+  });
+  const openTarget = () => {
+    if (data?.lookup === undefined || data.lookup === null || current === null) return;
+    onOpenFile(data.lookup, { path: current.path, line: current.line, snippet: current.snippet, context: null });
+  };
+  return (
+    <div className="my-1 flex flex-col overflow-hidden rounded-md border border-sky-500/40 bg-background text-sm shadow-sm" role="region" aria-label={`Peek ${symbol}`}>
+      <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-2 py-1 text-xs">
+        {trail.length > 1 ? (
+          <button type="button" className="rounded px-1 text-muted-foreground hover:bg-state-hover hover:text-foreground" title={`Back to ${trail.at(-2)}`} onClick={onBack}>
+            ←
+          </button>
+        ) : null}
+        <code className="font-medium">{symbol}</code>
+        <div role="tablist" className="flex rounded border border-border p-px">
+          {(["definition", "usages"] as const).map((entry) => (
+            <button
+              key={entry}
+              type="button"
+              role="tab"
+              aria-selected={tab === entry}
+              className={cn("rounded px-1.5 py-px", tab === entry ? "bg-state-active text-foreground" : "text-muted-foreground hover:text-foreground")}
+              onClick={() => {
+                setTab(entry);
+                setSelected(0);
+              }}
+            >
+              {entry === "definition" ? `Definition${definitions.length > 1 ? ` (${definitions.length})` : ""}` : `Usages${data?.usages ? ` (${usages.length}${data.usages.truncated ? "+" : ""})` : ""}`}
+            </button>
+          ))}
+        </div>
+        {data === undefined ? <span className="text-muted-foreground">searching…</span> : null}
+        {data?.error ? <span className="text-destructive">{data.error}</span> : null}
+        <span className="ml-auto flex items-center gap-1">
+          {current !== null ? (
+            <button type="button" className="rounded px-1.5 py-px text-muted-foreground hover:bg-state-hover hover:text-foreground" onClick={openTarget}>
+              Open file
+            </button>
+          ) : null}
+          <button type="button" aria-label="Close peek" className="rounded p-0.5 text-muted-foreground hover:bg-state-hover hover:text-foreground" onClick={onClose}>
+            <Icon name="X" className="size-3.5" />
+          </button>
+        </span>
+      </div>
+      {data !== undefined && items.length === 0 ? (
+        <p className="px-3 py-2 text-xs text-muted-foreground">
+          {tab === "definition" ? (data.lookup?.searched === "none" ? "No searchable checkout; start the card's thread first." : "No definition found.") : "No usages found."}
+        </p>
+      ) : (
+        <div className="flex max-h-[28rem] min-h-0">
+          {items.length > 1 || tab === "usages" ? (
+            <ul className="w-2/5 min-w-0 shrink-0 overflow-y-auto border-r border-border text-xs">
+              {[...byFile.entries()].map(([path, entries]) => (
+                <li key={path}>
+                  <div className="truncate bg-muted/30 px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={path}>
+                    {path}
+                  </div>
+                  {entries.map((entry) => (
+                    <button
+                      key={`${path}:${entry.line ?? entry.index}`}
+                      type="button"
+                      className={cn("flex w-full items-baseline gap-2 px-2 py-0.5 text-left hover:bg-state-hover", entry.index === (items[selected] === undefined ? 0 : selected) && "bg-state-active")}
+                      onClick={() => setSelected(entry.index)}
+                    >
+                      <span className="w-8 shrink-0 text-right font-mono tabular-nums text-muted-foreground">{entry.line ?? ""}</span>
+                      <span className="min-w-0 flex-1 truncate font-mono">{entry.snippet}</span>
+                    </button>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="flex min-w-0 flex-1 flex-col">
+            {target !== null ? (
+              <>
+                <div className="truncate border-b border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={target.path}>
+                  {target.path}
+                  {target.line !== null ? `:${target.line}` : ""}
+                </div>
+                <PeekCode target={target} highlightLine={target.line} onSymbol={(next) => onNavigate(next)} onSymbolHover={onSymbolHover} onWiden={widen} />
+              </>
+            ) : data === undefined ? null : (
+              <p className="px-3 py-2 text-xs text-muted-foreground">Loading…</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The ⌘-hover card: where a symbol is defined and its first lines, before you commit to a peek. */
+function SymbolHoverCard({ symbol, data, anchor }: { symbol: string; data: SymbolData | undefined; anchor: DOMRect }) {
+  const definition = data?.lookup?.definitions[0] ?? null;
+  const context = definition?.context ?? null;
+  const lines = context === null ? [] : context.lines.slice(0, 10);
+  const below = anchor.bottom + 320 < window.innerHeight;
+  return (
+    <div
+      role="tooltip"
+      className="pointer-events-none fixed z-50 w-[36rem] max-w-[90vw] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md"
+      style={{ top: below ? anchor.bottom + 6 : undefined, bottom: below ? undefined : window.innerHeight - anchor.top + 6, left: Math.max(8, Math.min(anchor.left, window.innerWidth - 600)) }}
+    >
+      <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-2 py-1 text-xs">
+        <code className="font-medium">{symbol}</code>
+        {data === undefined ? (
+          <span className="text-muted-foreground">searching…</span>
+        ) : definition === null ? (
+          <span className="text-muted-foreground">no definition found</span>
+        ) : (
+          <span className="min-w-0 truncate font-mono text-muted-foreground">
+            {definition.path}
+            {definition.line !== null ? `:${definition.line}` : ""}
+            {(data.lookup?.definitions.length ?? 0) > 1 ? ` · +${data.lookup!.definitions.length - 1} more` : ""}
+          </span>
+        )}
+        <span className="ml-auto shrink-0 text-muted-foreground">⌘-click to peek</span>
+      </div>
+      {lines.length > 0 ? (
+        <pre className="max-h-60 overflow-hidden px-2 py-1 font-mono text-[11px] leading-4">
+          {lines.map((text, index) => {
+            const line = context!.startLine + index;
+            return (
+              <div key={line} className={cn("whitespace-pre", line === definition!.line && "bg-amber-500/15 font-semibold")}>
+                <span className="mr-2 inline-block w-8 text-right text-muted-foreground/60">{line}</span>
+                {text}
+              </div>
+            );
+          })}
+        </pre>
+      ) : definition !== null && definition.snippet !== "" ? (
+        <pre className="px-2 py-1 font-mono text-[11px]">{definition.snippet}</pre>
+      ) : null}
+    </div>
   );
 }
 
@@ -1637,6 +2285,14 @@ function StructuralPatch({
   onSubmitComposer,
   onDeleteComment,
   onOpenFile,
+  findings,
+  onToggleFinding,
+  onEditFinding,
+  onEditComment,
+  explanations,
+  onExplain,
+  semantics,
+  changedRanges,
 }: {
   ticketId: string;
   path: string;
@@ -1647,16 +2303,40 @@ function StructuralPatch({
   onSubmitComposer: (body: string) => Promise<void>;
   onDeleteComment: (id: string) => void;
   onOpenFile: (lookup: SymbolLookup, definition: SymbolLookup["definitions"][number]) => void;
+  findings: Array<{ item: InlineFinding; line: number | null }>;
+  onToggleFinding: (item: InlineFinding, selected: boolean) => void;
+  onEditFinding: (item: InlineFinding, edit: FindingEditPatch | null) => Promise<void>;
+  onEditComment: (id: string, body: string) => Promise<void>;
+  explanations: HunkExplanation[];
+  onExplain: (side: "old" | "new", startLine: number, endLine: number) => void;
+  semantics: SemanticChange[];
+  changedRanges: Array<[number, number]>;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const [diff, setDiff] = useState<StructuralDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [lookup, setLookup] = useState<{ symbol: string; result: SymbolLookup | null; anchor: DOMRect } | null>(null);
+  const [peek, setPeek] = useState<{ rowIndex: number; trail: string[] } | null>(null);
+  const [hover, setHover] = useState<{ symbol: string; anchor: DOMRect } | null>(null);
+  const symbolCache = useRef(new Map<string, SymbolData>());
+  const [, bumpSymbols] = useState(0);
+  const hoverTimer = useRef<number | null>(null);
   const [symbolMode, setSymbolMode] = useState(false);
+  const [revealed, setRevealed] = useState<ReadonlySet<number>>(new Set());
+  const [showAll, setShowAll] = useState(false);
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const { diffWrap } = usePageUi();
+  const codeTheme = useCodeTheme();
+  const pierreThemes = useHostPierreThemes(codeTheme.mode);
+  const themeName = codeTheme.mode === "dark" ? pierreThemes.dark : pierreThemes.light;
+  const shikiLang = shikiLangFor(path);
+  const oldTokens = useShikiTokens(diff?.oldText ?? "", shikiLang, themeName);
+  const newTokens = useShikiTokens(diff?.newText ?? "", shikiLang, themeName);
   useEffect(() => {
     let cancelled = false;
     setDiff(null);
     setError(null);
+    setRevealed(new Set());
+    setShowAll(false);
     rpc.call("diff_structural", { ticketId, path }).then(
       (result) => {
         if (!cancelled) setDiff(result);
@@ -1687,17 +2367,54 @@ function StructuralPatch({
       window.removeEventListener("blur", blur);
     };
   }, []);
-  const lookupSymbol = (symbol: string, anchor: HTMLElement) => {
-    const rect = anchor.getBoundingClientRect();
-    setLookup({ symbol, result: null, anchor: rect });
-    rpc.call("symbol_definitions", { ticketId, symbol }).then(
-      (result) => setLookup((current) => (current?.symbol === symbol ? { ...current, result } : current)),
+  // Definitions and usages are fetched once per symbol and shared by the hover card and the peek.
+  const ensureSymbol = (symbol: string) => {
+    if (symbolCache.current.has(symbol)) return;
+    Promise.all([rpc.call("symbol_definitions", { ticketId, symbol }), rpc.call("symbol_usages", { ticketId, symbol })]).then(
+      ([lookup, usages]) => {
+        symbolCache.current.set(symbol, { lookup, usages, error: null });
+        bumpSymbols((n) => n + 1);
+      },
       (cause: unknown) => {
-        toast.error(errorMessage(cause));
-        setLookup(null);
+        symbolCache.current.set(symbol, { lookup: null, usages: null, error: errorMessage(cause) });
+        bumpSymbols((n) => n + 1);
       },
     );
   };
+  /** ⌘-click: open (or re-target) the peek under the clicked line. */
+  const lookupSymbol = (symbol: string, anchor: HTMLElement) => {
+    const rowAttr = anchor.closest("tr[data-row]")?.getAttribute("data-row");
+    const rowIndex = rowAttr === null || rowAttr === undefined ? (peek?.rowIndex ?? null) : Number.parseInt(rowAttr, 10);
+    if (rowIndex === null) return;
+    setHover(null);
+    ensureSymbol(symbol);
+    setPeek((current) => (current !== null && current.rowIndex === rowIndex ? { rowIndex, trail: [...current.trail, symbol] } : { rowIndex, trail: [symbol] }));
+  };
+  /** ⌘-hover: a definition preview after a short pause; leaving the identifier or releasing ⌘ hides it. */
+  const hoverSymbol = (symbol: string | null, anchor: HTMLElement | null) => {
+    if (hoverTimer.current !== null) window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+    if (symbol === null || anchor === null || !symbolMode) {
+      setHover(null);
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    hoverTimer.current = window.setTimeout(() => {
+      ensureSymbol(symbol);
+      setHover({ symbol, anchor: rect });
+    }, 350);
+  };
+  useEffect(() => {
+    if (!symbolMode) setHover(null);
+  }, [symbolMode]);
+  useEffect(() => {
+    if (peek === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPeek(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [peek]);
   if (error !== null) return <p className="p-4 text-sm text-destructive">{error}</p>;
   if (diff === null) return <p className="p-4 text-sm text-muted-foreground">Running difftastic…</p>;
   if (!diff.available) {
@@ -1713,29 +2430,90 @@ function StructuralPatch({
   }
   const oldLines = diff.oldText.split("\n");
   const newLines = diff.newText.split("\n");
+  const oldChanges = new Map(diff.oldChanges.map((entry) => [entry.line, entry]));
+  const newChanges = new Map(diff.newChanges.map((entry) => [entry.line, entry]));
+  const rows = diff.aligned.map(([lhs, rhs], index) => ({
+    index,
+    lhs,
+    rhs,
+    changed: lhs === null || rhs === null || oldChanges.has(lhs) || newChanges.has(rhs),
+  }));
+  const moved = detectMoves(rows, oldLines, newLines);
+  const jumpToRow = (index: number) => {
+    reveal(Math.max(0, index - STRUCTURAL_CONTEXT), Math.min(rows.length, index + STRUCTURAL_CONTEXT + 1));
+    requestAnimationFrame(() => {
+      tableRef.current?.querySelector(`[data-row="${index}"]`)?.scrollIntoView({ block: "center" });
+    });
+  };
+  // GitHub-style hunks: changed rows plus a few lines of context stay visible; everything else collapses behind expanders.
+  const visible = new Set<number>();
+  for (const row of rows) {
+    if (!row.changed) continue;
+    for (let i = Math.max(0, row.index - STRUCTURAL_CONTEXT); i <= Math.min(rows.length - 1, row.index + STRUCTURAL_CONTEXT); i++) visible.add(i);
+  }
+  for (const index of revealed) visible.add(index);
+  // Findings sit on new-side lines; keep those rows visible even when the line itself did not change.
+  const rowByNewLine = new Map<number, number>();
+  for (const row of rows) if (row.rhs !== null) rowByNewLine.set(row.rhs, row.index);
+  for (const entry of findings) {
+    const index = entry.line === null ? undefined : rowByNewLine.get(entry.line);
+    if (index === undefined) continue;
+    for (let i = Math.max(0, index - STRUCTURAL_CONTEXT); i <= Math.min(rows.length - 1, index + STRUCTURAL_CONTEXT); i++) visible.add(i);
+  }
+  const reveal = (from: number, to: number) => {
+    setRevealed((current) => {
+      const next = new Set(current);
+      for (let i = from; i < to; i++) next.add(i);
+      return next;
+    });
+  };
   const commentsAt = (side: "LEFT" | "RIGHT", line: number) => comments.filter((comment) => comment.line === line && comment.side === side);
-  const lineCell = (sideLine: StructuralDiff["chunks"][number][number]["lhs"], side: "LEFT" | "RIGHT") => {
+  const semanticAt = (side: "LEFT" | "RIGHT", line: number): SemanticChange | null =>
+    semantics.find((change) => {
+      if (change.kind === "logic") return false;
+      const range = side === "LEFT" ? change.oldLines : change.newLines;
+      return range !== null && line >= range[0] && line <= range[1];
+    }) ?? null;
+  const lineCell = (line: number | null, side: "LEFT" | "RIGHT", rowChanged: boolean, movedRow: MovedRow | null) => {
+    if (line === null) {
+      return <td className="bg-[repeating-linear-gradient(135deg,transparent,transparent_6px,var(--color-border)_6px,var(--color-border)_7px)] opacity-40" colSpan={2} />;
+    }
     const lines = side === "LEFT" ? oldLines : newLines;
-    if (sideLine === null) return <td className="w-1/2 bg-muted/20" colSpan={2} />;
-    const text = lines[sideLine.line - 1] ?? "";
-    const changed = sideLine.changes.length > 0;
+    const sideLine = movedRow !== null ? null : ((side === "LEFT" ? oldChanges : newChanges).get(line) ?? null);
+    const text = lines[line - 1] ?? "";
+    const lineTokens = (side === "LEFT" ? oldTokens : newTokens)?.[line - 1] ?? null;
+    const semantic = rowChanged && movedRow === null ? semanticAt(side, line) : null;
+    const neutral = movedRow !== null || semantic !== null;
+    const tint = neutral ? "bg-violet-500/10" : rowChanged && (side === "LEFT" ? "bg-red-500/10" : "bg-emerald-500/10");
+    const gutterTint = neutral ? "bg-violet-500/20" : rowChanged && (side === "LEFT" ? "bg-red-500/20" : "bg-emerald-500/20");
+    const changedSince = side === "RIGHT" && rangesOverlap(line, line, changedRanges);
+    const movedLabel =
+      movedRow !== null && movedRow.first ? (
+        <button
+          type="button"
+          className="float-right ml-2 rounded border border-violet-500/40 px-1.5 font-sans text-[10px] text-violet-700 hover:bg-violet-500/20 dark:text-violet-300"
+          title={side === "LEFT" ? "This block moved; jump to where it went" : "This block moved; jump to where it came from"}
+          onClick={() => jumpToRow(movedRow.counterpart)}
+        >
+          moved {side === "LEFT" ? "to" : "from"} line {movedRow.counterpartLine}
+        </button>
+      ) : null;
     return (
       <>
-        <td
-          className={cn("group/ln w-10 select-none border-r border-border/60 pr-2 text-right align-top text-muted-foreground/70", changed && (side === "LEFT" ? "bg-red-500/10" : "bg-emerald-500/10"))}
-        >
+        <td className={cn("group/ln select-none border-r border-border/60 pr-2 text-right align-top text-muted-foreground/70", gutterTint, changedSince && "shadow-[inset_2px_0_0_0_theme(colors.sky.500)]")} title={changedSince ? "Changed since you last looked" : undefined}>
           <button
             type="button"
             className="relative w-full text-right tabular-nums hover:text-foreground"
             title="Comment on this line"
-            onClick={() => onStartComment(sideLine.line, side)}
+            onClick={() => onStartComment(line, side)}
           >
-            <span className="group-hover/ln:invisible">{sideLine.line}</span>
+            <span className="group-hover/ln:invisible">{line}</span>
             <span className="absolute inset-0 hidden items-center justify-end pr-0.5 text-primary group-hover/ln:flex">+</span>
           </button>
         </td>
-        <td className={cn("w-1/2 whitespace-pre-wrap break-words pl-2 pr-3 align-top", changed && (side === "LEFT" ? "bg-red-500/10" : "bg-emerald-500/10"))}>
-          <StructuralLine text={text} changes={sideLine} side={side} onSymbol={lookupSymbol} />
+        <td className={cn(diffWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre", "pl-2 pr-3 align-top", tint)}>
+          {movedLabel}
+          <StructuralLine text={text} changes={sideLine} tokens={lineTokens} side={side} onSymbol={lookupSymbol} onSymbolHover={hoverSymbol} />
         </td>
       </>
     );
@@ -1743,15 +2521,19 @@ function StructuralPatch({
   const annotationRow = (side: "LEFT" | "RIGHT", line: number) => {
     const list = commentsAt(side, line);
     const composing = composer !== null && composer.line === line && composer.side === side;
-    if (list.length === 0 && !composing) return null;
+    const lineFindings = side === "RIGHT" ? findings.filter((entry) => entry.line === line) : [];
+    if (list.length === 0 && !composing && lineFindings.length === 0) return null;
     return (
       <tr key={`${side}-${line}-notes`}>
         <td colSpan={4} className="px-3 py-1">
+          {lineFindings.map((entry) => (
+            <FindingAnnotation key={entry.item.finding.id} item={entry.item} onToggle={(selected) => onToggleFinding(entry.item, selected)} onEdit={(edit) => onEditFinding(entry.item, edit)} />
+          ))}
           {composing ? <DiffCommentForm path={path} line={line} side={side} onSubmit={onSubmitComposer} onCancel={onCancelComposer} /> : null}
           {list.length > 0 ? (
             <ul className="list-none">
               {list.map((comment) => (
-                <DiffCommentItem key={comment.id} comment={comment} onDelete={() => onDeleteComment(comment.id)} />
+                <DiffCommentItem key={comment.id} comment={comment} onDelete={() => onDeleteComment(comment.id)} onEdit={(body) => onEditComment(comment.id, body)} />
               ))}
             </ul>
           ) : null}
@@ -1759,75 +2541,557 @@ function StructuralPatch({
       </tr>
     );
   };
+  const expanderButton = (label: string, title: string, onClick: () => void) => (
+    <button type="button" title={title} aria-label={title} className="rounded px-1.5 py-0.5 text-sky-700 hover:bg-sky-500/20 dark:text-sky-300" onClick={onClick}>
+      {label}
+    </button>
+  );
+  const gapRow = (from: number, to: number) => {
+    const count = to - from;
+    const leading = from === 0;
+    const trailing = to === rows.length;
+    const first = rows[from]!;
+    const last = rows[to - 1]!;
+    const range = `${first.rhs ?? first.lhs}–${last.rhs ?? last.lhs}`;
+    return (
+      <tr key={`gap-${from}`} className="bg-sky-500/10 text-[11px] text-muted-foreground">
+        <td colSpan={4} className="px-2 py-0.5">
+          <div className="flex items-center gap-1">
+            {count <= STRUCTURAL_EXPAND_STEP ? (
+              expanderButton("↕", `Show ${count} unchanged lines`, () => reveal(from, to))
+            ) : (
+              <>
+                {!leading ? expanderButton("↓", `Show ${STRUCTURAL_EXPAND_STEP} lines below`, () => reveal(from, from + STRUCTURAL_EXPAND_STEP)) : null}
+                {!trailing ? expanderButton("↑", `Show ${STRUCTURAL_EXPAND_STEP} lines above`, () => reveal(to - STRUCTURAL_EXPAND_STEP, to)) : null}
+              </>
+            )}
+            <span className="ml-2 font-sans">
+              {count} unchanged {count === 1 ? "line" : "lines"} ({range})
+            </span>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+  /** The hunk starting at `index`: its last visible row and the line span on each side. */
+  const hunkSpan = (index: number) => {
+    let end = index;
+    while (end + 1 < rows.length && visible.has(end + 1)) end += 1;
+    const slice = rows.slice(index, end + 1);
+    const news = slice.map((row) => row.rhs).filter((line): line is number => line !== null);
+    const olds = slice.map((row) => row.lhs).filter((line): line is number => line !== null);
+    const side: "old" | "new" = news.length > 0 ? "new" : "old";
+    const lines = side === "new" ? news : olds;
+    return { end, side, start: Math.min(...lines), stop: Math.max(...lines) };
+  };
+  const hunkHeader = (index: number) => {
+    const span = hunkSpan(index);
+    const first = rows[index]!;
+    const enclosing = first.rhs !== null ? enclosingDefinition(newLines, first.rhs) : first.lhs !== null ? enclosingDefinition(oldLines, first.lhs) : null;
+    const labels = semantics.filter((change) => {
+      const range = span.side === "new" ? change.newLines : change.oldLines;
+      return range !== null && rangesOverlap(span.start, span.stop, [range]);
+    });
+    const explanation = explanations.find((entry) => entry.side === span.side && entry.startLine <= span.stop && entry.endLine >= span.start) ?? null;
+    return (
+      <Fragment key={`hunk-${index}`}>
+        <tr data-hunk="" className="bg-muted/30 text-[11px] text-muted-foreground">
+          <td colSpan={4} className="px-3 py-0.5">
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 truncate text-muted-foreground/80" title={enclosing ?? undefined}>
+                @@ {span.side === "new" ? "" : "old "}{span.start}–{span.stop}
+                {enclosing !== null ? ` ${enclosing}` : ""}
+              </code>
+              {labels.map((change, labelIndex) => (
+                <span key={labelIndex} className="inline-flex min-w-0 items-center gap-1 rounded border border-violet-500/40 px-1.5 py-px font-sans text-[10px] text-violet-700 dark:text-violet-300" title={change.label}>
+                  <span className="uppercase tracking-wide">{SEMANTIC_KIND_LABEL[change.kind]}</span>
+                  <span className="truncate normal-case">{change.label}</span>
+                </span>
+              ))}
+              <span className="ml-auto flex shrink-0 items-center gap-1 font-sans">
+                {explanation === null ? (
+                  <button type="button" className="rounded px-1.5 py-px hover:bg-state-hover hover:text-foreground" title="Ask an agent what this hunk does and why" onClick={() => onExplain(span.side, span.start, span.stop)}>
+                    Explain
+                  </button>
+                ) : explanation.status === "running" ? (
+                  <span>explaining…</span>
+                ) : explanation.status === "failed" ? (
+                  <button type="button" className="rounded px-1.5 py-px text-destructive hover:bg-state-hover" onClick={() => onExplain(span.side, span.start, span.stop)}>
+                    explanation failed · retry
+                  </button>
+                ) : null}
+              </span>
+            </div>
+          </td>
+        </tr>
+        {explanation !== null && explanation.status === "completed" && explanation.body !== null ? (
+          <tr key={`explain-${index}`}>
+            <td colSpan={4} className="px-3 py-1">
+              <ExplanationStrip explanation={explanation} />
+            </td>
+          </tr>
+        ) : null}
+      </Fragment>
+    );
+  };
+  const wholeFile = diff.status === "created" || diff.status === "deleted" || rows.every((row) => row.changed);
+  const previewLimit = wholeFile && !showAll && visible.size > LARGE_FILE_PREVIEW_ROWS + 10 ? LARGE_FILE_PREVIEW_ROWS : null;
+  const body: ReactNode[] = [];
+  let gapStart: number | null = null;
+  let emitted = 0;
+  for (const row of rows) {
+    if (!visible.has(row.index)) {
+      gapStart ??= row.index;
+      continue;
+    }
+    if (gapStart !== null) {
+      body.push(gapRow(gapStart, row.index));
+      gapStart = null;
+    }
+    if (previewLimit !== null && emitted >= previewLimit) {
+      body.push(
+        <tr key="preview-more" className="bg-sky-500/10 text-xs text-muted-foreground">
+          <td colSpan={4} className="px-3 py-1.5">
+            <button type="button" className="rounded px-1.5 py-0.5 text-sky-700 hover:bg-sky-500/20 dark:text-sky-300" onClick={() => setShowAll(true)}>
+              Show {visible.size - emitted} more {visible.size - emitted === 1 ? "line" : "lines"} of this {diff.status === "deleted" ? "deleted" : "new"} file
+            </button>
+          </td>
+        </tr>,
+      );
+      gapStart = null;
+      break;
+    }
+    emitted += 1;
+    const startsHunk = row.index === 0 || !visible.has(row.index - 1);
+    if (startsHunk) body.push(hunkHeader(row.index));
+    body.push(
+      <Fragment key={row.index}>
+        <tr className="hover:bg-state-hover/40" data-row={row.index}>
+          {lineCell(row.lhs, "LEFT", row.changed, moved.get(row.index) ?? null)}
+          {lineCell(row.rhs, "RIGHT", row.changed, moved.get(row.index) ?? null)}
+        </tr>
+        {row.lhs !== null ? annotationRow("LEFT", row.lhs) : null}
+        {row.rhs !== null ? annotationRow("RIGHT", row.rhs) : null}
+        {peek !== null && peek.rowIndex === row.index ? (
+          <tr key={`peek-${row.index}`}>
+            <td colSpan={4} className="px-3 py-1">
+              <SymbolPeek
+                ticketId={ticketId}
+                trail={peek.trail}
+                data={symbolCache.current.get(peek.trail.at(-1)!)}
+                onNavigate={(symbol) => {
+                  ensureSymbol(symbol);
+                  setPeek({ rowIndex: row.index, trail: [...peek.trail, symbol] });
+                }}
+                onBack={() => setPeek(peek.trail.length > 1 ? { rowIndex: row.index, trail: peek.trail.slice(0, -1) } : null)}
+                onClose={() => setPeek(null)}
+                onOpenFile={onOpenFile}
+                onSymbolHover={hoverSymbol}
+              />
+            </td>
+          </tr>
+        ) : null}
+      </Fragment>,
+    );
+  }
+  if (gapStart !== null && (previewLimit === null || emitted < previewLimit)) body.push(gapRow(gapStart, rows.length));
+  const hasChanges = rows.some((row) => row.changed);
   return (
     <div className={cn("relative", symbolMode && "symbol-mode")}>
-      <div className="flex items-center gap-2 px-3 py-1 text-[11px] text-muted-foreground">
-        <span>difftastic · {diff.language ?? "text"} · {diff.status}</span>
-        <span className="ml-auto">⌘-click an identifier to find its definition</span>
+      {!hasChanges ? <p className="px-3 py-2 text-sm text-muted-foreground">No structural changes.</p> : null}
+      <div className={cn(!diffWrap && "overflow-x-auto")}>
+        <table ref={tableRef} className={cn("border-collapse font-mono text-[12px] leading-5", diffWrap ? "w-full table-fixed" : "min-w-full table-auto")}>
+          {/* table-fixed sizes columns from the first row, where an empty side is one colSpan=2 cell; pin the gutters here instead. */}
+          <colgroup>
+            <col className="w-12" />
+            <col />
+            <col className="w-12" />
+            <col />
+          </colgroup>
+          <tbody>{body}</tbody>
+        </table>
       </div>
-      {diff.chunks.length === 0 ? <p className="px-3 py-2 text-sm text-muted-foreground">No structural changes.</p> : null}
-      <table className="w-full table-fixed border-collapse font-mono text-[12px] leading-5">
-        <tbody>
-          {diff.chunks.map((chunk, chunkIndex) => (
-            <Fragment key={chunkIndex}>
-              {chunkIndex > 0 ? (
-                <tr>
-                  <td colSpan={4} className="border-y border-border/60 bg-muted/30 px-3 py-0.5 text-[11px] text-muted-foreground">
-                    ⋯
-                  </td>
-                </tr>
-              ) : null}
-              {chunk.map((pair, pairIndex) => (
-                <Fragment key={pairIndex}>
-                  <tr className="hover:bg-state-hover/40">
-                    {lineCell(pair.lhs, "LEFT")}
-                    {lineCell(pair.rhs, "RIGHT")}
-                  </tr>
-                  {pair.lhs !== null ? annotationRow("LEFT", pair.lhs.line) : null}
-                  {pair.rhs !== null ? annotationRow("RIGHT", pair.rhs.line) : null}
-                </Fragment>
-              ))}
-            </Fragment>
-          ))}
-        </tbody>
-      </table>
-      {lookup !== null ? (
-        <div
-          role="dialog"
-          aria-label={`Definitions of ${lookup.symbol}`}
-          className="fixed z-50 w-96 max-w-[90vw] rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md"
-          style={{ top: Math.min(lookup.anchor.bottom + 6, window.innerHeight - 260), left: Math.min(lookup.anchor.left, window.innerWidth - 400) }}
+      {hover !== null && symbolMode ? <SymbolHoverCard symbol={hover.symbol} data={symbolCache.current.get(hover.symbol)} anchor={hover.anchor} /> : null}
+    </div>
+  );
+}
+
+/** A truncating label whose tooltip (the full text, plus optional extra lines) appears only when the text is actually clipped. */
+function TruncatedName({ text, full, className, extra }: { text: string; full: string; className?: string; extra?: string | null }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const show = () => {
+    const node = ref.current;
+    if (node !== null && (node.scrollWidth > node.clientWidth + 1 || text !== full)) setOpen(true);
+  };
+  return (
+    <Tooltip.Root open={open} onOpenChange={(next) => (next ? show() : setOpen(false))} delayDuration={250}>
+      <Tooltip.Trigger asChild>
+        <span ref={ref} className={cn("min-w-0 flex-1 truncate font-mono", className)}>
+          {text}
+        </span>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content side="right" sideOffset={6} className="z-50 max-w-[80vw] rounded-md border border-border bg-popover px-2 py-1 font-mono text-xs text-popover-foreground shadow-md">
+          {full}
+          {extra !== null && extra !== undefined ? <div className="mt-0.5 font-sans text-muted-foreground">{extra}</div> : null}
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+}
+
+interface FileTreeDir {
+  name: string;
+  path: string;
+  dirs: FileTreeDir[];
+  files: DiffFile[];
+  additions: number;
+  deletions: number;
+}
+
+/** Nest files by directory, then fold single-child directory chains into one row (`internal/api/edgemultiplexer`). */
+function buildFileTree(files: DiffFile[]): FileTreeDir {
+  const root: FileTreeDir = { name: "", path: "", dirs: [], files: [], additions: 0, deletions: 0 };
+  for (const file of files) {
+    const parts = file.path.split("/");
+    let node = root;
+    for (const part of parts.slice(0, -1)) {
+      let child = node.dirs.find((dir) => dir.name === part);
+      if (child === undefined) {
+        child = { name: part, path: node.path === "" ? part : `${node.path}/${part}`, dirs: [], files: [], additions: 0, deletions: 0 };
+        node.dirs.push(child);
+      }
+      node = child;
+    }
+    node.files.push(file);
+  }
+  const fold = (node: FileTreeDir): FileTreeDir => {
+    let current = node;
+    while (current.dirs.length === 1 && current.files.length === 0 && current !== root) {
+      const only = current.dirs[0]!;
+      current = { ...only, name: `${current.name}/${only.name}` };
+    }
+    current.dirs = current.dirs.map(fold).sort((a, b) => a.name.localeCompare(b.name));
+    current.files.sort((a, b) => a.path.localeCompare(b.path));
+    current.additions = current.files.reduce((sum, file) => sum + file.additions, 0) + current.dirs.reduce((sum, dir) => sum + dir.additions, 0);
+    current.deletions = current.files.reduce((sum, file) => sum + file.deletions, 0) + current.dirs.reduce((sum, dir) => sum + dir.deletions, 0);
+    return current;
+  };
+  return fold(root);
+}
+
+function FileTree({
+  files,
+  activePath,
+  viewed,
+  commentCount,
+  findingCount,
+  risk,
+  changedSince,
+  onSelect,
+}: {
+  files: DiffFile[];
+  activePath: string | null;
+  viewed: ReadonlySet<string>;
+  commentCount: (path: string) => number;
+  findingCount: (path: string) => number;
+  risk: (path: string) => number | null;
+  changedSince: (path: string) => boolean;
+  onSelect: (path: string) => void;
+}) {
+  const tree = useMemo(() => buildFileTree(files), [files]);
+  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (path: string) =>
+    setClosed((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  const renderDir = (dir: FileTreeDir, depth: number): ReactNode => {
+    const isClosed = closed.has(dir.path);
+    return (
+      <li key={`dir:${dir.path}`}>
+        <button
+          type="button"
+          onClick={() => toggle(dir.path)}
+          className="flex w-full items-center gap-1.5 py-1 pr-3 text-left text-xs text-muted-foreground hover:bg-state-hover"
+          style={{ paddingLeft: 8 + depth * 12 }}
+          aria-expanded={!isClosed}
         >
-          <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-            <code className="text-foreground">{lookup.symbol}</code>
-            {lookup.result !== null ? <span>· {lookup.result.searched === "workspace" ? "git grep in workspace" : lookup.result.searched === "github" ? "GitHub code search" : "no searchable checkout"}</span> : <span>· searching…</span>}
-            <button type="button" aria-label="Close" className="ml-auto rounded p-0.5 hover:bg-state-hover" onClick={() => setLookup(null)}>
-              <Icon name="X" className="size-3.5" />
-            </button>
-          </div>
-          {lookup.result !== null && lookup.result.definitions.length === 0 ? <p className="px-1 py-1 text-xs text-muted-foreground">No definition found.</p> : null}
-          <ul className="max-h-56 overflow-y-auto">
-            {lookup.result?.definitions.map((definition, index) => (
-              <li key={`${definition.path}:${definition.line ?? index}`}>
-                <button
-                  type="button"
-                  className="flex w-full flex-col gap-0.5 rounded px-1.5 py-1 text-left hover:bg-state-hover"
-                  onClick={() => {
-                    onOpenFile(lookup.result!, definition);
-                    setLookup(null);
-                  }}
-                >
-                  <span className="truncate font-mono text-xs">
-                    {definition.path}
-                    {definition.line !== null ? `:${definition.line}` : ""}
+          <Icon name="ChevronDown" className={cn("size-3 shrink-0 transition-transform", isClosed && "-rotate-90")} />
+          <TruncatedName text={dir.name} full={dir.path} />
+          <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">+{dir.additions}</span>
+          <span className="shrink-0 tabular-nums text-red-600 dark:text-red-400">−{dir.deletions}</span>
+        </button>
+        {isClosed ? null : <ul>{renderChildren(dir, depth + 1)}</ul>}
+      </li>
+    );
+  };
+  const renderFile = (file: DiffFile, depth: number): ReactNode => {
+    const count = commentCount(file.path);
+    const isViewed = viewed.has(file.path);
+    const generated = isGeneratedPath(file.path);
+    const name = file.path.split("/").pop() ?? file.path;
+    const fileRisk = isViewed ? null : risk(file.path);
+    return (
+      <li key={file.path}>
+        <button
+          type="button"
+          onClick={() => onSelect(file.path)}
+          className={cn("flex w-full items-center gap-1.5 py-1 pr-3 text-left text-xs hover:bg-state-hover", riskTint(fileRisk), file.path === activePath && "bg-state-active")}
+          style={{ paddingLeft: 8 + depth * 12 + 16 }}
+          data-file-tree-path={file.path}
+        >
+          {isViewed ? <Icon name="Check" className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" /> : fileRisk !== null ? <span className={cn("size-1.5 shrink-0 rounded-full", RISK_DOT[fileRisk])} aria-hidden="true" /> : null}
+          {changedSince(file.path) ? <span className="shrink-0 rounded border border-sky-500/50 px-1 text-[10px] text-sky-700 dark:text-sky-300" title="Changed since you last looked">changed</span> : null}
+          <TruncatedName
+            text={name}
+            full={file.path}
+            extra={fileRisk === null ? null : `review attention ${fileRisk}/5`}
+            className={cn((isViewed || generated) && "text-muted-foreground", isViewed && "line-through decoration-muted-foreground/50")}
+          />
+          {generated ? <span className="shrink-0 rounded border border-border px-1 text-[10px] uppercase tracking-wide text-muted-foreground">gen</span> : null}
+          {findingCount(file.path) > 0 ? <Badge tone="danger" title="Review findings in this file">{findingCount(file.path)}</Badge> : null}
+          {count > 0 ? <Badge tone="warning">{count}</Badge> : null}
+          <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">+{file.additions}</span>
+          <span className="shrink-0 tabular-nums text-red-600 dark:text-red-400">−{file.deletions}</span>
+        </button>
+      </li>
+    );
+  };
+  const renderChildren = (dir: FileTreeDir, depth: number): ReactNode[] => [...dir.dirs.map((child) => renderDir(child, depth)), ...dir.files.map((file) => renderFile(file, depth))];
+  return (
+    <Tooltip.Provider>
+      <ul>{renderChildren(tree, 0)}</ul>
+    </Tooltip.Provider>
+  );
+}
+
+/** `diff/<cardId>` → card id; `diff/thread/<threadId>` → `thread:<threadId>`. Decodes in case the host escaped the path. */
+function diffSubjectFromSubPath(subPath: string): string | null {
+  if (!subPath.startsWith("diff/")) return null;
+  const rest = decodeURIComponent(subPath.slice("diff/".length));
+  if (rest.startsWith("thread/")) return `thread:${rest.slice("thread/".length)}`;
+  return rest;
+}
+
+/** The diff route takes a card id or `thread:<threadId>`; a thread that has a card shows as that card. */
+function findDiffSubjectTicket(board: Board | null, subjectId: string): Ticket | null {
+  if (board === null) return null;
+  const direct = board.tickets.find((entry) => entry.id === subjectId);
+  if (direct !== undefined) return direct;
+  if (!subjectId.startsWith("thread:")) return null;
+  const threadId = subjectId.slice("thread:".length);
+  return board.tickets.find((entry) => entry.threadId === threadId) ?? null;
+}
+
+/** Thread header button: open the changes view for this thread, as its card when it has one. */
+function ThreadDiffAction({ threadId, isCompactViewport }: { threadId: string; projectId: string; isCompactViewport: boolean }) {
+  const navigate = useBbNavigate();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      className={cn(COMPACT, isCompactViewport && "px-1.5")}
+      aria-label="View this thread's changes in the Kanban diff view"
+      onClick={() => navigate.toPluginPanel("board", { subPath: `diff/thread/${threadId}` })}
+    >
+      <Icon name="kanban-diff" className="size-3.5" />
+      {isCompactViewport ? null : "Changes"}
+    </Button>
+  );
+}
+
+/**
+ * The host's own fallback only says "plugin kanban crashed" and logs the cause to the devtools console. This boundary
+ * sits inside each slot so the message and component stack show on the page, with a retry that remounts the subtree.
+ */
+class PluginErrorBoundary extends Component<{ name: string; children: ReactNode }, { error: Error | null; stack: string | null }> {
+  state: { error: Error | null; stack: string | null } = { error: null, stack: null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    this.setState({ stack: info.componentStack ?? null });
+    console.error(`[kanban] ${this.props.name} crashed:`, error, info.componentStack);
+  }
+  render() {
+    const { error, stack } = this.state;
+    if (error === null) return this.props.children;
+    const details = `${error.name}: ${error.message}\n${error.stack ?? ""}\n\nComponent stack:${stack ?? " (none)"}`;
+    return (
+      <div className="m-3 flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+        <p className="font-medium text-destructive">Kanban {this.props.name} crashed</p>
+        <p className="break-words font-mono text-xs">{error.message}</p>
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground">Stack trace</summary>
+          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px] text-muted-foreground">{details}</pre>
+        </details>
+        <div className="flex gap-2">
+          <Button type="button" variant="secondary" className={COMPACT} onClick={() => this.setState({ error: null, stack: null })}>
+            Retry
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className={COMPACT}
+            onClick={() => {
+              void navigator.clipboard?.writeText(details);
+              toast.message("Error details copied");
+            }}
+          >
+            Copy details
+          </Button>
+        </div>
+      </div>
+    );
+  }
+}
+
+function withErrorBoundary<P extends object>(name: string, Inner: (props: P) => ReactNode) {
+  return function Guarded(props: P) {
+    return (
+      <PluginErrorBoundary name={name}>
+        <Inner {...props} />
+      </PluginErrorBoundary>
+    );
+  };
+}
+
+const TOUR_ROLE_LABEL: Record<"key" | "supporting" | "mechanical", { label: string; tone: "danger" | "accent" | "neutral" }> = {
+  key: { label: "key", tone: "danger" },
+  supporting: { label: "supporting", tone: "accent" },
+  mechanical: { label: "mechanical", tone: "neutral" },
+};
+
+function readTourOpen(): boolean {
+  try {
+    return window.localStorage.getItem("kanban:tourOpen") === "true";
+  } catch {
+    return false;
+  }
+}
+
+/** The agent's reading guide, as one strip above the files: the first sentence when closed, the full tour when opened. */
+function TourPanel({
+  tour,
+  busy,
+  onGenerate,
+  onJump,
+  onOpenThread,
+  files,
+}: {
+  tour: { narrative: Narrative | null; stale: boolean } | null;
+  busy: boolean;
+  onGenerate: () => void;
+  onJump: (path: string) => void;
+  onOpenThread: (threadId: string) => void;
+  files: DiffFile[];
+}) {
+  const [open, setOpenState] = useState(readTourOpen);
+  const setOpen = (value: boolean) => {
+    setOpenState(value);
+    try {
+      window.localStorage.setItem("kanban:tourOpen", String(value));
+    } catch {
+      // ignore
+    }
+  };
+  const narrative = tour?.narrative ?? null;
+  const report = narrative?.status === "completed" ? narrative.report : null;
+  const known = new Set(files.map((file) => file.path));
+  const firstSentence = report === null ? "" : (report.summary.match(/^[\s\S]*?[.!?](?=\s|$)/u)?.[0] ?? report.summary);
+  const keyCount = report?.readingOrder.filter((entry) => entry.role === "key").length ?? 0;
+  const generateLabel = narrative === null ? "Generate tour" : tour?.stale ? "Regenerate for new head" : "Regenerate";
+  return (
+    <section className="border-b border-border text-xs">
+      <div className="flex min-h-7 items-center gap-2 px-3">
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => setOpen(!open)} aria-expanded={open} disabled={report === null}>
+          <Icon name="ChevronDown" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", !open && "-rotate-90", report === null && "invisible")} />
+          <span className="shrink-0 font-medium">Tour</span>
+          {narrative === null ? (
+            <span className="truncate text-muted-foreground">An agent can summarise this change and suggest a reading order.</span>
+          ) : narrative.status === "running" ? (
+            <span className="truncate text-muted-foreground">Writing… this strip fills in when the thread finishes.</span>
+          ) : narrative.status === "failed" ? (
+            <span className="truncate text-destructive">Failed. Open the thread for details.</span>
+          ) : !open ? (
+            <span className="min-w-0 truncate text-muted-foreground">{firstSentence}</span>
+          ) : null}
+          {report !== null && !open && keyCount > 0 ? <span className="shrink-0 rounded border border-border px-1 text-[10px] text-muted-foreground">{keyCount} key</span> : null}
+          {tour?.stale ? <span className="shrink-0 rounded border border-amber-500/50 px-1 text-[10px] text-amber-700 dark:text-amber-300">stale</span> : null}
+        </button>
+        {narrative !== null ? (
+          <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={() => onOpenThread(narrative.threadId)}>
+            thread
+          </button>
+        ) : null}
+        {narrative?.status === "running" ? null : (
+          <button type="button" className="shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:opacity-50" disabled={busy} onClick={onGenerate}>
+            {busy ? "Starting…" : generateLabel}
+          </button>
+        )}
+      </div>
+      {open && report !== null ? (
+        <div className="flex flex-col gap-2 px-3 pb-3 pl-8 text-sm">
+          <Markdown content={report.summary} className="text-sm" />
+          <ol className="flex flex-col gap-0.5">
+            {report.readingOrder.map((entry, index) => (
+              <li key={`${entry.path}-${index}`} className="flex items-baseline gap-2 text-xs">
+                <span className="w-4 shrink-0 text-right tabular-nums text-muted-foreground">{index + 1}</span>
+                <span className={cn("size-1.5 shrink-0 translate-y-[-1px] rounded-full", entry.role === "key" ? "bg-red-500" : entry.role === "supporting" ? "bg-sky-500" : "bg-slate-400")} title={entry.role} />
+                {known.has(entry.path) ? (
+                  <button type="button" className="shrink-0 font-mono hover:underline" onClick={() => onJump(entry.path)}>
+                    {entry.path.split("/").pop()}
+                  </button>
+                ) : (
+                  <code className="shrink-0 text-muted-foreground">{entry.path}</code>
+                )}
+                {entry.risk !== null ? <span className={cn("shrink-0 rounded px-1 text-[10px] text-white", RISK_DOT[entry.risk])} title={`review attention ${entry.risk}/5`}>{entry.risk}</span> : null}
+                {entry.lines.length > 0 ? <span className="shrink-0 text-muted-foreground">L{entry.lines.slice(0, 4).join(", ")}</span> : null}
+                {entry.note !== "" ? (
+                  <span className={cn("min-w-0 truncate", entry.role === "mechanical" ? "text-muted-foreground" : "text-foreground")} title={entry.note}>
+                    {entry.note}
                   </span>
-                  {definition.snippet !== "" ? <span className="truncate font-mono text-[11px] text-muted-foreground">{definition.snippet}</span> : null}
-                </button>
+                ) : null}
               </li>
             ))}
-          </ul>
+          </ol>
+          {report.watchOut.length > 0 ? (
+            <ul className="list-disc pl-5 text-xs text-muted-foreground">
+              {report.watchOut.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+/** Mounts its content once it scrolls near the viewport, then keeps it mounted; the placeholder height keeps far-off files out of view until then. */
+function LazyMount({ root, estimateLines, children }: { root: RefObject<HTMLElement | null>; estimateLines: number; children: () => ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    if (mounted) return;
+    const node = ref.current;
+    if (node === null) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) setMounted(true);
+      },
+      { root: root.current, rootMargin: "1000px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [mounted, root]);
+  return (
+    <div ref={ref} style={mounted ? undefined : { minHeight: Math.min(Math.max(estimateLines * 20, 80), 600) }}>
+      {mounted ? children() : null}
     </div>
   );
 }
@@ -1835,12 +3099,71 @@ function StructuralPatch({
 function DiffView({ ticketId, onBack, onOpenThread }: { ticketId: string; onBack: () => void; onOpenThread: (threadId: string) => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const { board, refetch } = useBoard();
-  const ticket = board?.tickets.find((entry) => entry.id === ticketId) ?? null;
+  const ticket = findDiffSubjectTicket(board, ticketId);
   const { diff, error, loading, reload } = useTicketDiff(ticketId, true);
   const [comments, setComments] = useState<DiffComment[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [activePath, setActivePath] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [viewed, setViewed] = useState<ReadonlySet<string>>(new Set());
+  const [markers, setMarkers] = useState<Array<{ fraction: number; pending: boolean; element: Element }>>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [delta, setDelta] = useState<DiffDelta | null>(null);
+  const [explanations, setExplanations] = useState<HunkExplanation[]>([]);
+  const [reviewing, setReviewing] = useState(false);
+  const [treeOpen, setTreeOpenState] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("kanban:fileTreeOpen") !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const setTreeOpen = (value: boolean) => {
+    setTreeOpenState(value);
+    try {
+      window.localStorage.setItem("kanban:fileTreeOpen", String(value));
+    } catch {
+      // ignore
+    }
+  };
+  const [treeWidth, setTreeWidth] = useState<number>(() => {
+    try {
+      const stored = Number.parseInt(window.localStorage.getItem("kanban:fileTreeWidth") ?? "", 10);
+      return Number.isFinite(stored) ? Math.min(FILE_TREE_MAX_WIDTH, Math.max(FILE_TREE_MIN_WIDTH, stored)) : FILE_TREE_DEFAULT_WIDTH;
+    } catch {
+      return FILE_TREE_DEFAULT_WIDTH;
+    }
+  });
+  const startTreeResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = treeWidth;
+    let width = startWidth;
+    const move = (moveEvent: PointerEvent) => {
+      width = Math.min(FILE_TREE_MAX_WIDTH, Math.max(FILE_TREE_MIN_WIDTH, startWidth + moveEvent.clientX - startX));
+      setTreeWidth(width);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try {
+        window.localStorage.setItem("kanban:fileTreeWidth", String(width));
+      } catch {
+        // ignore
+      }
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const [tour, setTour] = useState<{ narrative: Narrative | null; stale: boolean } | null>(null);
+  const [tourBusy, setTourBusy] = useState(false);
+  const sectionRefs = useRef(new Map<string, HTMLElement>());
+  const mainRef = useRef<HTMLElement | null>(null);
   const [composer, setComposer] = useState<{ path: string; line: number | null; side: "LEFT" | "RIGHT" } | null>(null);
-  const { diffView: view, diffMode, diffReloadNonce } = usePageUi();
+  const { diffView: view, diffMode, diffWrap, diffReloadNonce } = usePageUi();
   const navigate = useBbNavigate();
   const openDefinition = (lookup: SymbolLookup, definition: SymbolLookup["definitions"][number]) => {
     if (lookup.open.kind === "environment") {
@@ -1879,20 +3202,271 @@ function DiffView({ ticketId, onBack, onOpenThread }: { ticketId: string; onBack
   }, [rpc, ticketId]);
   useEffect(loadComments, [loadComments]);
   useRealtime(BOARD_CHANGED, loadComments);
+  const loadReview = useCallback(() => {
+    if (ticketId.startsWith("thread:") && ticket === null) return;
+    rpc.call("review_list", { ticketId: ticket?.id ?? ticketId }).then(
+      (result) => setReviews(result.reviews),
+      () => setReviews([]),
+    );
+  }, [rpc, ticketId, ticket]);
+  const loadExplanations = useCallback(() => {
+    rpc.call("hunk_explanations_list", { ticketId }).then((result) => setExplanations(result.explanations), () => setExplanations([]));
+  }, [rpc, ticketId]);
+  useEffect(loadExplanations, [loadExplanations]);
+  useRealtime(BOARD_CHANGED, loadExplanations);
+  const explainHunk = (path: string, side: "old" | "new", startLine: number, endLine: number) => {
+    rpc.call("hunk_explain", { ticketId, path, side, startLine, endLine }).then(
+      (explanation) => setExplanations((current) => [...current.filter((entry) => entry.id !== explanation.id), explanation]),
+      (cause: unknown) => toast.error(errorMessage(cause)),
+    );
+  };
+  const rereview = async () => {
+    if (ticket === null) return;
+    setReviewing(true);
+    try {
+      await rpc.call("ticket_review_pr", { id: ticket.id, mode: "incremental" });
+      toast.message("Re-review started");
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+    } finally {
+      setReviewing(false);
+    }
+  };
+  useEffect(loadReview, [loadReview]);
+  useRealtime(BOARD_CHANGED, loadReview);
+  const loadTour = useCallback(() => {
+    rpc.call("narrative_get", { ticketId }).then(setTour, () => setTour(null));
+  }, [rpc, ticketId]);
+  useEffect(loadTour, [loadTour]);
+  useRealtime(BOARD_CHANGED, loadTour);
+  const generateTour = async () => {
+    setTourBusy(true);
+    try {
+      const narrative = await rpc.call("narrative_generate", { ticketId });
+      setTour({ narrative, stale: false });
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+    } finally {
+      setTourBusy(false);
+    }
+  };
+  const { showFindings } = usePageUi();
+  const allFindingsByPath = useMemo(() => inlineFindingsByPath(reviews, delta), [reviews, delta]);
+  const semanticsByPath = useMemo(() => {
+    const map = new Map<string, SemanticChange[]>();
+    const report = tour?.narrative?.status === "completed" ? tour.narrative.report : null;
+    for (const entry of report?.readingOrder ?? []) if (entry.changes.length > 0) map.set(entry.path, entry.changes);
+    return map;
+  }, [tour]);
+  const riskByPath = useMemo(() => {
+    const map = new Map<string, number>();
+    const report = tour?.narrative?.status === "completed" && !(tour?.stale ?? false) ? tour.narrative.report : null;
+    for (const entry of report?.readingOrder ?? []) if (entry.risk !== null) map.set(entry.path, entry.risk);
+    // Without a tour score, the review's worst finding in the file stands in.
+    for (const [path, list] of allFindingsByPath) {
+      if (map.has(path)) continue;
+      const worst = list.reduce<number>((score, entry) => Math.max(score, entry.item.finding.severity === "critical" ? 5 : entry.item.finding.severity === "important" ? 4 : 2), 0);
+      if (worst > 0) map.set(path, worst);
+    }
+    return map;
+  }, [tour, allFindingsByPath]);
+  const changedRangesByPath = useMemo(() => new Map((delta?.files ?? []).map((file) => [file.path, file.ranges] as const)), [delta]);
+  const newFindingCount = useMemo(() => [...allFindingsByPath.values()].flat().filter((entry) => entry.item.isNew).length, [allFindingsByPath]);
+  const touchedFindingCount = useMemo(() => [...allFindingsByPath.values()].flat().filter((entry) => entry.item.touched).length, [allFindingsByPath]);
+  const findingsByPath = showFindings ? allFindingsByPath : new Map<string, Array<{ item: InlineFinding; line: number | null }>>();
+  const findingTotal = useMemo(() => [...allFindingsByPath.values()].reduce((sum, list) => sum + list.length, 0), [allFindingsByPath]);
+  const replaceReview = (updated: Review) => setReviews((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+  const toggleFinding = (item: InlineFinding, selected: boolean) => {
+    rpc.call("review_set_selection", { reviewId: item.reviewId, findingId: item.finding.id, selected }).then(replaceReview, (cause: unknown) => toast.error(errorMessage(cause)));
+  };
+  const editFinding = async (item: InlineFinding, edit: FindingEditPatch | null) => {
+    try {
+      replaceReview(await rpc.call("review_edit_finding", { reviewId: item.reviewId, findingId: item.finding.id, edit }));
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+      throw cause;
+    }
+  };
+  const editComment = async (id: string, body: string) => {
+    try {
+      await rpc.call("diff_comment_update", { id, body });
+      loadComments();
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+      throw cause;
+    }
+  };
+  const headSha = diff?.headSha ?? null;
   useEffect(() => {
-    if (selectedPath === null && diff !== null && diff.files.length > 0) setSelectedPath(diff.files[0]!.path);
-  }, [diff, selectedPath]);
+    rpc.call("diff_delta", { ticketId }).then((result) => setDelta(result.delta), () => setDelta(null));
+  }, [rpc, ticketId, headSha]);
+  const generatedCollapsedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (diff === null) return;
+    const key = `${headSha ?? "env"}:${diff.files.length}`;
+    if (generatedCollapsedFor.current === key) return;
+    generatedCollapsedFor.current = key;
+    const generated = diff.files.filter((entry) => isGeneratedPath(entry.path)).map((entry) => entry.path);
+    if (generated.length > 0) setCollapsed((current) => new Set([...current, ...generated]));
+  }, [diff, headSha]);
+  useEffect(() => {
+    rpc.call("diff_viewed_list", { ticketId }).then(
+      (result) => {
+        setViewed(new Set(result.paths));
+        setCollapsed((current) => new Set([...current, ...result.paths]));
+      },
+      (cause: unknown) => toast.error(errorMessage(cause)),
+    );
+  }, [rpc, ticketId, headSha]);
+  const markViewed = (path: string, isViewed: boolean) => {
+    setViewed((current) => {
+      const next = new Set(current);
+      if (isViewed) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (isViewed) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+    rpc.call("diff_viewed_set", { ticketId, path, viewed: isViewed }).then(
+      (result) => setViewed(new Set(result.paths)),
+      (cause: unknown) => toast.error(errorMessage(cause)),
+    );
+  };
 
   const canPost = ticket?.canPostToGithub ?? false;
   const willPost = postToGithub ?? canPost;
   const pending = comments.filter((comment) => comment.addressedAt === null && comment.applyId === null);
   const forPath = (path: string) => comments.filter((comment) => comment.path === path);
-  const file = diff?.files.find((entry) => entry.path === selectedPath) ?? null;
-  const index = diff === null || file === null ? -1 : diff.files.indexOf(file);
-  const step = (delta: number) => {
-    if (diff === null) return;
-    const next = diff.files[index + delta];
-    if (next !== undefined) setSelectedPath(next.path);
+  const jumpTo = (path: string) => {
+    setActivePath(path);
+    setCollapsed((current) => {
+      if (!current.has(path)) return current;
+      const next = new Set(current);
+      next.delete(path);
+      return next;
+    });
+    sectionRefs.current.get(path)?.scrollIntoView({ block: "start" });
+  };
+  const toggleCollapsed = (path: string) => {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+  const scrollMainTo = (element: Element) => {
+    const main = mainRef.current;
+    if (main === null) return;
+    const offset = element.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+    main.scrollTo({ top: Math.max(0, offset - DIFF_STICKY_HEADER_PX), behavior: "auto" });
+  };
+  /** Next (or previous) element matching `selector` strictly below (above) the current reading position. */
+  const stepTo = (selector: string, direction: 1 | -1) => {
+    const main = mainRef.current;
+    if (main === null) return;
+    const mainTop = main.getBoundingClientRect().top + DIFF_STICKY_HEADER_PX;
+    const elements = Array.from(main.querySelectorAll(selector));
+    const target =
+      direction === 1
+        ? elements.find((element) => element.getBoundingClientRect().top > mainTop + 2)
+        : [...elements].reverse().find((element) => element.getBoundingClientRect().top < mainTop - 2);
+    if (target !== undefined) scrollMainTo(target);
+  };
+  const stepFile = (direction: 1 | -1) => {
+    if (diff === null || diff.files.length === 0) return;
+    const index = diff.files.findIndex((entry) => entry.path === activePath);
+    const next = diff.files[Math.min(diff.files.length - 1, Math.max(0, (index === -1 ? 0 : index) + direction))];
+    if (next !== undefined) jumpTo(next.path);
+  };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target !== null && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
+      switch (event.key) {
+        case "j":
+          stepTo("[data-hunk]", 1);
+          break;
+        case "k":
+          stepTo("[data-hunk]", -1);
+          break;
+        case "n":
+          stepFile(1);
+          break;
+        case "p":
+          stepFile(-1);
+          break;
+        case "c":
+          stepTo("[data-comment-anchor]", 1);
+          break;
+        case "C":
+          stepTo("[data-comment-anchor]", -1);
+          break;
+        case "v":
+          if (activePath !== null) markViewed(activePath, !viewed.has(activePath));
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  useEffect(() => {
+    if (activePath === null) return;
+    document.querySelector(`[data-file-tree-path="${CSS.escape(activePath)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [activePath]);
+  // Comment positions along the scroller, as fractions of its full height, for the marker track beside the scrollbar.
+  const recomputeMarkers = () => {
+    const main = mainRef.current;
+    if (main === null) return;
+    const mainTop = main.getBoundingClientRect().top;
+    const total = main.scrollHeight;
+    const next = Array.from(main.querySelectorAll("[data-comment-anchor], [data-finding-anchor]")).map((element) => ({
+      fraction: total === 0 ? 0 : (element.getBoundingClientRect().top - mainTop + main.scrollTop) / total,
+      pending: element.getAttribute("data-comment-state") === "pending" || element.hasAttribute("data-finding-anchor"),
+      element,
+    }));
+    setMarkers((current) => (current.length === next.length && current.every((marker, index) => Math.abs(marker.fraction - next[index]!.fraction) < 0.001 && marker.pending === next[index]!.pending) ? current : next));
+  };
+  useEffect(() => {
+    const main = mainRef.current;
+    if (main === null) return;
+    let frame = 0;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(recomputeMarkers);
+    };
+    schedule();
+    const observer = new MutationObserver(schedule);
+    observer.observe(main, { childList: true, subtree: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", schedule);
+    };
+  }, [diff, comments, collapsed]);
+  // The sidebar tracks whichever file header is at (or just above) the top of the scroller, like GitHub's file tree.
+  const trackActive = () => {
+    recomputeMarkers();
+    const main = mainRef.current;
+    if (main === null || diff === null) return;
+    const top = main.getBoundingClientRect().top + 8;
+    let current: string | null = null;
+    for (const entry of diff.files) {
+      const section = sectionRefs.current.get(entry.path);
+      if (section === undefined) continue;
+      if (section.getBoundingClientRect().top <= top) current = entry.path;
+      else break;
+    }
+    setActivePath(current ?? diff.files[0]?.path ?? null);
   };
 
   const addComment = async (path: string, line: number | null, side: "LEFT" | "RIGHT", body: string) => {
@@ -1931,7 +3505,7 @@ function DiffView({ ticketId, onBack, onOpenThread }: { ticketId: string; onBack
     }
   };
 
-  if (ticket === null) {
+  if (ticket === null && (board === null || !ticketId.startsWith("thread:"))) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
         {board === null ? "Loading…" : "This card no longer exists."}{" "}
@@ -1977,115 +3551,258 @@ function DiffView({ ticketId, onBack, onOpenThread }: { ticketId: string; onBack
           <DiffStats files={diff.files} />
           {diff.baseRef !== null ? <span>· against {diff.baseRef}</span> : null}
           {diff.headSha !== null ? <span>· {shortSha(diff.headSha)}</span> : null}
+          <span className="cursor-help text-muted-foreground/60" title="Keyboard: j/k next/previous change · n/p next/previous file · c/C next/previous comment · v toggle viewed">
+            ⌨
+          </span>
+          {comments.length > 0 ? (
+            <button type="button" className="rounded border border-border px-1.5 py-0.5 text-xs hover:bg-state-hover" title="Scroll to the next comment (c)" onClick={() => stepTo("[data-comment-anchor]", 1)}>
+              Next comment
+            </button>
+          ) : null}
+          {findingTotal > 0 ? (
+            <button
+              type="button"
+              aria-pressed={showFindings}
+              className={cn("rounded border border-border px-1.5 py-0.5 text-xs hover:bg-state-hover", showFindings && "bg-state-active text-foreground")}
+              title={showFindings ? "Hide the review's findings in the diff" : "Show the review's findings in the diff"}
+              onClick={() => pageUi.set({ showFindings: !showFindings })}
+            >
+              {findingTotal} finding{findingTotal === 1 ? "" : "s"}
+            </button>
+          ) : null}
+          <span className="ml-auto inline-flex items-center gap-2 tabular-nums">
+            {diff.files.filter((entry) => viewed.has(entry.path)).length} of {diff.files.length} viewed
+            <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+              <span className="block h-full bg-emerald-500 transition-[width]" style={{ width: `${(diff.files.filter((entry) => viewed.has(entry.path)).length / diff.files.length) * 100}%` }} />
+            </span>
+          </span>
         </div>
       ) : null}
 
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-72 shrink-0 overflow-y-auto border-r border-border py-1 md:block">
+        {!treeOpen ? (
+          <div className="hidden w-7 shrink-0 flex-col items-center border-r border-border pt-1 md:flex">
+            <button type="button" className="rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground" aria-label="Show file list" title="Show file list" onClick={() => setTreeOpen(true)}>
+              <Icon name="ChevronDown" className="size-3.5 -rotate-90" />
+            </button>
+            {diff !== null ? <span className="mt-1 text-[10px] tabular-nums text-muted-foreground">{diff.files.length}</span> : null}
+          </div>
+        ) : null}
+        <aside className={cn("relative hidden shrink-0 flex-col border-r border-border md:flex", !treeOpen && "md:hidden")} style={{ width: treeWidth }}>
+          <div className="flex items-center gap-1 border-b border-border px-2 py-1 text-xs text-muted-foreground">
+            <span className="min-w-0 flex-1 truncate">Files{diff !== null ? ` · ${diff.files.length}` : ""}</span>
+            <button type="button" className="rounded p-0.5 hover:bg-state-hover hover:text-foreground" aria-label="Hide file list" title="Hide file list" onClick={() => setTreeOpen(false)}>
+              <Icon name="ChevronDown" className="size-3.5 rotate-90" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto py-1">
           {diff === null ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">Loading…</p>
           ) : (
-            <ul>
-              {diff.files.map((entry) => {
-                const count = forPath(entry.path).filter((comment) => comment.addressedAt === null).length;
-                return (
-                  <li key={entry.path}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPath(entry.path)}
-                      className={cn(
-                        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-state-hover",
-                        entry.path === selectedPath && "bg-state-active",
-                      )}
-                      title={entry.path}
-                    >
-                      <span className="min-w-0 flex-1 truncate font-mono">{entry.path}</span>
-                      {count > 0 ? <Badge tone="warning">{count}</Badge> : null}
-                      <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">+{entry.additions}</span>
-                      <span className="shrink-0 tabular-nums text-red-600 dark:text-red-400">−{entry.deletions}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            <FileTree
+              files={diff.files}
+              activePath={activePath}
+              viewed={viewed}
+              commentCount={(path) => forPath(path).filter((comment) => comment.addressedAt === null).length}
+              findingCount={(path) => findingsByPath.get(path)?.length ?? 0}
+              risk={(path) => riskByPath.get(path) ?? null}
+              changedSince={(path) => changedRangesByPath.has(path)}
+              onSelect={jumpTo}
+            />
           )}
           {diff?.truncated ? <p className="px-3 py-2 text-xs text-muted-foreground">File list truncated.</p> : null}
+          </div>
         </aside>
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-          {file === null ? (
-            <p className="p-4 text-sm text-muted-foreground">{diff !== null && diff.files.length === 0 ? "No changes." : "Select a file."}</p>
-          ) : (
-            <>
-              <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-border bg-background px-3 py-1.5">
-                <Button type="button" variant="ghost" className={cn(COMPACT, "px-1.5")} disabled={index <= 0} onClick={() => step(-1)} aria-label="Previous file">
-                  <Icon name="ChevronUp" className="size-3.5" />
-                </Button>
-                <Button type="button" variant="ghost" className={cn(COMPACT, "px-1.5")} disabled={diff === null || index >= diff.files.length - 1} onClick={() => step(1)} aria-label="Next file">
-                  <Icon name="ChevronDown" className="size-3.5" />
-                </Button>
-                <code className="min-w-0 flex-1 truncate text-xs">
-                  {file.previousPath !== null ? `${file.previousPath} → ` : ""}
-                  {file.path}
-                </code>
-                {file.status !== "modified" ? <Badge>{file.status}</Badge> : null}
-                <span className="text-xs tabular-nums text-emerald-600 dark:text-emerald-400">+{file.additions}</span>
-                <span className="text-xs tabular-nums text-red-600 dark:text-red-400">−{file.deletions}</span>
-                <Button type="button" variant="secondary" className={COMPACT} onClick={() => setComposer({ path: file.path, line: null, side: "RIGHT" })}>
-                  <Icon name="MessageSquare" className="size-3.5" />
-                  Comment on file
-                </Button>
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize file list"
+          title="Drag to resize the file list; double-click to reset"
+          className={cn("hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-primary/40 active:bg-primary/60 md:block", !treeOpen && "md:hidden")}
+          onPointerDown={startTreeResize}
+          onDoubleClick={() => {
+            setTreeWidth(FILE_TREE_DEFAULT_WIDTH);
+            try {
+              window.localStorage.setItem("kanban:fileTreeWidth", String(FILE_TREE_DEFAULT_WIDTH));
+            } catch {
+              // ignore
+            }
+          }}
+        />
+        <div className="relative flex min-h-0 min-w-0 flex-1">
+        <main ref={mainRef} onScroll={trackActive} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+          {diff !== null && diff.files.length > 0 ? (
+            <TourPanel tour={tour} busy={tourBusy} onGenerate={() => void generateTour()} onJump={jumpTo} onOpenThread={onOpenThread} files={diff.files} />
+          ) : null}
+          {delta !== null && delta.files.length > 0 ? (
+            <section className="border-b border-border px-3 py-1 text-xs">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-medium">Since you last looked</span>
+                <span className="text-muted-foreground">
+                  {shortSha(delta.fromSha)} → {shortSha(delta.toSha)} · {delta.files.length} file{delta.files.length === 1 ? "" : "s"} changed
+                  {newFindingCount > 0 ? ` · ${newFindingCount} new finding${newFindingCount === 1 ? "" : "s"}` : ""}
+                  {touchedFindingCount > 0 ? ` · ${touchedFindingCount} finding${touchedFindingCount === 1 ? "" : "s"} touched` : ""}
+                </span>
+                {delta.files.slice(0, 8).map((file) => (
+                  <button key={file.path} type="button" className="rounded border border-sky-500/40 px-1.5 py-px font-mono text-[11px] text-sky-700 hover:bg-sky-500/15 dark:text-sky-300" title={file.path} onClick={() => jumpTo(file.path)}>
+                    {file.path.split("/").pop()}
+                  </button>
+                ))}
+                {delta.files.length > 8 ? <span className="text-muted-foreground">+{delta.files.length - 8} more</span> : null}
+                {ticket !== null && ticket.pr !== null ? (
+                  <button
+                    type="button"
+                    className="ml-auto rounded border border-border px-1.5 py-0.5 hover:bg-state-hover disabled:opacity-50"
+                    disabled={reviewing || ticket.latestReview?.status === "running"}
+                    title="Run the code-review skill on just the commits since the last completed review"
+                    onClick={() => void rereview()}
+                  >
+                    {ticket.latestReview?.status === "running" ? "Review running…" : "Re-review the delta"}
+                  </button>
+                ) : null}
               </div>
-              {file.patch !== null && diffMode === "structural" ? (
-                <StructuralPatch
-                  key={`structural-${file.path}`}
-                  ticketId={ticketId}
-                  path={file.path}
-                  comments={forPath(file.path)}
-                  composer={composer !== null && composer.path === file.path ? composer : null}
-                  onStartComment={(line, side) => setComposer({ path: file.path, line, side })}
-                  onCancelComposer={() => setComposer(null)}
-                  onSubmitComposer={(body) => (composer === null ? Promise.resolve() : addComment(file.path, composer.line, composer.side, body))}
-                  onDeleteComment={(id) => void deleteComment(id)}
-                  onOpenFile={openDefinition}
-                />
-              ) : file.patch !== null ? (
-                <DiffErrorBoundary key={file.path} fallback={<Diff patch={file.patch} path={file.path} view={view} className="text-xs" />}>
-                <AnnotatedPatch
-                  key={file.path}
-                  path={file.path}
-                  patch={file.patch}
-                  view={view}
-                  themes={hostThemes}
-                  themeMode={codeTheme.mode}
-                  disableWorkerPool={workerPool === undefined}
-                  comments={forPath(file.path)}
-                  composer={composer !== null && composer.path === file.path ? composer : null}
-                  onStartComment={(line, side) => setComposer({ path: file.path, line, side })}
-                  onCancelComposer={() => setComposer(null)}
-                  onSubmitComposer={(body) => (composer === null ? Promise.resolve() : addComment(file.path, composer.line, composer.side, body))}
-                  onDeleteComment={(id) => void deleteComment(id)}
-                />
-                </DiffErrorBoundary>
-              ) : (
-                <>
-                  {composer !== null && composer.path === file.path ? (
-                    <div className="px-3">
-                      <DiffCommentForm path={file.path} line={null} side="RIGHT" onSubmit={(body) => addComment(file.path, null, "RIGHT", body)} onCancel={() => setComposer(null)} />
-                    </div>
+            </section>
+          ) : null}
+          {diff !== null && diff.files.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No changes.</p> : null}
+          {diff?.files.map((file) => {
+            const isCollapsed = collapsed.has(file.path);
+            return (
+              <section
+                key={file.path}
+                ref={(node) => {
+                  if (node === null) sectionRefs.current.delete(file.path);
+                  else sectionRefs.current.set(file.path, node);
+                }}
+                className="border-b border-border"
+              >
+                <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-border bg-background px-3 py-1.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={cn(COMPACT, "px-1.5")}
+                    onClick={() => toggleCollapsed(file.path)}
+                    aria-label={isCollapsed ? "Expand file" : "Collapse file"}
+                    aria-expanded={!isCollapsed}
+                  >
+                    <Icon name="ChevronDown" className={cn("size-3.5 transition-transform", isCollapsed && "-rotate-90")} />
+                  </Button>
+                  <code className="min-w-0 flex-1 truncate text-xs">
+                    {file.previousPath !== null ? `${file.previousPath} → ` : ""}
+                    {file.path}
+                  </code>
+                  {file.status !== "modified" ? <Badge>{file.status}</Badge> : null}
+                  {isGeneratedPath(file.path) ? (
+                    <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground" title="Looks generated or vendored; collapsed by default">
+                      generated
+                    </span>
                   ) : null}
-                  {forPath(file.path).length > 0 ? (
-                    <ul className="px-3">
-                      {forPath(file.path).map((comment) => (
-                        <DiffCommentItem key={comment.id} comment={comment} onDelete={() => void deleteComment(comment.id)} />
+                  <span className="text-xs tabular-nums text-emerald-600 dark:text-emerald-400">+{file.additions}</span>
+                  <span className="text-xs tabular-nums text-red-600 dark:text-red-400">−{file.deletions}</span>
+                  <Button type="button" variant="secondary" className={COMPACT} onClick={() => setComposer({ path: file.path, line: null, side: "RIGHT" })}>
+                    <Icon name="MessageSquare" className="size-3.5" />
+                    Comment on file
+                  </Button>
+                  <label className="inline-flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground">
+                    <Checkbox checked={viewed.has(file.path)} onCheckedChange={(checked) => markViewed(file.path, checked === true)} aria-label={`Mark ${file.path} as viewed`} />
+                    Viewed
+                  </label>
+                </div>
+                {isCollapsed
+                  ? null
+                  : (findingsByPath.get(file.path) ?? [])
+                      .filter((entry) => entry.line === null)
+                      .map((entry) => (
+                        <div key={entry.item.finding.id} className="px-3">
+                          <FindingAnnotation item={entry.item} onToggle={(selected) => toggleFinding(entry.item, selected)} onEdit={(edit) => editFinding(entry.item, edit)} />
+                        </div>
                       ))}
-                    </ul>
-                  ) : null}
-                  <p className="p-4 text-sm text-muted-foreground">No text diff for this file (binary or too large).</p>
-                </>
-              )}
-            </>
-          )}
+                {isCollapsed ? null : (
+                  <LazyMount root={mainRef} estimateLines={file.additions + file.deletions + 6}>
+                    {() =>
+                      file.patch !== null && diffMode === "structural" ? (
+                        <StructuralPatch
+                          key={`structural-${file.path}`}
+                          ticketId={ticketId}
+                          path={file.path}
+                          comments={forPath(file.path)}
+                          composer={composer !== null && composer.path === file.path ? composer : null}
+                          onStartComment={(line, side) => setComposer({ path: file.path, line, side })}
+                          onCancelComposer={() => setComposer(null)}
+                          onSubmitComposer={(body) => (composer === null ? Promise.resolve() : addComment(file.path, composer.line, composer.side, body))}
+                          onDeleteComment={(id) => void deleteComment(id)}
+                          onOpenFile={openDefinition}
+                          findings={findingsByPath.get(file.path) ?? []}
+                          onToggleFinding={toggleFinding}
+                          onEditFinding={editFinding}
+                          onEditComment={editComment}
+                          explanations={explanations.filter((entry) => entry.path === file.path)}
+                          onExplain={(side, startLine, endLine) => explainHunk(file.path, side, startLine, endLine)}
+                          semantics={semanticsByPath.get(file.path) ?? []}
+                          changedRanges={changedRangesByPath.get(file.path) ?? []}
+                        />
+                      ) : file.patch !== null ? (
+                        <DiffErrorBoundary key={file.path} fallback={<Diff patch={file.patch} path={file.path} view={view} className="text-xs" />}>
+                          <AnnotatedPatch
+                            key={file.path}
+                            path={file.path}
+                            patch={file.patch}
+                            view={view}
+                            themes={hostThemes}
+                            themeMode={codeTheme.mode}
+                            disableWorkerPool={workerPool === undefined}
+                            wrap={diffWrap}
+                            findings={findingsByPath.get(file.path) ?? []}
+                            onToggleFinding={toggleFinding}
+                            onEditFinding={editFinding}
+                            onEditComment={editComment}
+                            comments={forPath(file.path)}
+                            composer={composer !== null && composer.path === file.path ? composer : null}
+                            onStartComment={(line, side) => setComposer({ path: file.path, line, side })}
+                            onCancelComposer={() => setComposer(null)}
+                            onSubmitComposer={(body) => (composer === null ? Promise.resolve() : addComment(file.path, composer.line, composer.side, body))}
+                            onDeleteComment={(id) => void deleteComment(id)}
+                          />
+                        </DiffErrorBoundary>
+                      ) : (
+                        <>
+                          {composer !== null && composer.path === file.path ? (
+                            <div className="px-3">
+                              <DiffCommentForm path={file.path} line={null} side="RIGHT" onSubmit={(body) => addComment(file.path, null, "RIGHT", body)} onCancel={() => setComposer(null)} />
+                            </div>
+                          ) : null}
+                          {forPath(file.path).length > 0 ? (
+                            <ul className="px-3">
+                              {forPath(file.path).map((comment) => (
+                                <DiffCommentItem key={comment.id} comment={comment} onDelete={() => void deleteComment(comment.id)} onEdit={(body) => editComment(comment.id, body)} />
+                              ))}
+                            </ul>
+                          ) : null}
+                          <p className="p-4 text-sm text-muted-foreground">No text diff for this file (binary or too large).</p>
+                        </>
+                      )
+                    }
+                  </LazyMount>
+                )}
+              </section>
+            );
+          })}
         </main>
+        {markers.length > 0 ? (
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-2" aria-hidden="true">
+            {markers.map((marker, index) => (
+              <button
+                key={index}
+                type="button"
+                tabIndex={-1}
+                className={cn("pointer-events-auto absolute right-0 h-1 w-2 rounded-l-sm", marker.pending ? "bg-amber-500" : "bg-muted-foreground/50")}
+                style={{ top: `calc(${marker.fraction * 100}% - 2px)` }}
+                title={marker.pending ? "Pending comment" : "Comment"}
+                onClick={() => scrollMainTo(marker.element)}
+              />
+            ))}
+          </div>
+        ) : null}
+        </div>
       </div>
     </div>
   );
@@ -2155,7 +3872,7 @@ function SubtasksGroup({
           </>
         )
       }
-      defaultOpen={children.length > 0}
+      defaultOpen
     >
       {children.length > 0 ? (
         <ul className="flex flex-col gap-1">
@@ -2223,26 +3940,19 @@ function SubtasksGroup({
                   onSelect={() => void run(() => rpc.call("ticket_start_children", { id: ticket.id, mode: "parallel" }), "Subtask threads started")}
                 >
                   <Icon name="Play" className="mt-0.5 size-4 text-muted-foreground" />
-                  <span className="flex flex-col">
-                    <span>One thread per subtask</span>
-                    <span className="text-xs text-muted-foreground">{unstarted.length} start in parallel, nested under this card's thread</span>
-                  </span>
+                  <span>One thread per subtask ({unstarted.length})</span>
                 </DropdownMenu.Item>
                 <DropdownMenu.Item
                   className={cn(MENU_ITEM_CLASS, "items-start")}
                   onSelect={() => void run(() => rpc.call("ticket_start_children", { id: ticket.id, mode: "sequential" }), "Subtask thread started")}
                 >
                   <Icon name="ListTodo" className="mt-0.5 size-4 text-muted-foreground" />
-                  <span className="flex flex-col">
-                    <span>One thread, in order</span>
-                    <span className="text-xs text-muted-foreground">Works through the {open.length} open subtask{open.length === 1 ? "" : "s"} sequentially</span>
-                  </span>
+                  <span>One thread, in order ({open.length})</span>
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         ) : null}
-        {!canRun ? <span className="text-xs text-muted-foreground">Start this card's thread in a project first.</span> : null}
       </div>
       {guidanceOpen ? (
         <div className="flex flex-col gap-1.5 rounded-md border border-border p-2">
@@ -2251,7 +3961,7 @@ function SubtasksGroup({
             value={guidance}
             rows={2}
             onChange={(event) => setGuidance(event.target.value)}
-            placeholder="Optional guidance for the split (e.g. 'one subtask per service', 'keep the migration separate')"
+            placeholder="Guidance for the split (optional)"
             aria-label="Breakdown guidance"
             className="w-full resize-y rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
@@ -2835,6 +4545,7 @@ function TicketDetails({
   const [projectId, setProjectId] = useState("");
   const [pending, setPending] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showParentPicker, setShowParentPicker] = useState(false);
   useEffect(() => {
     setTitle(ticket.title);
     setDescription(ticket.description);
@@ -2899,10 +4610,10 @@ function TicketDetails({
             <span className="truncate">{parent.title}</span>
           </button>
         ) : null}
-        <p className="text-xs text-muted-foreground">
-          {parent !== null ? "Subtask" : kindLabel} · <code>{ticket.id}</code> · {columnName}
-          {ticket.pr !== null ? ` · ${ticket.pr.repo.split("/")[1]}#${ticket.pr.number} · ${ticket.pr.state}` : ""}
-          {ticket.jira !== null ? ` · ${ticket.jira.key} · ${ticket.jira.status || "unknown"}` : ""}
+        <p className="text-xs text-muted-foreground" title={`${kindLabel} ${ticket.id} · ${columnName}`}>
+          {ticket.pr !== null ? `${ticket.pr.repo.split("/")[1]}#${ticket.pr.number} · ${ticket.pr.state}` : ""}
+          {ticket.jira !== null ? `${ticket.jira.key} · ${ticket.jira.status || "unknown"}` : ""}
+          {ticket.pr === null && ticket.jira === null ? (parent !== null ? "Subtask" : kindLabel) : ""}
         </p>
       </header>
 
@@ -2948,6 +4659,7 @@ function TicketDetails({
         <Property label="Tags">
           <TagEditor ticket={ticket} rpc={rpc} run={run} suggestions={allTags} />
         </Property>
+        {ticket.parentId !== null || showParentPicker ? (
         <Property label="Parent">
           <Select
             aria-label="Parent card"
@@ -2963,6 +4675,7 @@ function TicketDetails({
             ))}
           </Select>
         </Property>
+        ) : null}
         <Property label="Thread">
           {ticket.threadId !== null ? (
             <button
@@ -3006,7 +4719,6 @@ function TicketDetails({
 
       <SubtasksGroup ticket={ticket} tickets={tickets} columns={columns} threads={threads} rpc={rpc} pending={pending} run={run} onOpenTicket={onOpenTicket} onOpenThread={onOpenThread} />
 
-      {ticket.pr !== null || ticket.threadId !== null ? <ChangesGroup ticket={ticket} rpc={rpc} onOpenDiff={onOpenDiff} /> : null}
 
       {ticket.pr !== null ? (
         <ReviewPanel
@@ -3035,13 +4747,13 @@ function TicketDetails({
       <Group
         title={ticket.kind === "adhoc" ? "Description" : "Notes"}
         summary={description.trim() === "" ? <span className="text-xs text-muted-foreground">empty</span> : undefined}
-        defaultOpen={ticket.kind === "adhoc" || ticket.description.trim() !== ""}
+        defaultOpen
       >
         <textarea
           aria-label={ticket.kind === "adhoc" ? "Description" : "Notes"}
           value={description}
           rows={ticket.kind === "adhoc" ? 6 : 3}
-          placeholder={ticket.kind === "adhoc" ? "What needs to happen? Sent to the agent as its first prompt." : "Your notes about this item (not synced anywhere)."}
+          placeholder={ticket.kind === "adhoc" ? "What needs to happen?" : "Notes"}
           onChange={(event) => setDescription(event.target.value)}
           onBlur={saveText}
           className="w-full resize-y rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -3071,10 +4783,17 @@ function TicketDetails({
             </Button>
           </div>
         ) : (
-          <Button type="button" variant="ghost" className={cn(COMPACT, "text-muted-foreground hover:text-destructive")} onClick={() => setConfirmDelete(true)}>
-            <Icon name="Trash2" className="size-3.5" />
-            Delete
-          </Button>
+          <span className="flex items-center gap-1">
+            <Button type="button" variant="ghost" className={cn(COMPACT, "text-muted-foreground hover:text-destructive")} onClick={() => setConfirmDelete(true)}>
+              <Icon name="Trash2" className="size-3.5" />
+              Delete
+            </Button>
+            {ticket.parentId === null && !showParentPicker && parentOptions.length > 0 ? (
+              <Button type="button" variant="ghost" className={cn(COMPACT, "text-muted-foreground")} onClick={() => setShowParentPicker(true)}>
+                Nest under…
+              </Button>
+            ) : null}
+          </span>
         )}
         <Button type="button" variant="ghost" className={COMPACT} onClick={onClose}>
           Close
@@ -3621,7 +5340,6 @@ function TodoView({
         <JiraBadges ticket={ticket} />
                   <TagBadges tags={ticket.tags} />
                   <ReviewBadge ticket={ticket} />
-                  {ticket.latestReview?.status === "completed" ? <ReviewScoreBadges scores={ticket.latestReview.scores} compact /> : null}
                 </div>
                 {ticket.threadId !== null ? (
                   <button
@@ -4023,7 +5741,7 @@ function BoardSettingsMenu({
 
 function BoardPage({ subPath }: { subPath: string }) {
   const trimmed = subPath.replace(/^\/+|\/+$/gu, "");
-  const diffTicketId = trimmed.startsWith("diff/") ? trimmed.slice("diff/".length) : null;
+  const diffTicketId = diffSubjectFromSubPath(trimmed);
   const proposalId = trimmed.startsWith("proposals/") ? trimmed.slice("proposals/".length) : null;
   const proposalsList = trimmed === "proposals";
   const view: "board" | "todo" = trimmed === "todo" ? "todo" : "board";
@@ -4245,7 +5963,7 @@ function BoardPage({ subPath }: { subPath: string }) {
 /** Controls for the host title bar: board tools on the board, diff tools on a card's changes page. */
 function BoardHeader({ subPath }: { subPath: string }) {
   const trimmed = subPath.replace(/^\/+|\/+$/gu, "");
-  const diffTicketId = trimmed.startsWith("diff/") ? trimmed.slice("diff/".length) : null;
+  const diffTicketId = diffSubjectFromSubPath(trimmed);
   const view: "board" | "todo" = trimmed === "todo" ? "todo" : "board";
   const navigate = useBbNavigate();
   const rpc = useRpc<typeof rpcContract>();
@@ -4273,7 +5991,6 @@ function BoardHeader({ subPath }: { subPath: string }) {
           <Icon name="ChevronDown" className="size-3.5 rotate-90" />
           {trimmed === "proposals" ? "Board" : "Proposals"}
         </Button>
-        <span className="text-xs text-muted-foreground">Brain dump proposals</span>
         <Button className={cn(COMPACT, "ml-1")} onClick={() => pageUi.set({ dialog: "new", newTicketColumn: null })}>
           <Icon name="Plus" className="size-3.5" />
           New card
@@ -4282,7 +5999,7 @@ function BoardHeader({ subPath }: { subPath: string }) {
     );
   }
   if (diffTicketId !== null) {
-    const ticket = board?.tickets.find((entry) => entry.id === diffTicketId) ?? null;
+    const ticket = findDiffSubjectTicket(board, diffTicketId);
     return (
       <div className="flex min-w-0 items-center gap-2">
         <Button type="button" variant="ghost" className={COMPACT} onClick={() => navigate.toPluginPanel("board", { subPath: "" })}>
@@ -4324,6 +6041,15 @@ function BoardHeader({ subPath }: { subPath: string }) {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          aria-pressed={ui.diffWrap}
+          title={ui.diffWrap ? "Long lines wrap; click to scroll horizontally instead" : "Long lines scroll horizontally; click to wrap"}
+          onClick={() => pageUi.set({ diffWrap: !ui.diffWrap })}
+          className={cn("rounded-md border border-border px-2 py-0.5 text-xs", ui.diffWrap ? "bg-state-active text-foreground" : "text-muted-foreground hover:text-foreground")}
+        >
+          Wrap
+        </button>
         <Button
           type="button"
           variant="ghost"
@@ -4454,15 +6180,20 @@ export default definePluginApp((app) => {
     title: "Kanban",
     icon: "kanban-board",
     path: "board",
-    component: BoardPage,
-    headerContent: BoardHeader,
-    fixedTabs: [{ ...TICKET_TAB, title: "Card", icon: "PanelRight", component: TicketTab, layout: "padded" }],
+    component: withErrorBoundary("board", BoardPage),
+    headerContent: withErrorBoundary("header", BoardHeader),
+    fixedTabs: [{ ...TICKET_TAB, title: "Card", icon: "PanelRight", component: withErrorBoundary("card panel", TicketTab), layout: "padded" }],
     experimental_sidebarAccessory: OpenCardCount,
+  });
+  app.slots.experimental_threadHeaderAction({
+    id: "changes",
+    title: "Kanban changes",
+    component: withErrorBoundary("thread action", ThreadDiffAction),
   });
   app.slots.settingsSection({
     id: "github-sync",
     title: "GitHub sync",
     description: "Where PR cards come from and how the plugin authenticates.",
-    component: SettingsSection,
+    component: withErrorBoundary("settings", SettingsSection),
   });
 });
