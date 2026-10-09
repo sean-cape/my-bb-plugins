@@ -12,6 +12,7 @@ export type ClientCommand =
   | { kind: "responseTab"; step: 1 | -1 }
   | { kind: "mode" }
   | { kind: "copyCommand" }
+  | { kind: "clear" }
   | { kind: "scroll"; step: 1 | -1 }
   | { kind: "escape"; fromField: boolean }
   | { kind: "help" };
@@ -39,6 +40,7 @@ export const KEYMAP: Record<string, ClientCommand> = {
   "{": { kind: "responseTab", step: -1 },
   m: { kind: "mode" },
   y: { kind: "copyCommand" },
+  x: { kind: "clear" },
   Escape: { kind: "escape", fromField: false },
   "?": { kind: "help" },
 };
@@ -51,29 +53,30 @@ export const CTRL_KEYMAP: Record<string, ClientCommand> = {
 
 /** What the shortcuts dialog lists, in display order. */
 export const KEY_HELP: readonly { keys: readonly string[]; action: string }[] = [
-  { keys: ["j", "k"], action: "Next / previous row in the list" },
+  { keys: ["j", "k"], action: "Next / previous method, call, or request field" },
   { keys: ["gg", "G"], action: "First / last row" },
-  { keys: ["l"], action: "Expand the service, or open the method" },
-  { keys: ["h"], action: "Collapse the service, or go to the method's service" },
-  { keys: ["o", "Enter"], action: "Open the method or call, or toggle the service" },
+  { keys: ["l"], action: "Expand, open the method and go to its fields, or edit the field" },
+  { keys: ["h"], action: "Collapse, go up a level, or go from the fields back to the list" },
+  { keys: ["o", "Enter"], action: "Open the method or call, toggle the section, or edit the field" },
+  { keys: ["i"], action: "Edit the field under the cursor" },
+  { keys: ["x"], action: "Clear the field, or remove the item" },
   { keys: ["/"], action: "Search methods (Enter opens the first match)" },
   { keys: ["f"], action: "Filter methods" },
   { keys: ["e"], action: "Switch endpoint or protos" },
   { keys: ["c"], action: "Toggle call history" },
   { keys: ["b"], action: "Show / hide the method list" },
-  { keys: ["i"], action: "Edit the request" },
   { keys: ["[", "]"], action: "Previous / next request tab" },
   { keys: ["{", "}"], action: "Previous / next response tab" },
   { keys: ["m"], action: "Switch between form and JSON" },
   { keys: ["y"], action: "Copy as grpcurl command" },
   { keys: ["Ctrl-d", "Ctrl-u"], action: "Scroll the response down / up" },
   { keys: ["⌘↵"], action: "Send" },
-  { keys: ["Esc"], action: "Leave a text box, then clear the search" },
+  { keys: ["Esc"], action: "Stop editing a field, then clear the search" },
   { keys: ["?"], action: "Show these shortcuts" },
 ];
 
-/** A row of the method or history list, in display order. `child` rows sit under the group before them. */
-export type NavRow = { kind: "group"; expanded: boolean } | { kind: "item"; child: boolean };
+/** A row of a list or the request form, in display order; `parent` is the index of the group it sits in. */
+export type NavRow = { kind: "group"; expanded: boolean; parent: number | null } | { kind: "item"; parent: number | null };
 
 export type ListAction = { kind: "focus"; index: number } | { kind: "activate"; index: number };
 
@@ -98,19 +101,12 @@ export function listAction(rows: readonly NavRow[], current: number | null, moti
     case "open":
       return { kind: "activate", index: current };
     case "right": {
-      if (row.kind === "item") return { kind: "activate", index: current };
-      if (!row.expanded) return { kind: "activate", index: current };
-      const next = rows[current + 1];
-      return next?.kind === "item" && next.child ? { kind: "focus", index: current + 1 } : null;
+      if (row.kind === "item" || !row.expanded) return { kind: "activate", index: current };
+      return rows[current + 1]?.parent === current ? { kind: "focus", index: current + 1 } : null;
     }
-    case "left": {
-      if (row.kind === "group") return row.expanded ? { kind: "activate", index: current } : null;
-      if (!row.child) return null;
-      for (let index = current - 1; index >= 0; index -= 1) {
-        if (rows[index]!.kind === "group") return { kind: "focus", index };
-      }
-      return null;
-    }
+    case "left":
+      if (row.kind === "group" && row.expanded) return { kind: "activate", index: current };
+      return row.parent === null ? null : { kind: "focus", index: row.parent };
   }
 }
 

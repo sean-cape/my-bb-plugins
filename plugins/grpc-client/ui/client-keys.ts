@@ -68,6 +68,10 @@ export function useClientKeys(root: HTMLElement | null, enabled: boolean, onComm
         // vim-mode swallows Escape in text boxes unless it is set to let Escape leave them.
         if (event.key !== "Escape" || event.ctrlKey || event.shiftKey) return;
         command = { kind: "escape", fromField: true };
+      } else if (event.key === "Enter") {
+        // Buttons and form controls keep Enter; on a field row or the bare view it opens the cursor's row.
+        if (event.ctrlKey || event.shiftKey || target?.closest("button, a[href], input, select, summary") != null) return;
+        command = { kind: "list", motion: "open" };
       } else if (event.ctrlKey) {
         command = event.shiftKey ? undefined : CTRL_KEYMAP[event.key];
       } else if (event.key === "g") {
@@ -127,15 +131,50 @@ export function usePanelKeys(panel: RefObject<HTMLElement | null>, open: boolean
   };
 }
 
-/** Rows the list cursor moves over carry `data-nav-row` ("group" or "item") and a `data-nav-key`. */
+/** Rows the cursor moves over carry `data-nav-row` ("group" or "item"); list rows also a `data-nav-key`. */
 export const NAV_ROW = "[data-nav-row]";
+/** Wraps a group's row and everything nested under it. */
+const NAV_GROUP = "[data-nav-group]";
+
+/** Makes an element a stop for the request form's field cursor; pair it with FOCUS_RING. */
+export const FIELD_ROW = { "data-nav-row": "item", tabIndex: -1 } as const;
+
+function isExpanded(element: Element): boolean {
+  return (element.getAttribute("aria-expanded") ?? element.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")) === "true";
+}
 
 export function readRows(container: Element): { elements: HTMLElement[]; rows: NavRow[] } {
-  const elements = [...container.querySelectorAll<HTMLElement>(NAV_ROW)];
-  const rows = elements.map((element): NavRow =>
-    element.dataset.navRow === "group" ? { kind: "group", expanded: element.getAttribute("aria-expanded") === "true" } : { kind: "item", child: element.dataset.navChild !== undefined },
-  );
+  const elements = [...container.querySelectorAll<HTMLElement>(NAV_ROW)].filter((element) => element.closest("[inert]") === null);
+  const headerOf = new Map<Element, number>();
+  elements.forEach((element, index) => {
+    const group = element.closest(NAV_GROUP);
+    if (element.dataset.navRow === "group" && group !== null && !headerOf.has(group)) headerOf.set(group, index);
+  });
+  const rows = elements.map((element, index): NavRow => {
+    let group = element.closest(NAV_GROUP);
+    // A group's own row sits inside its wrapper, so its parent is the next wrapper out.
+    if (group !== null && headerOf.get(group) === index) group = group.parentElement?.closest(NAV_GROUP) ?? null;
+    const parent = group === null || !container.contains(group) ? null : (headerOf.get(group) ?? null);
+    return element.dataset.navRow === "group" ? { kind: "group", expanded: isExpanded(element), parent } : { kind: "item", parent };
+  });
   return { elements, rows };
+}
+
+const ROW_INPUTS = "input:not(:disabled), textarea:not(:disabled), select:not(:disabled)";
+
+/** Opens a row: clicks a button row, else starts editing its first field, else clicks its first button. */
+export function activateRow(row: HTMLElement): void {
+  if (row instanceof HTMLButtonElement) {
+    row.click();
+    return;
+  }
+  const inputs = [...row.querySelectorAll<HTMLElement>(ROW_INPUTS)];
+  const input = inputs.find(isTextEntry) ?? inputs[0];
+  if (input !== undefined) {
+    input.focus({ preventScroll: true });
+    return;
+  }
+  row.querySelector<HTMLElement>("button:not(:disabled)")?.click();
 }
 
 export function focusRow(element: HTMLElement): void {

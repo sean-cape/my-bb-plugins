@@ -4,14 +4,23 @@ import { cycle, KEY_HELP, KEYMAP, listAction, type NavRow } from "./client-nav.t
 
 // Shop (expanded) with GetOrder and ListOrders, then Users (collapsed).
 const tree: NavRow[] = [
-  { kind: "group", expanded: true },
-  { kind: "item", child: true },
-  { kind: "item", child: true },
-  { kind: "group", expanded: false },
+  { kind: "group", expanded: true, parent: null },
+  { kind: "item", parent: 0 },
+  { kind: "item", parent: 0 },
+  { kind: "group", expanded: false, parent: null },
 ];
 const results: NavRow[] = [
-  { kind: "item", child: false },
-  { kind: "item", child: false },
+  { kind: "item", parent: null },
+  { kind: "item", parent: null },
+];
+// A form: name, then an address section holding street and a nested geo section with lat, then age.
+const form: NavRow[] = [
+  { kind: "item", parent: null },
+  { kind: "group", expanded: true, parent: null },
+  { kind: "item", parent: 1 },
+  { kind: "group", expanded: true, parent: 1 },
+  { kind: "item", parent: 3 },
+  { kind: "item", parent: null },
 ];
 
 test("with no cursor, any motion lands on the start row, clamped to the list", () => {
@@ -33,7 +42,7 @@ test("l expands a collapsed service, steps into an expanded one, and opens a met
   assert.deepEqual(listAction(tree, 3, "right", 0), { kind: "activate", index: 3 });
   assert.deepEqual(listAction(tree, 0, "right", 0), { kind: "focus", index: 1 });
   assert.deepEqual(listAction(tree, 2, "right", 0), { kind: "activate", index: 2 });
-  assert.equal(listAction([{ kind: "group", expanded: true }], 0, "right", 0), null);
+  assert.equal(listAction([{ kind: "group", expanded: true, parent: null }], 0, "right", 0), null);
 });
 
 test("h collapses an expanded service and climbs from a method to its service", () => {
@@ -41,6 +50,19 @@ test("h collapses an expanded service and climbs from a method to its service", 
   assert.deepEqual(listAction(tree, 2, "left", 0), { kind: "focus", index: 0 });
   assert.equal(listAction(tree, 3, "left", 0), null);
   assert.equal(listAction(results, 1, "left", 0), null);
+});
+
+test("h climbs nested sections one level at a time and stops at the top level", () => {
+  assert.deepEqual(listAction(form, 4, "left", 0), { kind: "focus", index: 3 });
+  assert.deepEqual(listAction(form, 3, "left", 0), { kind: "activate", index: 3 });
+  assert.deepEqual(listAction([...form.slice(0, 3), { kind: "group", expanded: false, parent: 1 }], 3, "left", 0), { kind: "focus", index: 1 });
+  assert.equal(listAction(form, 5, "left", 0), null);
+  assert.equal(listAction(form, 0, "left", 0), null);
+});
+
+test("l on a field edits it, and steps into an expanded section", () => {
+  assert.deepEqual(listAction(form, 0, "right", 0), { kind: "activate", index: 0 });
+  assert.deepEqual(listAction(form, 1, "right", 0), { kind: "focus", index: 2 });
 });
 
 test("o activates whatever row the cursor is on", () => {

@@ -7,8 +7,8 @@ A gRPC client inside bb, built on grpcurl.
   response view with status, timing, headers, and trailers.
 - A **gRPC** action in a thread's side panel that opens the same view.
 - Vim-style **keyboard navigation**: `j`/`k` and `h`/`l` through the method
-  tree or call history, `/` to search, `[`/`]` for request tabs, `?` for the
-  full list.
+  tree, call history and the request's fields, `i` to edit a field, `/` to
+  search, `?` for the full list.
 - `bb grpc` for agents and scripts. It can list, describe, and call methods,
   print the equivalent grpcurl command, and show call history.
 

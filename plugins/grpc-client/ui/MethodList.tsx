@@ -177,7 +177,6 @@ function MethodRow({
   method,
   selected,
   detail,
-  child = false,
   className,
   style,
   onSelect,
@@ -185,8 +184,6 @@ function MethodRow({
   method: MethodInfo;
   selected: boolean;
   detail?: string;
-  /** Sits under its service in the tree, rather than in search results. */
-  child?: boolean;
   className?: string;
   style?: CSSProperties;
   onSelect: () => void;
@@ -205,7 +202,6 @@ function MethodRow({
       aria-current={selected ? "true" : undefined}
       data-nav-row="item"
       data-nav-key={`method:${method.fullName}`}
-      data-nav-child={child ? "" : undefined}
       onClick={onSelect}
     >
       <span className="min-w-0 flex-1">
@@ -450,7 +446,7 @@ export function MethodList({
             const containsSelected = methods.some((method) => method.fullName === selected);
             const focused = scope.length === 1 && scope[0] === service.typeName;
             return (
-              <div key={service.typeName}>
+              <div key={service.typeName} data-nav-group="">
                 <div className={cx("flex items-center rounded-md hover:bg-state-hover", REVEAL_HOST)}>
                   <button
                     type="button"
@@ -487,7 +483,6 @@ export function MethodList({
                         key={method.fullName}
                         method={method}
                         selected={method.fullName === selected}
-                        child
                         className={cx(enter.rise, speed.fast, STAGGER)}
                         style={stagger(index)}
                         onSelect={() => onSelect(method)}

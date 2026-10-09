@@ -3,6 +3,8 @@ import type { MetadataEntry } from "../contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { FIELD_ROW } from "./client-keys";
+import { FOCUS_RING } from "./controls";
 import { inputClass } from "./MessageEditor";
 import { PresenceRow, usePresenceValues } from "./presence";
 
@@ -22,7 +24,7 @@ export function MetadataEditor({ rows, endpoint, onChange }: { rows: MetadataRow
         {presence.length > 0 ? (
           <div className="space-y-2">
             {presence.map(({ key, value: row, index, exiting }) => (
-              <PresenceRow key={key} className="flex items-center gap-2" cascadeIndex={index} exiting={exiting} onExited={() => onExited(key)}>
+              <PresenceRow key={key} className={cn("flex items-center gap-2 rounded-md", FOCUS_RING)} fieldRow cascadeIndex={index} exiting={exiting} onExited={() => onExited(key)}>
                 <input
                   type="checkbox"
                   className="size-4 accent-foreground"
@@ -59,7 +61,7 @@ export function MetadataEditor({ rows, endpoint, onChange }: { rows: MetadataRow
             ))}
           </div>
         ) : null}
-        <Button variant="outline" size="sm" onClick={() => onChange([...rows, { name: "", value: "", enabled: true }])}>
+        <Button variant="outline" size="sm" data-nav-row="item" onClick={() => onChange([...rows, { name: "", value: "", enabled: true }])}>
           <Icon name="Plus" className="size-4" />
           Add header
         </Button>

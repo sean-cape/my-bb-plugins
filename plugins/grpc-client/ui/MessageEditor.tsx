@@ -4,6 +4,8 @@ import { CHEVRON, cx, enter, PRESS, REVEAL, REVEAL_HOST, stagger, STAGGER, Entra
 import type { FieldInfo, ScalarName, TypeClosure } from "../shared/schema";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { FIELD_ROW } from "./client-keys";
+import { FOCUS_RING } from "./controls";
 import { Appear, PresenceRow, usePresenceRemovals, usePresenceValues } from "./presence";
 import {
   defaultElement,
@@ -237,7 +239,7 @@ function Docs({ field }: { field: FieldInfo }) {
 /** A labelled single-line row: name and type on the left, the input on the right. */
 function InlineRow({ field, set, onClear, children }: { field: FieldInfo; set: boolean; onClear: () => void; children: ReactNode }) {
   return (
-    <div className={cx("grid grid-cols-[minmax(8rem,15rem)_minmax(0,1fr)_1.5rem] items-start gap-x-3 py-1", REVEAL_HOST)} title={field.comment}>
+    <div {...FIELD_ROW} className={cn("grid grid-cols-[minmax(8rem,15rem)_minmax(0,1fr)_1.5rem] items-start gap-x-3 rounded-md py-1", REVEAL_HOST, FOCUS_RING)} title={field.comment}>
       <div className="min-w-0 pt-1.5">
         <FieldName field={field} set={set} />
         <Docs field={field} />
@@ -265,8 +267,8 @@ function Section({
   const [open, setOpen] = useState(true);
   return (
     <Appear className="py-1">
-      <div className="rounded-lg border border-border">
-        <div className={cx("flex items-center gap-2 px-3 py-1.5", REVEAL_HOST)} title={field.comment}>
+      <div className="rounded-lg border border-border" data-nav-group="">
+        <div {...FIELD_ROW} data-nav-row="group" className={cn("flex items-center gap-2 rounded-lg px-3 py-1.5", REVEAL_HOST, FOCUS_RING)} title={field.comment}>
           <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" aria-expanded={open} data-bbm-open={open} onClick={() => setOpen(!open)}>
             <Icon name="ChevronRight" className={cx("size-3.5 shrink-0 text-muted-foreground", CHEVRON)} />
             <FieldName field={field} set={set} />
@@ -285,12 +287,14 @@ function Section({
   );
 }
 
-function AddButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+/** `navRow` off when the button sits in a field row that is already the cursor's stop. */
+function AddButton({ label, onClick, disabled, navRow = true }: { label: string; onClick: () => void; disabled?: boolean; navRow?: boolean }) {
   return (
     <button
       type="button"
       disabled={disabled}
-      className={cx("inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50", PRESS)}
+      data-nav-row={navRow ? "item" : undefined}
+      className={cn("inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50", PRESS, FOCUS_RING)}
       onClick={onClick}
     >
       <Icon name="Plus" className="size-3.5" />
@@ -316,7 +320,13 @@ function ListEditor({ field, closure, depth, value, onChange }: EditorProps<Json
     <div className="space-y-2">
       {rows.length === 0 ? <p className="text-xs text-muted-foreground">No items.</p> : null}
       {rows.map(({ key, value: item, index, exiting }) => (
-        <PresenceRow key={key} className={cn("flex items-start gap-2", messages && "rounded-md bg-muted/30 p-2")} exiting={exiting} onExited={() => onExited(key)}>
+        <PresenceRow
+          key={key}
+          className={cn("flex items-start gap-2 rounded-md", messages ? "bg-muted/30 p-2" : FOCUS_RING)}
+          fieldRow={!messages}
+          exiting={exiting}
+          onExited={() => onExited(key)}
+        >
           <span className="mt-1.5 w-5 shrink-0 text-right font-mono text-xs text-muted-foreground">{index}</span>
           <div className="min-w-0 flex-1">
             <ElementEditor
@@ -381,7 +391,7 @@ function MapEditor({ field, closure, depth, value, onChange }: EditorProps<Json>
       {entries.map(({ key, item: row, exiting }) => {
         const duplicate = !exiting && (counts.get(row.key) ?? 0) > 1;
         return (
-          <PresenceRow key={key} className="flex items-start gap-2" exiting={exiting} onExited={() => onExited(key)}>
+          <PresenceRow key={key} className={cn("flex items-start gap-2 rounded-md", FOCUS_RING)} fieldRow exiting={exiting} onExited={() => onExited(key)}>
             <input
               className={cn(inputClass, "w-40 shrink-0 font-mono text-[13px]", duplicate && "border-destructive")}
               value={row.key}
@@ -455,7 +465,7 @@ function FieldRow({
     if (!set) {
       return (
         <InlineRow field={field} set={false} onClear={clear}>
-          <AddButton label={`Set ${elementLabel(field)}`} onClick={() => update({})} />
+          <AddButton label={`Set ${elementLabel(field)}`} navRow={false} onClick={() => update({})} />
         </InlineRow>
       );
     }
@@ -497,7 +507,7 @@ function OneofEditor({
   return (
     <div className="py-1">
       <div className="rounded-lg border border-dashed border-border px-3 py-2">
-        <div className="grid grid-cols-[minmax(8rem,15rem)_minmax(0,1fr)_1.5rem] items-center gap-x-3">
+        <div {...FIELD_ROW} className={cn("grid grid-cols-[minmax(8rem,15rem)_minmax(0,1fr)_1.5rem] items-center gap-x-3 rounded-md", FOCUS_RING)}>
           <span className="flex items-baseline gap-2 text-sm">
             <span className="text-foreground/80">{name}</span>
             <span className="font-mono text-[11px] text-muted-foreground">one of</span>

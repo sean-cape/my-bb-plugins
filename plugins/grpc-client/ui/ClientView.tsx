@@ -11,9 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { focusRow, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
+import { activateRow, FIELD_ROW, focusRow, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
 import { type ClientCommand, cycle, listAction, type ListMotion } from "./client-nav";
-import { Centered, MenuItem, Segmented, Tabs } from "./controls";
+import { Centered, FOCUS_RING, MenuItem, Segmented, Tabs } from "./controls";
 import { EndpointSwitcher } from "./EndpointSwitcher";
 import { HistoryList } from "./HistoryList";
 import { useServices, useTypeClosure, useWidth } from "./hooks";
@@ -44,7 +44,7 @@ const COLLAPSE_LIST_WIDTH = 160;
 const NO_OVERRIDES: Record<string, string> = {};
 const REQUEST_TABS = ["body", "metadata", "options"] as const;
 /** A key's focus request that waits for its panel to mount; older ones are dropped. */
-const PENDING_FOCUS_MS = 1000;
+const PENDING_FOCUS_MS = 2000;
 const PENDING_FOCUS_RETRY_MS = 50;
 const REQUEST_FIELDS = "input:not(:disabled), textarea:not(:disabled), select:not(:disabled), button:not(:disabled)";
 
@@ -247,7 +247,11 @@ export function ClientView() {
   const requestPaneRef = useRef<HTMLDivElement>(null);
   /** The row the list cursor was last on, so keys resume there after focus leaves the list. */
   const lastRowKey = useRef<string | null>(null);
-  const [pendingFocus, setPendingFocus] = useState<{ target: "cursor" | "search" | "filters"; at: number } | null>(null);
+  /** The request field the cursor was last on; fields remount per method, so this is the element. */
+  const lastFieldRow = useRef<HTMLElement | null>(null);
+  /** Where hjkl go when focus is in neither pane. */
+  const lastPane = useRef<"list" | "fields">("list");
+  const [pendingFocus, setPendingFocus] = useState<{ target: "cursor" | "fields" | "search" | "filters"; at: number } | null>(null);
   const [, retryPendingFocus] = useReducer((count: number) => count + 1, 0);
   const listShown = overlayList ? listOpen : !listCollapsed;
 
@@ -269,6 +273,16 @@ export function ClientView() {
     focusRow(row);
     return true;
   };
+  const savedFieldRow = (): HTMLElement | null => {
+    const row = lastFieldRow.current;
+    return row !== null && row.isConnected && requestPaneRef.current?.contains(row) === true ? row : null;
+  };
+  const landFieldCursor = (): boolean => {
+    const row = savedFieldRow() ?? (requestPaneRef.current === null ? undefined : readRows(requestPaneRef.current).elements[0]);
+    if (row == null) return false;
+    focusRow(row);
+    return true;
+  };
   useEffect(() => {
     if (pendingFocus === null) return;
     if (Date.now() - pendingFocus.at > PENDING_FOCUS_MS) {
@@ -276,7 +290,9 @@ export function ClientView() {
       return;
     }
     const handle = methodListRef.current;
-    if (pendingFocus.target === "cursor" ? listRef.current === null || !landCursor(listRef.current) : handle === null) {
+    const landed =
+      pendingFocus.target === "cursor" ? listRef.current !== null && landCursor(listRef.current) : pendingFocus.target === "fields" ? landFieldCursor() : handle !== null;
+    if (!landed) {
       // Rows can arrive in a child's own render (call history loads itself), which doesn't re-run this.
       const timer = setTimeout(retryPendingFocus, PENDING_FOCUS_RETRY_MS);
       return () => clearTimeout(timer);
@@ -286,14 +302,30 @@ export function ClientView() {
     setPendingFocus(null);
   });
 
-  const moveCursor = (motion: ListMotion) => {
+  const focusedRow = (container: HTMLElement | null): HTMLElement | null => {
+    const row = document.activeElement?.closest<HTMLElement>(NAV_ROW) ?? null;
+    return row !== null && container?.contains(row) === true ? row : null;
+  };
+  const currentPane = (): "list" | "fields" => {
+    const active = document.activeElement;
+    if (requestPaneRef.current?.contains(active)) return "fields";
+    if (listRef.current?.contains(active)) return "list";
+    return lastPane.current;
+  };
+  const backToList = () => {
+    lastPane.current = "list";
+    if (listShown && listRef.current !== null) landCursor(listRef.current);
+    else revealList("cursor");
+  };
+
+  const moveListCursor = (motion: ListMotion) => {
     const list = listRef.current;
     if (!listShown || list === null) {
       revealList("cursor");
       return;
     }
     const { elements, rows } = readRows(list);
-    const focused = document.activeElement?.closest<HTMLElement>(NAV_ROW) ?? null;
+    const focused = focusedRow(list);
     let current = focused === null ? -1 : elements.indexOf(focused);
     if (current === -1) current = elements.findIndex((element) => element.dataset.navKey === lastRowKey.current);
     const start = Math.max(0, elements.findIndex((element) => element.getAttribute("aria-current") === "true"));
@@ -301,14 +333,72 @@ export function ClientView() {
     if (action === null) return;
     const element = elements[action.index]!;
     focusRow(element);
-    if (action.kind === "activate") element.click();
+    if (action.kind !== "activate") return;
+    element.click();
+    // Opening a method from the keyboard carries the cursor on into its request fields.
+    if (element.dataset.navKey?.startsWith("method:")) {
+      lastPane.current = "fields";
+      setPendingFocus({ target: "fields", at: Date.now() });
+    }
+  };
+
+  const moveFieldCursor = (motion: ListMotion) => {
+    const pane = requestPaneRef.current;
+    if (pane === null) {
+      backToList();
+      return;
+    }
+    const { elements, rows } = readRows(pane);
+    const cursor = focusedRow(pane) ?? savedFieldRow();
+    const current = cursor === null ? -1 : elements.indexOf(cursor);
+    const action = listAction(rows, current === -1 ? null : current, motion, 0);
+    if (action === null) {
+      if (motion === "left") backToList();
+      return;
+    }
+    const element = elements[action.index]!;
+    focusRow(element);
+    if (action.kind === "activate") activateFieldRow(element);
+  };
+
+  /** Edits a field row, or presses its button; a "Set" button swaps the row for a section, which keeps the cursor. */
+  const activateFieldRow = (row: HTMLElement) => {
+    const pane = requestPaneRef.current;
+    const index = pane === null ? -1 : readRows(pane).elements.indexOf(row);
+    activateRow(row);
+    setTimeout(() => {
+      if (row.isConnected || pane === null || index === -1) return;
+      const replacement = readRows(pane).elements[index];
+      if (replacement !== undefined) focusRow(replacement);
+    }, 0);
+  };
+
+  const clearField = (): boolean => {
+    const pane = requestPaneRef.current;
+    const row = focusedRow(pane) ?? savedFieldRow();
+    const button = row?.querySelector<HTMLElement>('button[aria-label^="Clear "], button[aria-label^="Remove "]');
+    if (pane === null || row == null || button == null) return false;
+    const { elements } = readRows(pane);
+    const index = elements.indexOf(row);
+    button.click();
+    // A removed item plays its exit as an inert ghost, so the cursor moves to a neighbour.
+    setTimeout(() => {
+      if (row.isConnected && row.closest("[inert]") === null) {
+        focusRow(row);
+        return;
+      }
+      const neighbour = elements.slice(index + 1).find((element) => element.isConnected && element.closest("[inert]") === null) ?? elements.slice(0, index).reverse().find((element) => element.isConnected);
+      if (neighbour !== undefined) focusRow(neighbour);
+    }, 0);
+    return true;
   };
 
   const runCommand = (command: ClientCommand): boolean | void => {
     const hasMethod = endpoint !== null && method !== null;
     switch (command.kind) {
       case "list":
-        moveCursor(command.motion);
+        if (currentPane() === "fields") moveFieldCursor(command.motion);
+        else moveListCursor(command.motion);
         return;
       case "search":
       case "filters":
@@ -333,6 +423,11 @@ export function ClientView() {
         else setListCollapsed(true);
         return;
       case "edit": {
+        const row = focusedRow(requestPaneRef.current) ?? savedFieldRow();
+        if (row !== null) {
+          activateFieldRow(row);
+          return;
+        }
         const fields = [...(requestPaneRef.current?.querySelectorAll<HTMLElement>(REQUEST_FIELDS) ?? [])];
         const field = fields.find(isTextEntry) ?? fields[0];
         if (field === undefined) return false;
@@ -363,9 +458,13 @@ export function ClientView() {
         pane.scrollBy({ top: (command.step * pane.clientHeight) / 2 });
         return;
       }
+      case "clear":
+        return clearField();
       case "escape":
         if (command.fromField) {
-          root?.focus({ preventScroll: true });
+          const row = document.activeElement?.parentElement?.closest<HTMLElement>(NAV_ROW);
+          if (row != null && requestPaneRef.current?.contains(row)) focusRow(row);
+          else root?.focus({ preventScroll: true });
           return;
         }
         if (methodListRef.current?.clearSearch()) {
@@ -430,6 +529,7 @@ export function ClientView() {
       style={overlayList ? undefined : { width: listWidth }}
       onAnimationEnd={overlayList ? overlayPresence.onAnimationEnd : undefined}
       onFocus={(event) => {
+        lastPane.current = "list";
         const key = (event.target as Element).closest<HTMLElement>(NAV_ROW)?.dataset.navKey;
         if (key !== undefined) lastRowKey.current = key;
       }}
@@ -512,7 +612,15 @@ export function ClientView() {
   const requestPane =
     method === null ? null : (
       <>
-        <div ref={requestPaneRef} className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3">
+        <div
+          ref={requestPaneRef}
+          className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3"
+          onFocus={(event) => {
+            lastPane.current = "fields";
+            const row = (event.target as Element).closest<HTMLElement>(NAV_ROW);
+            if (row !== null) lastFieldRow.current = row;
+          }}
+        >
           {requestTab === "body" ? (
             <EditorOptionsContext.Provider value={{ showDocs }}>
               <RequestBody key={method.fullName} method={method} closure={closure} closureError={closureError} mode={mode} text={requestText} onText={setRequestText} />
@@ -521,7 +629,7 @@ export function ClientView() {
           {requestTab === "metadata" ? <MetadataEditor rows={metadata} endpoint={endpoint.name} onChange={setMetadata} /> : null}
           {requestTab === "options" ? (
             <div className={cx("max-w-xl space-y-5 text-sm", enter.rise)}>
-              <label className="block space-y-1">
+              <label {...FIELD_ROW} className={cn("block space-y-1 rounded-md", FOCUS_RING)}>
                 <span className="font-medium text-foreground">Deadline</span>
                 <span className="flex items-center gap-2">
                   <input
@@ -541,7 +649,7 @@ export function ClientView() {
                   {method.authReason ? ` · ${method.authReason}` : ""}
                 </p>
                 {method.auth !== null ? (
-                  <Button variant="outline" size="sm" onClick={resetAuth}>
+                  <Button variant="outline" size="sm" data-nav-row="item" onClick={resetAuth}>
                     Forget cached tokens
                   </Button>
                 ) : null}

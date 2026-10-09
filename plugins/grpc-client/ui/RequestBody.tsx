@@ -66,7 +66,7 @@ function StreamMessages({ method, closure, messages, write }: { method: MethodIn
             </div>
           </PresenceRow>
         ))}
-        <Button variant="outline" size="sm" onClick={() => write([...messages, {}])}>
+        <Button variant="outline" size="sm" data-nav-row="item" onClick={() => write([...messages, {}])}>
           <Icon name="Plus" className="size-4" />
           Add message
         </Button>
