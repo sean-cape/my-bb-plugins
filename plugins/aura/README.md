@@ -78,7 +78,7 @@ never image bytes.
 
 Existing conversations have a smoky, translucent reading column: the theme
 background at 75% over a 12px blur of the wallpaper, like the Kanban board's
-columns. It takes 75% of the pane's width (never less than BB's 760px).
+columns. It takes 60% of the pane's width (never less than BB's 760px).
 Background images remain undimmed in the side margins all the way to the
 bottom, including beside the composer.
 Wide Markdown tables get an opaque backing across their entire width, including

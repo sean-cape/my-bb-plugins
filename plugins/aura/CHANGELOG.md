@@ -3,7 +3,7 @@
 ## 0.2.4
 
 - Give the conversation column and the composer beside it the Kanban board's smoky glass: the theme background at 75% over a blurred wallpaper.
-- Widen the conversation column and composer to 75% of the pane, never narrower than BB's 760px.
+- Widen the conversation column and composer to 60% of the pane, never narrower than BB's 760px.
 
 ## 0.2.3
 

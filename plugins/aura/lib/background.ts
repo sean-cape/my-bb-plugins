@@ -103,7 +103,7 @@ export const READING_SURFACE = `
 /* Narrow panes keep the host's 760px column rather than shrinking below it. */
 [id="thread-detail-timeline-panel"] .thread-scrollbar > div > .mx-auto,
 [id="thread-detail-timeline-panel"] [data-scroll-footer] > .bg-background > .mx-auto {
-  max-width:max(760px,75%);
+  max-width:max(760px,60%);
 }
 [id="thread-detail-timeline-panel"] .thread-scrollbar > div > .mx-auto {
   position:relative; box-shadow:0 0 0 1px var(--border),0 1px 3px 0 rgb(0 0 0 / .1),0 1px 2px -1px rgb(0 0 0 / .1);
