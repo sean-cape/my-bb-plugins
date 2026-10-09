@@ -6,6 +6,7 @@ export type ListMotion = "up" | "down" | "top" | "bottom" | "left" | "right" | "
 export type ClientCommand =
   | { kind: "list"; motion: ListMotion }
   | { kind: "search" }
+  | { kind: "searchNext"; step: 1 | -1 }
   | { kind: "filters" }
   | { kind: "endpoint" }
   | { kind: "history" }
@@ -32,6 +33,8 @@ export const KEYMAP: Record<string, ClientCommand> = {
   ArrowLeft: { kind: "list", motion: "left" },
   o: { kind: "list", motion: "open" },
   "/": { kind: "search" },
+  n: { kind: "searchNext", step: 1 },
+  N: { kind: "searchNext", step: -1 },
   f: { kind: "filters" },
   e: { kind: "endpoint" },
   c: { kind: "history" },
@@ -75,7 +78,8 @@ export const KEY_HELP: readonly { keys: readonly string[]; action: string }[] = 
   { keys: ["a", "A"], action: "Edit the field, with the caret at the end" },
   { keys: ["j", "k", "/", "Enter", "Esc"], action: "In an open enum or bool list: move, filter, pick, or close it unchanged" },
   { keys: ["dd"], action: "Remove the list item or optional field, or empty the field" },
-  { keys: ["/"], action: "Search methods (Enter opens the first match)" },
+  { keys: ["/"], action: "Search methods (Enter opens the first match), or the response when you're in it" },
+  { keys: ["n", "N"], action: "Next / previous match in the response" },
   { keys: ["f"], action: "Filter methods" },
   { keys: ["e"], action: "Switch endpoint or protos" },
   { keys: ["c"], action: "Toggle call history" },

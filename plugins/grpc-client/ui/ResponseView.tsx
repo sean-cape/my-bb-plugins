@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
 import { toast } from "sonner";
 import { cx, enter, NUDGE, OPACITY_TRANSITION, PRESS, speed, stagger, STAGGER, useFlag } from "bb-motion";
 import type { CallResult } from "../contract";
 import { formatResponse } from "../shared/common";
 import { FOCUS_RING } from "./controls";
+import { useTextSearch } from "./text-search";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
@@ -140,21 +141,44 @@ function formatSize(text: string): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
+export interface ResponseSearchHandle {
+  /** Opens the search box; false when there is no response to search. */
+  startSearch: () => boolean;
+  next: (step: 1 | -1) => boolean;
+  /** Clears the matches; false when there were none. */
+  clear: () => boolean;
+}
+
 export function ResponseView({
   result,
   recordedAt,
   sending,
   tab,
   onTab,
+  search: searchHandle,
 }: {
   result: CallResult | null;
   recordedAt: number | null;
   sending: boolean;
   tab: ResponseTab;
   onTab: (tab: ResponseTab) => void;
+  search: RefObject<ResponseSearchHandle | null>;
 }) {
   const id = result === null ? null : resultId(result);
   const arrivedId = useArrivedId(id, sending);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const scroller = useCallback(() => scrollerRef.current, []);
+  const search = useTextSearch(scroller, `${id}:${tab}`);
+  useImperativeHandle(searchHandle, () => ({
+    startSearch: () => {
+      if (result === null) return false;
+      search.start();
+      return true;
+    },
+    next: search.next,
+    clear: search.clear,
+  }));
+  const backToPane = () => scrollerRef.current?.focus({ preventScroll: true });
   if (result === null) {
     return (
       <div key={sending ? "sending" : "idle"} className={cx("flex h-full flex-col items-center justify-center gap-2 p-6 text-center", enter.fade)}>
@@ -234,7 +258,7 @@ export function ResponseView({
           {body !== "" ? <CopyButton text={body} /> : null}
         </div>
       </div>
-      <div key={`${id}:${tab}`} data-grpc-response-scroll="" tabIndex={-1} className={cx("min-h-0 flex-1 overflow-auto px-4 py-3", FOCUS_RING, enter.rise)}>
+      <div ref={scrollerRef} key={`${id}:${tab}`} data-grpc-response-scroll="" tabIndex={-1} className={cx("min-h-0 flex-1 overflow-auto px-4 py-3", FOCUS_RING, enter.rise)}>
         {tab === "response" ? (
           <div className="space-y-3">
             {!result.ok ? (
@@ -253,6 +277,41 @@ export function ResponseView({
         {tab === "trailers" ? <MetadataTable entries={result.trailers} empty="No trailers." /> : null}
         {tab === "sent" ? <MetadataTable entries={result.requestMetadata} empty="No request metadata was sent." /> : null}
       </div>
+      {search.open || search.query !== "" ? (
+        <div className={cx("flex items-center gap-2 border-t border-border px-4 py-1.5", enter.fade, speed.fast)}>
+          <span className="font-mono text-sm text-muted-foreground">/</span>
+          {search.open ? (
+            <input
+              autoFocus
+              className="h-6 min-w-0 flex-1 bg-transparent font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              placeholder="Search the response"
+              value={search.query}
+              spellCheck={false}
+              aria-label="Search the response"
+              data-vim-ignore=""
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => search.setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  search.commit();
+                  backToPane();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  search.cancel();
+                  backToPane();
+                }
+              }}
+            />
+          ) : (
+            <span className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">{search.query}</span>
+          )}
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {search.query === "" ? "" : search.count === 0 ? "No matches" : `${search.current + 1} of ${search.count}${search.open ? "" : " · n / N"}`}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

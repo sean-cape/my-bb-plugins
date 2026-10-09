@@ -24,7 +24,7 @@ import { MethodBadges, MethodList, type MethodListHandle } from "./MethodList";
 import { Popover } from "./Popover";
 import { exampleMessage, isObject, type JsonObject } from "./proto-json";
 import { RequestBody } from "./RequestBody";
-import { RESPONSE_TABS, ResponseView, type ResponseTab } from "./ResponseView";
+import { RESPONSE_TABS, type ResponseSearchHandle, ResponseView, type ResponseTab } from "./ResponseView";
 import { SplitPane } from "./SplitPane";
 import { readStored, useStored, writeStored } from "./storage";
 
@@ -246,6 +246,7 @@ export function ClientView() {
 
   const listRef = useRef<HTMLElement>(null);
   const methodListRef = useRef<MethodListHandle>(null);
+  const responseSearchRef = useRef<ResponseSearchHandle>(null);
   const requestPaneRef = useRef<HTMLDivElement>(null);
   /** The row the list cursor was last on, so keys resume there after focus leaves the list. */
   const lastRowKey = useRef<string | null>(null);
@@ -468,7 +469,13 @@ export function ClientView() {
         else moveListCursor(command.motion);
         return;
       }
+      case "searchNext":
+        return currentPane() === "response" && (responseSearchRef.current?.next(command.step) ?? false);
       case "search":
+        if (currentPane() === "response" && responseSearchRef.current?.startSearch()) return;
+        setLeftTab("methods");
+        revealList(command.kind);
+        return;
       case "filters":
         setLeftTab("methods");
         revealList(command.kind);
@@ -561,6 +568,7 @@ export function ClientView() {
           else root?.focus({ preventScroll: true });
           return;
         }
+        if (currentPane() === "response" && responseSearchRef.current?.clear()) return;
         {
           // From a button beside a field's box, Escape goes back to the field.
           const row = focusedRow(requestPaneRef.current);
@@ -962,7 +970,7 @@ export function ClientView() {
                     lastPane.current = "response";
                   }}
                 >
-                  <ResponseView result={shown?.result ?? null} recordedAt={shown?.recordedAt ?? null} sending={sending} tab={responseTab} onTab={setResponseTab} />
+                  <ResponseView result={shown?.result ?? null} recordedAt={shown?.recordedAt ?? null} sending={sending} tab={responseTab} onTab={setResponseTab} search={responseSearchRef} />
                 </div>
               }
             />

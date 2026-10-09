@@ -16,7 +16,10 @@ Enter or Space presses them), and past the last of those moves on to the
 response. `h` goes back out: it steps back from those buttons, collapses a
 section or service, climbs to the enclosing one, and goes from the response
 to the fields and from a top-level field to the method list. In the response,
-`j`/`k` scroll a line, `gg`/`G` jump to its ends, and `y` copies it.
+`j`/`k` scroll a line, `gg`/`G` jump to its ends, and `y` copies it. `/`
+searches it as you type (smartcase: a capital makes it case-sensitive); Enter
+keeps the matches and `n`/`N` step through them, Escape in the box cancels and
+scrolls back, and Escape afterwards clears the highlights.
 `o` or Enter opens the row under the cursor; `i`/`I` edit the field under it
 with the caret at the start and `a`/`A` with it at the end, and Escape stops
 editing and puts the cursor back on that field. Editing an enum, bool, or
