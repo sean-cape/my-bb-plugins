@@ -30,3 +30,32 @@ export function useHostDialogOpen(
   }, [root]);
   return open;
 }
+
+// bb's dialogs, menus, and toasts portal outside the picker and need focus.
+const FOCUS_ALLOWED_OUTSIDE =
+  "[data-bb-portaled-overlay], [data-radix-popper-content-wrapper], [data-sonner-toaster]";
+
+/**
+ * bb moves focus on its own while the picker is up: archiving the open thread
+ * routes to the new-thread screen, whose prompt autofocuses and would take the
+ * picker's keys. The picker covers the page, so focus landing outside it is
+ * never a click of yours; take it back, except for bb's own overlays.
+ */
+export function useHoldFocus(
+  root: RefObject<HTMLElement | null>,
+  active: boolean,
+): void {
+  useEffect(() => {
+    if (!active) return;
+    const onFocusIn = (event: FocusEvent) => {
+      const element = root.current;
+      const target = event.target;
+      if (element === null || !(target instanceof Element)) return;
+      if (element.contains(target)) return;
+      if (target.closest(FOCUS_ALLOWED_OUTSIDE) !== null) return;
+      element.focus();
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, [active, root]);
+}

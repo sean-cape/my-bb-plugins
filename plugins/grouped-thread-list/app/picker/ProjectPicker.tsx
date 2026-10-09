@@ -49,7 +49,7 @@ import {
   openableFolderPath,
   useFolderPathLookup,
 } from "./use-folder-path-lookup.js";
-import { useHostDialogOpen } from "./use-host-dialog-open.js";
+import { useHoldFocus, useHostDialogOpen } from "./use-host-dialog-open.js";
 import { useOpenFolder } from "./use-open-folder.js";
 import {
   PreviewPane,
@@ -269,6 +269,7 @@ function ProjectPickerDialog({
       : threads.find((thread) => thread.id === previewThreadId);
   const releasePreviewPin = usePinnedToBottom(previewRef, previewThreadId);
   const behindHostDialog = useHostDialogOpen(rootRef);
+  useHoldFocus(rootRef, !exiting);
   const scrollPreviewBy = (scroll: PreviewScroll) => {
     releasePreviewPin();
     scrollPreview(previewRef.current, scroll);

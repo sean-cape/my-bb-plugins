@@ -787,6 +787,39 @@ describe("project picker", () => {
     expect(document.activeElement).toBe(dialog);
   });
 
+  it("keeps focus when bb focuses its prompt behind it, as after archiving the open thread", async () => {
+    setPreferencesMirrorStorageForTest(null);
+    const { inspection } = renderPicker();
+    const dialog = await openPickerOnApp();
+    press(dialog, "l");
+    press(dialog, "d");
+
+    const prompt = document.createElement("div");
+    prompt.contentEditable = "true";
+    prompt.tabIndex = 0;
+    document.body.append(prompt);
+    prompt.focus();
+    expect(document.activeElement).toBe(dialog);
+
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-bb-portaled-overlay", "");
+    const confirm = document.createElement("button");
+    overlay.append(confirm);
+    document.body.append(overlay);
+    confirm.focus();
+    expect(document.activeElement).toBe(confirm);
+    overlay.remove();
+    prompt.remove();
+
+    dialog.focus();
+    press(dialog, "j");
+    press(dialog, "d");
+    expect(inspection.sidebarActionCalls).toEqual([
+      { method: "archive", threadId: "thr_pinned" },
+      { method: "archive", threadId: "thr_parent" },
+    ]);
+  });
+
   it("highlights the thread under the mouse so p pins it", async () => {
     setPreferencesMirrorStorageForTest(null);
     const { inspection } = renderPicker();
