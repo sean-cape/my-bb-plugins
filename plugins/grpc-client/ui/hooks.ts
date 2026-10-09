@@ -6,7 +6,7 @@ import { errorMessage } from "../shared/common";
 import type { DescriptorState, MethodInfo, ServiceInfo, TypeClosure } from "../shared/schema";
 
 /** Width of an element that may mount after the first render (hence a callback ref). */
-export function useWidth(): [(node: HTMLDivElement | null) => void, number] {
+export function useWidth(): [(node: HTMLDivElement | null) => void, number, HTMLDivElement | null] {
   const [node, setNode] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   useLayoutEffect(() => {
@@ -16,7 +16,7 @@ export function useWidth(): [(node: HTMLDivElement | null) => void, number] {
     observer.observe(node);
     return () => observer.disconnect();
   }, [node]);
-  return [setNode, width];
+  return [setNode, width, node];
 }
 
 /** Closes an open panel on a pointer press outside `root`, or on Escape. */

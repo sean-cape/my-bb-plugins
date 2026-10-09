@@ -3,6 +3,9 @@ import { cx, enter, PRESS, useLateMount } from "bb-motion";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
+/** The keyboard cursor on list rows and menu items. */
+export const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+
 export function Centered({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 flex-1 items-center justify-center overflow-y-auto p-8">
@@ -60,7 +63,7 @@ export function MenuItem({ children, onClick, disabled, checked }: { children: R
       role={checked === undefined ? "menuitem" : "menuitemcheckbox"}
       aria-checked={checked}
       disabled={disabled}
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-state-hover disabled:pointer-events-none disabled:opacity-50"
+      className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-state-hover disabled:pointer-events-none disabled:opacity-50", FOCUS_RING)}
       onClick={onClick}
     >
       <span className="min-w-0 flex-1">{children}</span>

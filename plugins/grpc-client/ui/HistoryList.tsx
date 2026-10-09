@@ -6,6 +6,7 @@ import type { HistoryEntry, rpcContract } from "../server/rpc-contract";
 import { CHANGED_CHANNEL, errorMessage } from "../shared/common";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { FOCUS_RING } from "./controls";
 import { PresenceRow } from "./presence";
 
 const HISTORY_LIST_LIMIT = 200;
@@ -75,8 +76,11 @@ export function HistoryList({ selectedId, onOpen }: { selectedId: number | null;
           >
             <button
               type="button"
-              className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-2 text-left"
+              className={cn("flex min-w-0 flex-1 flex-col gap-0.5 rounded-md px-2 py-2 text-left", FOCUS_RING)}
               title={entry.message || entry.method}
+              aria-current={entry.id === selectedId ? "true" : undefined}
+              data-nav-row={exiting ? undefined : "item"}
+              data-nav-key={`history:${entry.id}`}
               onClick={() => onOpen(entry)}
             >
               <span className="flex min-w-0 items-center gap-2 text-sm">

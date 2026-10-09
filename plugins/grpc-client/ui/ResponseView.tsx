@@ -7,7 +7,9 @@ import { formatResponse } from "../shared/common";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
-type Tab = "response" | "headers" | "trailers" | "sent";
+export type ResponseTab = "response" | "headers" | "trailers" | "sent";
+
+export const RESPONSE_TABS: readonly ResponseTab[] = ["response", "headers", "trailers", "sent"];
 
 const TOKEN = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
 
@@ -137,8 +139,19 @@ function formatSize(text: string): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-export function ResponseView({ result, recordedAt, sending }: { result: CallResult | null; recordedAt: number | null; sending: boolean }) {
-  const [tab, setTab] = useState<Tab>("response");
+export function ResponseView({
+  result,
+  recordedAt,
+  sending,
+  tab,
+  onTab,
+}: {
+  result: CallResult | null;
+  recordedAt: number | null;
+  sending: boolean;
+  tab: ResponseTab;
+  onTab: (tab: ResponseTab) => void;
+}) {
   const id = result === null ? null : resultId(result);
   const arrivedId = useArrivedId(id, sending);
   if (result === null) {
@@ -152,14 +165,14 @@ export function ResponseView({ result, recordedAt, sending }: { result: CallResu
         ) : (
           <>
             <p className="text-sm text-muted-foreground">The response appears here.</p>
-            <p className="text-xs text-muted-foreground/80">Send with ⌘↵ / Ctrl↵</p>
+            <p className="text-xs text-muted-foreground/80">Send with ⌘↵ / Ctrl↵ · ? lists the keyboard shortcuts</p>
           </>
         )}
       </div>
     );
   }
   const body = result.responses.map(formatResponse).join("\n\n");
-  const tabs: { id: Tab; label: string; count?: number }[] = [
+  const tabs: { id: ResponseTab; label: string; count?: number }[] = [
     { id: "response", label: result.responses.length > 1 ? `Messages` : "Body", count: result.responses.length > 1 ? result.responses.length : undefined },
     { id: "headers", label: "Headers", count: result.headers.length || undefined },
     { id: "trailers", label: "Trailers", count: result.trailers.length || undefined },
@@ -211,7 +224,7 @@ export function ResponseView({ result, recordedAt, sending }: { result: CallResu
                 PRESS,
                 tab === entry.id ? "bg-state-active text-foreground" : "text-muted-foreground hover:bg-state-hover hover:text-foreground",
               )}
-              onClick={() => setTab(entry.id)}
+              onClick={() => onTab(entry.id)}
             >
               {entry.label}
               {entry.count !== undefined ? <span className="ml-1.5 text-xs tabular-nums text-muted-foreground">{entry.count}</span> : null}
@@ -220,7 +233,7 @@ export function ResponseView({ result, recordedAt, sending }: { result: CallResu
           {body !== "" ? <CopyButton text={body} /> : null}
         </div>
       </div>
-      <div key={`${id}:${tab}`} className={cx("min-h-0 flex-1 overflow-auto px-4 py-3", enter.rise)}>
+      <div key={`${id}:${tab}`} data-grpc-response-scroll="" className={cx("min-h-0 flex-1 overflow-auto px-4 py-3", enter.rise)}>
         {tab === "response" ? (
           <div className="space-y-3">
             {!result.ok ? (

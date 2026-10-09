@@ -1,9 +1,11 @@
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { cx, enter, exit, PRESS, speed, TRANSFORM_TRANSITION, usePresence } from "bb-motion";
 import type { EndpointSummary, Overview } from "../server/rpc-contract";
 import type { DescriptorState } from "../shared/schema";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { usePanelKeys } from "./client-keys";
+import { FOCUS_RING } from "./controls";
 import { useDismiss, useInertWhileClosing } from "./hooks";
 
 /**
@@ -16,6 +18,8 @@ export function EndpointSwitcher({
   sourceName,
   descriptors,
   loading,
+  open,
+  onOpenChange: setOpen,
   onEndpoint,
   onSource,
   onReload,
@@ -25,16 +29,18 @@ export function EndpointSwitcher({
   sourceName: string;
   descriptors: DescriptorState | null;
   loading: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onEndpoint: (name: string) => void;
   onSource: (name: string) => void;
   onReload: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useDismiss(root, open, setOpen);
   const panel = useRef<HTMLDivElement>(null);
   const presence = usePresence(open);
   useInertWhileClosing(root, panel, presence.exiting);
+  const onPanelKeyDown = usePanelKeys(panel, open);
 
   const sources = overview.sources.some((source) => source.name === sourceName)
     ? overview.sources
@@ -65,18 +71,21 @@ export function EndpointSwitcher({
           role="dialog"
           aria-label="Endpoint"
           aria-hidden={presence.exiting || undefined}
+          data-state={presence.exiting ? "closed" : "open"}
           className={cx(
             "absolute left-0 top-full z-30 mt-1 w-80 rounded-lg border border-border bg-background p-1.5 shadow-lg",
             presence.exiting ? exit.fade : cx(enter.drop, speed.fast),
           )}
           onAnimationEnd={presence.onAnimationEnd}
+          onKeyDown={onPanelKeyDown}
         >
           <p className="px-2 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Endpoint</p>
           {overview.endpoints.map((option) => (
             <button
               key={option.name}
               type="button"
-              className={cn("flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-state-hover", option.name === endpoint.name && "bg-state-active")}
+              aria-current={option.name === endpoint.name ? "true" : undefined}
+              className={cn("flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-state-hover", FOCUS_RING, option.name === endpoint.name && "bg-state-active")}
               onClick={() => {
                 onEndpoint(option.name);
                 setOpen(false);

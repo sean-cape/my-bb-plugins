@@ -5,6 +5,26 @@ underneath. It has a searchable method browser, a request form generated from
 the protos (or raw JSON), and a response view with status, headers, and
 trailers. Call history is shared between the UI and `bb grpc`.
 
+## Keyboard
+
+Outside text boxes the view takes vim-style keys. `j`/`k` move through the
+method list or call history, `gg`/`G` jump to its ends, `l` expands a service
+or opens a method, `h` collapses a service or climbs from a method to its
+service, and `o` (or Enter) opens the row. `/` searches (Enter opens the first
+match and leaves the cursor on it, Escape clears the search, then leaves it),
+`f` opens the filters, `e` the endpoint picker, `c` toggles call history, and
+`b` shows or hides the list. `i` focuses the request, `[`/`]` and `{`/`}`
+cycle the request and response tabs, `m` switches between form and JSON, `y`
+copies the grpcurl command, Ctrl-d/Ctrl-u scroll the response, and ⌘↵ sends.
+`j`/`k` and the arrows step through the open endpoint, filter, and actions
+panels. `?` (or More → Keyboard shortcuts) lists them all; arrows work as
+`hjkl`.
+
+The method search and the filter panel's API search opt out of the vim-mode
+plugin, so their Escape and arrows reach the list. In the request editor,
+Escape returns to the keys only when vim-mode is off or its "Escape leaves
+the text box" setting is on.
+
 ## Configuration
 
 Four settings hold the config: `endpoints`, `sources`, and `auth` (raw JSON),

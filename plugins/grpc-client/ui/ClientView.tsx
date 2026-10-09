@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { toast } from "sonner";
 import { cx, enter, exit, PRESS, speed, usePresence } from "bb-motion";
@@ -11,17 +11,20 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { focusRow, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
+import { type ClientCommand, cycle, listAction, type ListMotion } from "./client-nav";
 import { Centered, MenuItem, Segmented, Tabs } from "./controls";
 import { EndpointSwitcher } from "./EndpointSwitcher";
 import { HistoryList } from "./HistoryList";
 import { useServices, useTypeClosure, useWidth } from "./hooks";
 import { EditorOptionsContext, inputClass } from "./MessageEditor";
 import { MetadataEditor, type MetadataRow } from "./MetadataEditor";
-import { MethodBadges, MethodList } from "./MethodList";
+import { KeysDialog } from "./KeysDialog";
+import { MethodBadges, MethodList, type MethodListHandle } from "./MethodList";
 import { Popover } from "./Popover";
 import { exampleMessage, isObject, type JsonObject } from "./proto-json";
 import { RequestBody } from "./RequestBody";
-import { ResponseView } from "./ResponseView";
+import { RESPONSE_TABS, ResponseView, type ResponseTab } from "./ResponseView";
 import { SplitPane } from "./SplitPane";
 import { readStored, useStored, writeStored } from "./storage";
 
@@ -39,6 +42,10 @@ const MAX_LIST_SHARE = 0.6;
 /** Dragging the list narrower than this collapses it. */
 const COLLAPSE_LIST_WIDTH = 160;
 const NO_OVERRIDES: Record<string, string> = {};
+const REQUEST_TABS = ["body", "metadata", "options"] as const;
+/** A key's focus request that waits for its panel to mount; older ones are dropped. */
+const PENDING_FOCUS_MS = 1000;
+const REQUEST_FIELDS = "input:not(:disabled), textarea:not(:disabled), select:not(:disabled), button:not(:disabled)";
 
 function EmptyConfig({ errors }: { errors: string[] }) {
   return (
@@ -64,7 +71,7 @@ function EmptyConfig({ errors }: { errors: string[] }) {
 
 export function ClientView() {
   const rpc = useRpc<typeof rpcContract>();
-  const [rootRef, width] = useWidth();
+  const [rootRef, width, root] = useWidth();
   const overlayList = width > 0 && width < OVERLAY_LIST_WIDTH;
   const sideBySide = width >= SIDE_BY_SIDE_WIDTH;
   const [storedListWidth, setListWidth] = useStored<number>("listWidth", DEFAULT_LIST_WIDTH);
@@ -120,7 +127,8 @@ export function ClientView() {
   const [showDocs, setShowDocs] = useStored<boolean>("showDocs", false);
   const [requestText, setRequestText] = useStored<string>(`request:${method?.fullName ?? ""}`, defaultRequest);
   const [metadata, setMetadata] = useStored<MetadataRow[]>(`metadata:${endpoint?.name ?? ""}`, NO_METADATA);
-  const [requestTab, setRequestTab] = useState<"body" | "metadata" | "options">("body");
+  const [requestTab, setRequestTab] = useState<(typeof REQUEST_TABS)[number]>("body");
+  const [responseTab, setResponseTab] = useState<ResponseTab>("response");
   const [timeout, setTimeoutText] = useState("");
   const [leftTab, setLeftTab] = useState<"methods" | "history">("methods");
   const [listOpen, setListOpen] = useState(false);
@@ -129,6 +137,8 @@ export function ClientView() {
   const [listReopened, setListReopened] = useState(false);
   const [showComment, setShowComment] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [endpointOpen, setEndpointOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
   /** Latest result per endpoint + method; `recordedAt` marks one restored from history. */
   const [results, setResults] = useState<Record<string, { result: CallResult; recordedAt: number | null; historyId: number | null }>>({});
   const [sending, setSending] = useState(false);
@@ -231,6 +241,144 @@ export function ClientView() {
     );
   };
 
+  const listRef = useRef<HTMLElement>(null);
+  const methodListRef = useRef<MethodListHandle>(null);
+  const requestPaneRef = useRef<HTMLDivElement>(null);
+  /** The row the list cursor was last on, so keys resume there after focus leaves the list. */
+  const lastRowKey = useRef<string | null>(null);
+  const [pendingFocus, setPendingFocus] = useState<{ target: "cursor" | "search" | "filters"; at: number } | null>(null);
+  const listShown = overlayList ? listOpen : !listCollapsed;
+
+  const showList = () => {
+    if (overlayList) setListOpen(true);
+    else {
+      setListCollapsed(false);
+      setListReopened(true);
+    }
+  };
+  const revealList = (target: "cursor" | "search" | "filters") => {
+    if (!listShown) showList();
+    setPendingFocus({ target, at: Date.now() });
+  };
+  const landCursor = (list: HTMLElement): boolean => {
+    const rows = [...list.querySelectorAll<HTMLElement>(NAV_ROW)];
+    const row = rows.find((candidate) => candidate.dataset.navKey === lastRowKey.current) ?? rows.find((candidate) => candidate.getAttribute("aria-current") === "true") ?? rows[0];
+    if (row === undefined) return false;
+    focusRow(row);
+    return true;
+  };
+  useEffect(() => {
+    if (pendingFocus === null) return;
+    if (Date.now() - pendingFocus.at > PENDING_FOCUS_MS) {
+      setPendingFocus(null);
+      return;
+    }
+    if (pendingFocus.target === "cursor") {
+      if (listRef.current === null || !landCursor(listRef.current)) return;
+    } else {
+      const handle = methodListRef.current;
+      if (handle === null) return;
+      if (pendingFocus.target === "search") handle.focusSearch();
+      else handle.openFilters();
+    }
+    setPendingFocus(null);
+  });
+
+  const moveCursor = (motion: ListMotion) => {
+    const list = listRef.current;
+    if (!listShown || list === null) {
+      revealList("cursor");
+      return;
+    }
+    const { elements, rows } = readRows(list);
+    const focused = document.activeElement?.closest<HTMLElement>(NAV_ROW) ?? null;
+    let current = focused === null ? -1 : elements.indexOf(focused);
+    if (current === -1) current = elements.findIndex((element) => element.dataset.navKey === lastRowKey.current);
+    const start = Math.max(0, elements.findIndex((element) => element.getAttribute("aria-current") === "true"));
+    const action = listAction(rows, current === -1 ? null : current, motion, start);
+    if (action === null) return;
+    const element = elements[action.index]!;
+    focusRow(element);
+    if (action.kind === "activate") element.click();
+  };
+
+  const runCommand = (command: ClientCommand): boolean | void => {
+    const hasMethod = endpoint !== null && method !== null;
+    switch (command.kind) {
+      case "list":
+        moveCursor(command.motion);
+        return;
+      case "search":
+      case "filters":
+        setLeftTab("methods");
+        revealList(command.kind);
+        return;
+      case "endpoint":
+        if (!listShown) showList();
+        setEndpointOpen(true);
+        return;
+      case "history":
+        setLeftTab(leftTab === "history" ? "methods" : "history");
+        revealList("cursor");
+        return;
+      case "toggleList":
+        if (!listShown) {
+          revealList("cursor");
+          return;
+        }
+        if (listRef.current?.contains(document.activeElement)) root?.focus({ preventScroll: true });
+        if (overlayList) setListOpen(false);
+        else setListCollapsed(true);
+        return;
+      case "edit": {
+        const fields = [...(requestPaneRef.current?.querySelectorAll<HTMLElement>(REQUEST_FIELDS) ?? [])];
+        const field = fields.find(isTextEntry) ?? fields[0];
+        if (field === undefined) return false;
+        field.focus({ preventScroll: true });
+        field.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      case "requestTab":
+        if (!hasMethod) return false;
+        setRequestTab(cycle(REQUEST_TABS, requestTab, command.step));
+        return;
+      case "responseTab":
+        if (results[resultKey] === undefined) return false;
+        setResponseTab(cycle(RESPONSE_TABS, responseTab, command.step));
+        return;
+      case "mode":
+        if (!hasMethod) return false;
+        setMode(mode === "json" ? "form" : "json");
+        setRequestTab("body");
+        return;
+      case "copyCommand":
+        if (!hasMethod) return false;
+        copyCommand();
+        return;
+      case "scroll": {
+        const pane = root?.querySelector<HTMLElement>("[data-grpc-response-scroll]");
+        if (pane == null) return false;
+        pane.scrollBy({ top: (command.step * pane.clientHeight) / 2 });
+        return;
+      }
+      case "escape":
+        if (command.fromField) {
+          root?.focus({ preventScroll: true });
+          return;
+        }
+        if (methodListRef.current?.clearSearch()) return;
+        if (overlayList && listOpen) {
+          setListOpen(false);
+          return;
+        }
+        return false;
+      case "help":
+        setKeysOpen(true);
+        return;
+    }
+  };
+  useClientKeys(root, overview !== null && endpoint !== null, runCommand);
+
   if (overview === null) {
     return <Centered>{overviewError === null ? "Loading…" : <span className="text-destructive">{overviewError}</span>}</Centered>;
   }
@@ -264,16 +412,9 @@ export function ClientView() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
   };
-  const showList = () => {
-    if (overlayList) setListOpen(true);
-    else {
-      setListCollapsed(false);
-      setListReopened(true);
-    }
-  };
-
   const list = (
     <aside
+      ref={listRef}
       className={cn(
         "relative flex min-h-0 flex-col border-r border-border bg-background",
         overlayList ? "absolute inset-y-0 left-0 z-20 w-80 max-w-[85%] shadow-xl" : "shrink-0",
@@ -281,6 +422,10 @@ export function ClientView() {
       )}
       style={overlayList ? undefined : { width: listWidth }}
       onAnimationEnd={overlayList ? overlayPresence.onAnimationEnd : undefined}
+      onFocus={(event) => {
+        const key = (event.target as Element).closest<HTMLElement>(NAV_ROW)?.dataset.navKey;
+        if (key !== undefined) lastRowKey.current = key;
+      }}
     >
       <div className="flex items-center gap-1 border-b border-border px-1.5 py-1.5">
         <EndpointSwitcher
@@ -289,6 +434,8 @@ export function ClientView() {
           sourceName={sourceName ?? ""}
           descriptors={serviceData?.state ?? null}
           loading={loadingServices}
+          open={endpointOpen}
+          onOpenChange={setEndpointOpen}
           onEndpoint={setStoredEndpoint}
           onSource={(next) => setSourceOverrides({ ...sourceOverrides, [endpoint.name]: next })}
           onReload={services.reload}
@@ -339,7 +486,7 @@ export function ClientView() {
           Loading protos…
         </div>
       ) : (
-        <MethodList key={servicesKey ?? ""} services={serviceData.services} selected={method?.fullName ?? null} filterKey={sourceName ?? ""} onSelect={selectMethod} />
+        <MethodList key={servicesKey ?? ""} services={serviceData.services} selected={method?.fullName ?? null} filterKey={sourceName ?? ""} handle={methodListRef} onSelect={selectMethod} />
       )}
       {overlayList ? null : (
         <div
@@ -358,7 +505,7 @@ export function ClientView() {
   const requestPane =
     method === null ? null : (
       <>
-        <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3">
+        <div ref={requestPaneRef} className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3">
           {requestTab === "body" ? (
             <EditorOptionsContext.Provider value={{ showDocs }}>
               <RequestBody key={method.fullName} method={method} closure={closure} closureError={closureError} mode={mode} text={requestText} onText={setRequestText} />
@@ -404,7 +551,7 @@ export function ClientView() {
     );
 
   return (
-    <div ref={rootRef} className="flex h-full min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
+    <div ref={rootRef} tabIndex={-1} data-grpc-keys="" className="flex h-full min-h-0 flex-1 flex-col outline-none" onKeyDown={onKeyDown}>
       {errors.length > 0 ? (
         <div role="alert" className={cx("border-b border-border bg-destructive/5 px-4 py-2 text-xs text-destructive", enter.drop)}>
           {errors.join(" · ")}
@@ -432,6 +579,7 @@ export function ClientView() {
                 <p>
                   {methodCount} methods across {serviceData.services.length} services. Search by service or method name.
                 </p>
+                <p className="text-xs text-muted-foreground/80">j and k move through the list, / searches, ? lists every shortcut</p>
                 {listDocked ? null : (
                   <Button variant="outline" size="sm" onClick={showList}>
                     Browse methods
@@ -560,6 +708,17 @@ export function ClientView() {
                   >
                     Copy as grpcurl command
                   </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setMoreOpen(false);
+                      setKeysOpen(true);
+                    }}
+                  >
+                    <span className="flex items-center justify-between">
+                      Keyboard shortcuts
+                      <kbd className="font-mono text-xs text-muted-foreground">?</kbd>
+                    </span>
+                  </MenuItem>
                 </Popover>
                 <Button size="sm" className={cn("ml-1 h-7 px-3", endpoint.protected && "bg-amber-600 text-white hover:bg-amber-600/90")} disabled={sending} onClick={requestSend}>
                   <span key={sending ? "sending" : "idle"} className={cx("flex", sending ? cx(enter.fade, speed.fast) : enter.pop)}>
@@ -575,11 +734,12 @@ export function ClientView() {
                 {method.comment}
               </p>
             ) : null}
-            <SplitPane vertical={!sideBySide} first={requestPane} second={<ResponseView result={shown?.result ?? null} recordedAt={shown?.recordedAt ?? null} sending={sending} />} />
+            <SplitPane vertical={!sideBySide} first={requestPane} second={<ResponseView result={shown?.result ?? null} recordedAt={shown?.recordedAt ?? null} sending={sending} tab={responseTab} onTab={setResponseTab} />} />
           </div>
         )}
       </div>
 
+      <KeysDialog open={keysOpen} onOpenChange={setKeysOpen} />
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent>
           <DialogHeader>

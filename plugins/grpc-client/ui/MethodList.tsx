@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import type { CSSProperties, RefObject } from "react";
 import { CHEVRON, cx, enter, PRESS, REVEAL, REVEAL_HOST, speed, stagger, STAGGER } from "bb-motion";
 import type { MethodInfo, ServiceInfo } from "../shared/schema";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { focusRow, NAV_ROW } from "./client-keys";
+import { FOCUS_RING } from "./controls";
 import { Popover } from "./Popover";
 import { shortName } from "./proto-json";
 import { useStored } from "./storage";
@@ -79,8 +81,8 @@ function toggled(list: string[], value: string): string[] {
 
 function Checkbox({ checked, label, detail, count, onChange }: { checked: boolean; label: string; detail?: string; count?: number; onChange: () => void }) {
   return (
-    <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 hover:bg-state-hover">
-      <input type="checkbox" className="size-3.5 shrink-0 accent-foreground" checked={checked} onChange={onChange} />
+    <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 hover:bg-state-hover has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-ring">
+      <input type="checkbox" className="size-3.5 shrink-0 accent-foreground focus-visible:outline-none" checked={checked} onChange={onChange} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm text-foreground">{label}</span>
         {detail ? <span className="block truncate text-[11px] text-muted-foreground">{detail}</span> : null}
@@ -150,6 +152,7 @@ function FilterPanel({
           placeholder="Find an API"
           value={serviceQuery}
           spellCheck={false}
+          data-vim-ignore=""
           onChange={(event) => setServiceQuery(event.target.value)}
         />
       </div>
@@ -174,6 +177,7 @@ function MethodRow({
   method,
   selected,
   detail,
+  child = false,
   className,
   style,
   onSelect,
@@ -181,6 +185,8 @@ function MethodRow({
   method: MethodInfo;
   selected: boolean;
   detail?: string;
+  /** Sits under its service in the tree, rather than in search results. */
+  child?: boolean;
   className?: string;
   style?: CSSProperties;
   onSelect: () => void;
@@ -190,12 +196,16 @@ function MethodRow({
       type="button"
       className={cn(
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+        FOCUS_RING,
         selected ? "bg-state-active text-foreground" : "text-foreground/80 hover:bg-state-hover hover:text-foreground",
         className,
       )}
       style={style}
       title={method.comment ?? method.fullName}
       aria-current={selected ? "true" : undefined}
+      data-nav-row="item"
+      data-nav-key={`method:${method.fullName}`}
+      data-nav-child={child ? "" : undefined}
       onClick={onSelect}
     >
       <span className="min-w-0 flex-1">
@@ -207,16 +217,25 @@ function MethodRow({
   );
 }
 
+export interface MethodListHandle {
+  focusSearch: () => void;
+  openFilters: () => void;
+  /** Clears the search; false when there was none. */
+  clearSearch: () => boolean;
+}
+
 export function MethodList({
   services,
   selected,
   filterKey,
+  handle,
   onSelect,
 }: {
   services: ServiceInfo[];
   selected: string | null;
   /** Filters persist per key (the proto source), since services differ between sources. */
   filterKey: string;
+  handle: RefObject<MethodListHandle | null>;
   onSelect: (method: MethodInfo) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -228,6 +247,16 @@ export function MethodList({
     return new Set(open === undefined ? [] : [open.typeName]);
   });
   const listRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useImperativeHandle(handle, () => ({
+    focusSearch: () => searchRef.current?.focus(),
+    openFilters: () => setFiltersOpen(true),
+    clearSearch: () => {
+      if (query === "") return false;
+      setQuery("");
+      return true;
+    },
+  }));
   useEffect(() => {
     // Only on mount: later selections come from clicks on rows that are already visible.
     listRef.current?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: "center" });
@@ -289,14 +318,33 @@ export function MethodList({
           <div className="relative min-w-0 flex-1">
             <Icon name="Search" className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
+              ref={searchRef}
               className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-7 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               placeholder={active ? `Search ${visibleCount} of ${total} methods` : `Search ${total} methods`}
               value={query}
               spellCheck={false}
+              // A filter box, like a palette's: vim editing would take its Escape and arrows.
+              data-vim-ignore=""
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Escape") setQuery("");
-                if (event.key === "Enter" && results?.length) onSelect(results[0]!);
+                const rows = listRef.current?.querySelectorAll<HTMLElement>(NAV_ROW);
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  if (query !== "") setQuery("");
+                  else {
+                    const cursor = listRef.current?.querySelector<HTMLElement>(`${NAV_ROW}[aria-current="true"]`) ?? rows?.[0];
+                    if (cursor) focusRow(cursor);
+                  }
+                }
+                if (event.key === "ArrowDown" && rows?.[0]) {
+                  event.preventDefault();
+                  focusRow(rows[0]);
+                }
+                if (event.key === "Enter" && results?.length) {
+                  onSelect(results[0]!);
+                  // Leaves the search with the cursor on the match, so j/k carry on through the rest.
+                  if (rows?.[0]) focusRow(rows[0]);
+                }
               }}
             />
             {query !== "" ? (
@@ -378,7 +426,9 @@ export function MethodList({
             {!searchAll && hiddenMatches > 0 ? (
               <button
                 type="button"
-                className="mt-1 w-full rounded-md px-2 py-2 text-left text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                className={cn("mt-1 w-full rounded-md px-2 py-2 text-left text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground", FOCUS_RING)}
+                data-nav-row="item"
+                data-nav-key="search-all"
                 onClick={() => setSearchAll(true)}
               >
                 {results.length === 0 ? "No matches in your filters. " : ""}Show {hiddenMatches} more outside your filters
@@ -402,10 +452,12 @@ export function MethodList({
                 <div className={cx("flex items-center rounded-md hover:bg-state-hover", REVEAL_HOST)}>
                   <button
                     type="button"
-                    className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1.5 text-left"
+                    className={cn("flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left", FOCUS_RING)}
                     title={`${service.typeName}${service.comment ? `\n\n${service.comment}` : ""}`}
                     onClick={() => toggle(service.typeName)}
                     aria-expanded={open}
+                    data-nav-row="group"
+                    data-nav-key={`service:${service.typeName}`}
                     data-bbm-open={open}
                   >
                     <Icon name="ChevronRight" className={cx("size-3.5 shrink-0 text-muted-foreground", CHEVRON)} />
@@ -433,6 +485,7 @@ export function MethodList({
                         key={method.fullName}
                         method={method}
                         selected={method.fullName === selected}
+                        child
                         className={cx(enter.rise, speed.fast, STAGGER)}
                         style={stagger(index)}
                         onSelect={() => onSelect(method)}
