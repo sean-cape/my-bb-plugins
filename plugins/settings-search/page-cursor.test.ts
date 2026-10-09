@@ -122,7 +122,7 @@ describe("page cursor", () => {
 
   it("opens a menu from the keyboard, the way radix triggers expect", () => {
     render(setting("Followup", '<button aria-haspopup="menu" aria-label="Followup">Steer</button>'));
-    const trigger = document.querySelector("main button")!;
+    const trigger = document.querySelector<HTMLButtonElement>("main button")!;
     const keys = vi.fn((event: KeyboardEvent) => event.key);
     const clicked = vi.fn();
     trigger.addEventListener("keydown", keys);

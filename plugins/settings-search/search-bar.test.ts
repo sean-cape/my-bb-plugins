@@ -210,6 +210,16 @@ describe("mountSettingsSearch", () => {
     expect(window.location.pathname).toBe("/settings/appearance");
   });
 
+  it("leaves a text box on the page on Escape, even one vim-mode marked handled", async () => {
+    await mount();
+    const field = document.createElement("input");
+    document.querySelector("[data-page-scroll-viewport]")!.append(field);
+    field.focus();
+    field.addEventListener("keydown", (event) => event.preventDefault());
+    press(field, "Escape");
+    expect(document.activeElement).not.toBe(field);
+  });
+
   it("leaves the keys to an open menu or dialog", async () => {
     await mount();
     document.body.insertAdjacentHTML("beforeend", '<div role="menu"><div role="menuitem" tabindex="0"></div></div>');

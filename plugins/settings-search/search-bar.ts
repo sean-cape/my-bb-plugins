@@ -35,7 +35,7 @@ const SETTINGS_LINK = 'a[href^="/settings"]';
 // Lists of threads, not settings.
 const UNINDEXED_PAGES = new Set(["/settings/archived"]);
 // While one of these is open, the keys belong to it.
-const OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]:not([data-settings-search-results]), [data-radix-popper-content-wrapper]';
+const OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [data-radix-popper-content-wrapper]';
 const FOCUSABLE =
   'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="switch"], [tabindex]:not([tabindex="-1"])';
 
@@ -494,16 +494,19 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
   const cursor = createPageCursor(doc, win, { stepPage });
 
   const onDocumentKey = (event: KeyboardEvent) => {
-    if (!input || event.defaultPrevented || event.isComposing) return;
-    if (event.metaKey || event.altKey) return;
+    if (!input || event.isComposing || event.metaKey || event.altKey) return;
+    if (doc.querySelector(OVERLAY)) return;
     if (isEditable(event.target)) {
+      // vim-mode marks the Escape that leaves a text box as handled, and only
+      // leaves text boxes on thread pages itself; one it kept never gets here.
       const target = event.target as HTMLElement;
-      if (event.key === "Escape" && target !== input && target.closest(PAGE_ROOT)) target.blur();
+      const plain = !event.ctrlKey && !event.shiftKey;
+      if (event.key === "Escape" && plain && target !== input && target.closest(PAGE_ROOT)) target.blur();
       return;
     }
+    if (event.defaultPrevented) return;
     // Keyboard settings record a shortcut from the next key pressed anywhere.
     if (doc.querySelector('button[aria-pressed="true"][aria-label^="Record shortcut"]')) return;
-    if (doc.querySelector(OVERLAY)) return;
     if (event.ctrlKey) {
       if (cursor.handleKey(event)) event.preventDefault();
       return;
