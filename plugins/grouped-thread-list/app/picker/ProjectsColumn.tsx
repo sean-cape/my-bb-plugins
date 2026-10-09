@@ -179,6 +179,7 @@ export function ProjectsColumn({
                   index > 0 && "mt-2",
                   intro && [enter.fade, STAGGER],
                 )}
+                style={introStyle}
               />
             ) : null}
             <div

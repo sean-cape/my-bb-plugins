@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { getProjectColor } from "../rows/ProjectMonogram.js";
 
@@ -24,13 +25,16 @@ export function CurrentMarker({ projectId }: { projectId: string | null }) {
 export function GroupLabel({
   label,
   className,
+  style,
 }: {
   label: string;
   className?: string;
+  style?: CSSProperties;
 }) {
   return (
     <div
       role="presentation"
+      style={style}
       className={cn(
         "flex h-6 select-none items-end px-2 pb-1 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground/80",
         className,
