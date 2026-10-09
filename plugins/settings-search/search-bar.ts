@@ -1,5 +1,6 @@
 import { crawlPages, createFrameLoader, type PageLoader } from "./crawler.js";
 import { createPageCursor, CURSOR_ATTRIBUTE, PAGE_ROOT } from "./page-cursor.js";
+import { createSidebarCursor, SETTINGS_LINK } from "./sidebar-cursor.js";
 import {
   extractEntries,
   findEntryElement,
@@ -31,7 +32,6 @@ const MAX_ROW_HEIGHT_PX = 240;
 const SETTINGS_SIDEBAR = '[data-sidebar="sidebar"]:has(> [data-testid="settings-sidebar-top-reserve-row"])';
 const BACK_ROW = ':scope > div:has(a[href="/"])';
 const NAV_LIST = ":scope > .overflow-auto";
-const SETTINGS_LINK = 'a[href^="/settings"]';
 // Lists of threads and plugin cards, not settings. Installed plugins also has
 // no page viewport, so indexing it only waits out the timeout.
 const UNINDEXED_PAGES = new Set(["/settings/archived", "/settings/plugins"]);
@@ -41,10 +41,10 @@ const FOCUSABLE =
   'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="switch"], [tabindex]:not([tabindex="-1"])';
 
 const KEYS: [string, string][] = [
-  ["j  k", "Next or previous setting"],
-  ["gg  G", "First or last setting"],
-  ["Ctrl-D Ctrl-U", "Half a page down or up"],
-  ["h  l", "Previous or next settings page"],
+  ["j  k", "Next or previous page, or setting"],
+  ["l  h", "Into the page's settings, or back to the pages"],
+  ["gg  G", "First or last"],
+  ["Ctrl-D Ctrl-U", "Half a list down or up"],
   ["Enter", "Use the setting: flip, open, or edit"],
   ["i", "Focus the setting's control"],
   ["Esc", "Back to the keys from a control"],
@@ -184,6 +184,10 @@ export const SETTINGS_SEARCH_CSS = `
 [${HIT_ATTRIBUTE}],
 [${CURSOR_ATTRIBUTE}] {
   position: relative;
+}
+[${NAV_ATTRIBUTE}] [${CURSOR_ATTRIBUTE}]::before {
+  inset: 0;
+  border-radius: 6px;
 }
 [${CURSOR_ATTRIBUTE}]::before {
   content: "";
@@ -426,6 +430,8 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     if (!entry || !sidebar) return;
     selected = index;
     render();
+    pane = "page";
+    sidebarCursor.hide();
     if (win.location.pathname !== entry.href) {
       const link = [...sidebar.querySelectorAll<HTMLAnchorElement>(SETTINGS_LINK)].find(
         (anchor) => anchor.getAttribute("href") === entry.href,
@@ -477,22 +483,28 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     event.stopPropagation();
   };
 
-  const stepPage = (delta: number) => {
-    if (!sidebar) return;
-    const links = [...sidebar.querySelectorAll<HTMLAnchorElement>(`[${NAV_ATTRIBUTE}] ${SETTINGS_LINK}`)];
-    const path = win.location.pathname;
-    const here = links.reduce<{ at: number; length: number }>(
-      (best, link, at) => {
-        const href = link.getAttribute("href")!;
-        const matches = path === href || path.startsWith(`${href}/`);
-        return matches && href.length > best.length ? { at, length: href.length } : best;
-      },
-      { at: -1, length: -1 },
-    ).at;
-    links[Math.max(0, Math.min(links.length - 1, here + delta))]?.click();
-  };
+  const cursor = createPageCursor(doc, win);
+  const sidebarCursor = createSidebarCursor(win, () => sidebar?.querySelector(`[${NAV_ATTRIBUTE}]`) ?? null);
+  // j and k move through whichever list has the keys: the page list in the
+  // sidebar, or the open page's settings. l and h move between them.
+  let pane: "sidebar" | "page" = "sidebar";
 
-  const cursor = createPageCursor(doc, win, { stepPage });
+  const paneKey = (event: KeyboardEvent): boolean => {
+    const nothingFocused = !doc.activeElement || doc.activeElement === doc.body;
+    if (pane === "sidebar" && (event.key === "l" || (event.key === "Enter" && nothingFocused))) {
+      pane = "page";
+      sidebarCursor.hide();
+      cursor.enter();
+      return true;
+    }
+    if (pane === "page" && event.key === "h") {
+      pane = "sidebar";
+      cursor.hide();
+      sidebarCursor.show();
+      return true;
+    }
+    return (pane === "sidebar" ? sidebarCursor : cursor).handleKey(event);
+  };
 
   const onDocumentKey = (event: KeyboardEvent) => {
     if (!input || event.isComposing || event.metaKey || event.altKey) return;
@@ -509,7 +521,7 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     // Keyboard settings record a shortcut from the next key pressed anywhere.
     if (doc.querySelector('button[aria-pressed="true"][aria-label^="Record shortcut"]')) return;
     if (event.ctrlKey) {
-      if (cursor.handleKey(event)) event.preventDefault();
+      if (paneKey(event)) event.preventDefault();
       return;
     }
     const hasResults = input.value.trim() !== "" && results.length > 0;
@@ -521,7 +533,7 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     else if ((event.key === "n" || event.key === "N") && hasResults) {
       const delta = event.key === "n" ? 1 : -1;
       open((selected + delta + results.length) % results.length, true);
-    } else if (!cursor.handleKey(event)) return;
+    } else if (!paneKey(event)) return;
     event.preventDefault();
   };
 
@@ -601,6 +613,9 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     sidebar?.removeAttribute(ACTIVE_ATTRIBUTE);
     sidebar?.querySelector(`[${NAV_ATTRIBUTE}]`)?.removeAttribute(NAV_ATTRIBUTE);
     sidebar = root = input = list = keys = null;
+    pane = "sidebar";
+    sidebarCursor.hide();
+    cursor.hide();
     results = [];
     selected = 0;
   };
@@ -612,6 +627,7 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     if (target && !sidebar) attach(target);
     if (!sidebar) return;
     cursor.sync();
+    sidebarCursor.sync();
     const nav = sidebar.querySelector(NAV_LIST);
     nav?.setAttribute(NAV_ATTRIBUTE, "");
     if (nav) {
@@ -637,6 +653,7 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     doc.removeEventListener("keydown", onDocumentKey);
     detach();
     cursor.dispose();
+    sidebarCursor.dispose();
     hit?.removeAttribute(HIT_ATTRIBUTE);
     style.remove();
   };

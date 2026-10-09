@@ -16,16 +16,15 @@ const POPUP_TRIGGER = '[aria-haspopup]:not([aria-haspopup="false"]), [role="comb
 // dnd-kit drag handles, which do nothing on a click.
 const DRAG_HANDLE = '[aria-roledescription="sortable"], [aria-label^="Reorder "]';
 
-export interface PageCursorOptions {
-  /** Opens the settings page `delta` places away in the sidebar. */
-  stepPage(delta: number): void;
-}
-
 export interface PageCursor {
   /** Handles a keydown aimed at the page; returns true when it was a cursor key. */
   handleKey(event: KeyboardEvent): boolean;
   /** Puts the cursor on the item holding `element`, showing it. */
   place(element: Element): void;
+  /** Shows the cursor where it was last hidden on this page, or on the first setting in view. */
+  enter(): void;
+  /** Hides the cursor, remembering its place for `enter`. */
+  hide(): void;
   /** Drops a cursor left over from another page. */
   sync(): void;
   dispose(): void;
@@ -70,10 +69,11 @@ function primaryControl(item: Element): HTMLElement | null {
   );
 }
 
-export function createPageCursor(doc: Document, win: Window, options: PageCursorOptions): PageCursor {
+export function createPageCursor(doc: Document, win: Window): PageCursor {
   let current: Element | null = null;
   let index = -1;
   let path: string | null = null;
+  let parked: { path: string; index: number } | null = null;
   let pendingG = 0;
 
   const root = () => doc.querySelector(PAGE_ROOT);
@@ -206,10 +206,6 @@ export function createPageCursor(doc: Document, win: Window, options: PageCursor
         leaveControl();
         move(Infinity);
         return true;
-      case "h":
-      case "l":
-        options.stepPage(event.key === "h" ? -1 : 1);
-        return true;
       case "Enter":
       case "i":
         // A focused control keeps its own Enter.
@@ -245,9 +241,25 @@ export function createPageCursor(doc: Document, win: Window, options: PageCursor
   };
   doc.addEventListener("pointerdown", onPointerDown, true);
 
+  const enter = () => {
+    const list = items();
+    if (parked?.path === win.location.pathname && list.length > 0) {
+      show(list[Math.min(parked.index, list.length - 1)], list);
+    } else move(1);
+    parked = null;
+  };
+
+  const hide = () => {
+    leaveControl();
+    if (current && path === win.location.pathname) parked = { path, index: position(items()) };
+    clear();
+  };
+
   return {
     handleKey,
     place,
+    enter,
+    hide,
     sync() {
       if (!current) return;
       if (path !== win.location.pathname) return clear();

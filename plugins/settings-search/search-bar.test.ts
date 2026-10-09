@@ -198,16 +198,36 @@ describe("mountSettingsSearch", () => {
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Fade inactive splits");
   });
 
-  it("moves the page cursor with j and the settings page with l and h", async () => {
+  it("walks the page list with j and k until l moves into the page's settings", async () => {
     await mount();
+    const cursorText = () => document.querySelector("[data-settings-search-cursor]")?.textContent ?? null;
     press(document.body, "j");
-    expect(document.querySelector("[data-settings-search-cursor]")!.textContent).toContain("New branch prefix");
-    press(document.body, "l");
     expect(window.location.pathname).toBe("/settings/appearance");
-    press(document.body, "l");
+    expect(cursorText()).toBe("Appearance");
+    press(document.body, "j");
     expect(window.location.pathname).toBe("/settings/plugins/vim-mode");
-    press(document.body, "h");
+    press(document.body, "k");
     expect(window.location.pathname).toBe("/settings/appearance");
+
+    press(document.body, "l");
+    expect(cursorText()).toContain("Theme");
+    press(document.body, "j");
+    expect(cursorText()).toContain("Fade inactive splits");
+    expect(window.location.pathname).toBe("/settings/appearance");
+
+    press(document.body, "h");
+    expect(cursorText()).toBe("Appearance");
+    press(document.body, "l");
+    expect(cursorText()).toContain("Fade inactive splits");
+  });
+
+  it("jumps to the first or last page on gg and G", async () => {
+    await mount("/settings/appearance");
+    press(document.body, "G");
+    expect(window.location.pathname).toBe("/settings/archived");
+    press(document.body, "g");
+    press(document.body, "g");
+    expect(window.location.pathname).toBe("/settings");
   });
 
   it("leaves a text box on the page on Escape, even one vim-mode marked handled", async () => {
@@ -233,6 +253,7 @@ describe("mountSettingsSearch", () => {
     press(input(), "Enter");
     await flush();
     expect(document.querySelector("[data-settings-search-cursor]")!.textContent).toContain("Fade inactive splits");
+    // The search left the keys with the page's settings, not the page list.
     press(document.activeElement!, "k");
     expect(document.querySelector("[data-settings-search-cursor]")!.textContent).toContain("Theme");
   });

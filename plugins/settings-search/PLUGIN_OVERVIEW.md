@@ -5,17 +5,17 @@ Search and vim keys for bb's settings: a search bar at the top of the settings s
 - A "Search settings" box under Back to app. While it holds a query, the sidebar's page list gives way to matching settings from every settings page, plugin pages included, each with its page, section, and description.
 - Results match every word you type, best first: setting names that start with a word, then names that contain it, then page and section names, then descriptions.
 - Opening a result goes to its page, scrolls the setting into the middle of the screen, rings it briefly, and focuses its control, so Space flips a switch straight away.
-- j/k walk a cursor over the open page's settings. A list row with several buttons, like a project, is one stop. Enter uses the setting under the cursor (flips a switch, opens a menu or link, or puts you in a text field), and Esc comes back out to the keys.
+- j/k walk the sidebar's page list, opening each page as you land on it. l moves the cursor into the open page's settings, where j/k walk the settings instead, and h takes it back out to the page list. A list row with several buttons, like a project, is one stop. Enter uses the setting under the cursor (flips a switch, opens a menu or link, or puts you in a text field), and Esc comes back out to the keys.
 
 ## Keys
 
 | Key | Does |
 | --- | --- |
-| `j` / `k` | Next or previous setting on the page |
-| `gg` / `G` | First or last setting |
-| Ctrl-D / Ctrl-U | Half a page down or up |
-| `h` / `l` | Previous or next settings page |
-| Enter | Use the setting under the cursor |
+| `j` / `k` | Next or previous page in the sidebar, or setting on the page |
+| `l` / `h` | Move into the page's settings, or back out to the page list |
+| `gg` / `G` | First or last page, or setting |
+| Ctrl-D / Ctrl-U | Half the list down or up |
+| Enter | In the page list, move into the page; on the page, use the setting under the cursor |
 | `i` | Focus the setting's control, so Space flips a switch |
 | Esc | Leave a control or text box for the keys; then hide the cursor |
 | `/` | Focus the search box |

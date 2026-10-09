@@ -36,12 +36,10 @@ const marked = () => document.querySelector(`[${CURSOR_ATTRIBUTE}]`);
 const markedLabel = () => marked()?.querySelector("p, a")?.textContent ?? null;
 
 let cursor: PageCursor;
-let stepPage: ReturnType<typeof vi.fn<(delta: number) => void>>;
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
-  stepPage = vi.fn<(delta: number) => void>();
-  cursor = createPageCursor(document, window, { stepPage });
+  cursor = createPageCursor(document, window);
 });
 
 afterEach(() => {
@@ -147,11 +145,26 @@ describe("page cursor", () => {
     expect(press("Escape")).toBe(false);
   });
 
-  it("asks for the previous or next page on h and l", () => {
+  it("comes back to where it was hidden on the same page", () => {
     render(GENERAL);
-    press("h");
-    press("l");
-    expect(stepPage.mock.calls).toEqual([[-1], [1]]);
+    cursor.enter();
+    expect(markedLabel()).toBe("Navigate to threads");
+    press("j");
+    cursor.hide();
+    expect(marked()).toBeNull();
+    cursor.enter();
+    expect(markedLabel()).toBe("New branch prefix");
+
+    cursor.hide();
+    window.history.pushState(null, "", "/settings/appearance");
+    cursor.enter();
+    expect(markedLabel()).toBe("Navigate to threads");
+  });
+
+  it("leaves h and l alone", () => {
+    render(GENERAL);
+    expect(press("h")).toBe(false);
+    expect(press("l")).toBe(false);
   });
 
   it("takes Ctrl-D and Ctrl-U but no other Ctrl key", () => {
