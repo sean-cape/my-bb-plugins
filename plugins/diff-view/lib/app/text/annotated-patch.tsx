@@ -114,11 +114,14 @@ export function AnnotatedPatch({
     document.addEventListener("pointercancel", clear);
     return () => document.removeEventListener("pointercancel", clear);
   }, [dragging]);
+  // Read through a ref: a new options object makes Pierre re-render the whole file, and hosts pass a fresh callback each render.
+  const startComment = useRef(onStartComment);
+  startComment.current = onStartComment;
   const options = useMemo(() => {
     const finish = (selection: PierreSelection | null) => {
       setDragged(null);
       if (selection === null) return;
-      onStartComment(
+      startComment.current(
         selectionRange(rows, { line: selection.start, side: fromPierreSide(selection.side) }, { line: selection.end, side: fromPierreSide(selection.endSide ?? selection.side) }),
       );
     };
@@ -137,7 +140,7 @@ export function AnnotatedPatch({
       onLineSelectionChange: setDragged,
       onLineSelectionEnd: finish,
     };
-  }, [layout, themes, themeMode, onStartComment, rows]);
+  }, [layout, themes, themeMode, rows]);
   return (
     <div ref={hostRef}>
       <FileLevelComments

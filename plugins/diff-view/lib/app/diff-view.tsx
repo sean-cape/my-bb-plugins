@@ -19,7 +19,7 @@ import { useDiffResult } from "./use-diff-result";
 import { useFileMarks } from "./use-file-marks";
 import { useReviewKeys } from "./use-review-keys";
 import { DiffCommentsContext, type DiffCommentActions } from "./comments/context";
-import { threadIsOpen } from "./comments/threads";
+import { threadIsOpen, type DiffThread } from "./comments/threads";
 import { useComments } from "./comments/use-comments";
 import { useExplanations } from "./explanations/use-explanations";
 import { FileTreeSidebar } from "./file-tree/file-tree-sidebar";
@@ -65,6 +65,8 @@ export interface DiffViewProps {
 }
 
 const NO_FINDINGS: ReadonlyMap<string, PlacedFinding[]> = new Map();
+const NO_PLACED_FINDINGS: PlacedFinding[] = [];
+const NO_THREADS: DiffThread[] = [];
 /** How long a focus request (the "Review changes with the keyboard" command) stays good for a view that is still mounting. */
 const FOCUS_REQUEST_TTL_MS = 5_000;
 /** Approximate height of one diff line, for turning a page scroll into cursor rows. */
@@ -128,7 +130,13 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
   const semanticsByPath = useMemo(() => tourSemanticsByPath(tour), [tour]);
   const risk = useMemo(() => riskByPath(tour, allFindingsByPath), [tour, allFindingsByPath]);
   const changedRangesByPath = useMemo(() => new Map((delta?.files ?? []).map((file) => [file.path, file.ranges] as const)), [delta]);
-  const forPath = (path: string) => comments.threads.filter((thread) => thread.path === path);
+  // Stable per file, so a re-render of the view (scrolling moves the active file) leaves each file's diff untouched.
+  const threadsByPath = useMemo(() => {
+    const byPath = new Map<string, DiffThread[]>();
+    for (const thread of comments.threads) byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);
+    return byPath;
+  }, [comments.threads]);
+  const forPath = (path: string) => threadsByPath.get(path) ?? NO_THREADS;
 
   // Pierre mounts annotations into its slots after the render that adds them, too late for the box's autoFocus.
   const composerOpened = useRef(false);
@@ -352,7 +360,7 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
       onStartComment: (anchor) => startComment(file.path, anchor),
       onCancelComposer: () => setComposer(null),
       onSubmitComposer: (body, target) => (fileComposer === null ? Promise.resolve() : comments.addComment(file.path, fileComposer, body, target)),
-      findings: findingsByPath.get(file.path) ?? [],
+      findings: findingsByPath.get(file.path) ?? NO_PLACED_FINDINGS,
       onToggleFinding: toggleFinding,
       onEditFinding: editFinding,
     };
