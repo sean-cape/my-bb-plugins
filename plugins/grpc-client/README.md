@@ -19,7 +19,9 @@ a top-level field returns to the method list.
 with the caret at the start and `a`/`A` with it at the end, and Escape stops
 editing and puts the cursor back on that field. Editing an enum, bool, or
 oneof field opens its list: `j`/`k` move, `g`/`G` jump to the ends, Enter or
-Space picks, and Escape closes it unchanged. `dd` removes a
+Space picks, and Escape closes it unchanged. `/` filters the list as you type
+(every word must match); Enter picks the highlighted match, and Escape leaves
+the filter box with the matches still shown, so `j`/`k` keep going. `dd` removes a
 list item, map entry, or header, unsets a field that is set (an optional field
 goes back to unset), and otherwise empties the field's box.
 

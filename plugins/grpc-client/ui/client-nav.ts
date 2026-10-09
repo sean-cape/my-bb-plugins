@@ -71,7 +71,7 @@ export const KEY_HELP: readonly { keys: readonly string[]; action: string }[] = 
   { keys: ["o", "Enter"], action: "Open the method or call, toggle the section, or edit the field" },
   { keys: ["i", "I"], action: "Edit the field, with the caret at the start" },
   { keys: ["a", "A"], action: "Edit the field, with the caret at the end" },
-  { keys: ["j", "k", "Enter", "Esc"], action: "In an open enum or bool list: move, pick, or close it unchanged" },
+  { keys: ["j", "k", "/", "Enter", "Esc"], action: "In an open enum or bool list: move, filter, pick, or close it unchanged" },
   { keys: ["dd"], action: "Remove the list item or optional field, or empty the field" },
   { keys: ["/"], action: "Search methods (Enter opens the first match)" },
   { keys: ["f"], action: "Filter methods" },
