@@ -16,6 +16,7 @@
     { "name": "thread-header-project", "source": "./plugins/thread-header-project" },
     { "name": "history-keys", "source": "./plugins/history-keys" },
     { "name": "minimal-top-bar", "source": "./plugins/minimal-top-bar" },
-    { "name": "motion", "source": "./plugins/motion" }
+    { "name": "motion", "source": "./plugins/motion" },
+    { "name": "settings-search", "source": "./plugins/settings-search" }
   ]
 }

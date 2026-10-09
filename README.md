@@ -17,6 +17,7 @@ Personal [bb](https://getbb.app) plugins, one directory each under `plugins/`.
 | `history-keys` | Ctrl+O / Ctrl+I go back and forward |
 | `minimal-top-bar` | Hides top-bar buttons that have keyboard equivalents and the Commit button; centers the thread title, which opens the thread menu on click |
 | `double-shift-palette` | Double Shift opens the Project switcher (or bb's command palette) |
+| `settings-search` | A search bar in the settings sidebar that finds any setting on any settings page, plugin pages included, and jumps to it |
 | `motion` | Eased, subtle micro-interactions across bb's own UI, plus `bb-motion`, the motion system (tokens, keyframes, React helpers) the other plugins share |
 
 ## Install
