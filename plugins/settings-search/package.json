@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Settings search",
-    "description": "A search bar at the top of the settings sidebar that finds any setting on any settings page, plugin pages included, and takes you to it.",
+    "description": "Search and vim keys for settings: a search bar in the settings sidebar finds any setting on any page, plugin pages included, and j/k walk the open page's settings.",
     "branding": {
       "icon": "Search"
     },

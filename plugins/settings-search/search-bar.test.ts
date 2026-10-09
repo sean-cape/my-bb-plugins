@@ -38,7 +38,7 @@ function renderSettings(path = "/settings") {
         <a href="/settings/archived">Archived threads</a>
       </div>
     </div>
-    <main><div data-page-scroll-viewport>${PAGES[path]}</div></main>`;
+    <main><div data-app-content-shell><main><div data-page-scroll-viewport>${PAGES[path]}</div></main></div></main>`;
   // Stands in for bb's router: a link swaps the page in place.
   for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-sidebar] a")) {
     link.addEventListener("click", (event) => {
@@ -196,6 +196,35 @@ describe("mountSettingsSearch", () => {
     await flush();
     expect(window.location.pathname).toBe("/settings/appearance");
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Fade inactive splits");
+  });
+
+  it("moves the page cursor with j and the settings page with l and h", async () => {
+    await mount();
+    press(document.body, "j");
+    expect(document.querySelector("[data-settings-search-cursor]")!.textContent).toContain("New branch prefix");
+    press(document.body, "l");
+    expect(window.location.pathname).toBe("/settings/appearance");
+    press(document.body, "l");
+    expect(window.location.pathname).toBe("/settings/plugins/vim-mode");
+    press(document.body, "h");
+    expect(window.location.pathname).toBe("/settings/appearance");
+  });
+
+  it("leaves the keys to an open menu or dialog", async () => {
+    await mount();
+    document.body.insertAdjacentHTML("beforeend", '<div role="menu"><div role="menuitem" tabindex="0"></div></div>');
+    press(document.querySelector('[role="menuitem"]')!, "j");
+    expect(document.querySelector("[data-settings-search-cursor]")).toBeNull();
+  });
+
+  it("puts the page cursor on a setting opened from the search", async () => {
+    await mount();
+    type("fade");
+    press(input(), "Enter");
+    await flush();
+    expect(document.querySelector("[data-settings-search-cursor]")!.textContent).toContain("Fade inactive splits");
+    press(document.activeElement!, "k");
+    expect(document.querySelector("[data-settings-search-cursor]")!.textContent).toContain("Theme");
   });
 
   it("lists its keys on ?", async () => {

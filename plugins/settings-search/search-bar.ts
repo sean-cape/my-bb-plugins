@@ -1,4 +1,5 @@
 import { crawlPages, createFrameLoader, type PageLoader } from "./crawler.js";
+import { createPageCursor, CURSOR_ATTRIBUTE, PAGE_ROOT } from "./page-cursor.js";
 import {
   extractEntries,
   findEntryElement,
@@ -33,15 +34,22 @@ const NAV_LIST = ":scope > .overflow-auto";
 const SETTINGS_LINK = 'a[href^="/settings"]';
 // Lists of threads, not settings.
 const UNINDEXED_PAGES = new Set(["/settings/archived"]);
+// While one of these is open, the keys belong to it.
+const OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]:not([data-settings-search-results]), [data-radix-popper-content-wrapper]';
 const FOCUSABLE =
   'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="switch"], [tabindex]:not([tabindex="-1"])';
 
 const KEYS: [string, string][] = [
+  ["j  k", "Next or previous setting"],
+  ["gg  G", "First or last setting"],
+  ["Ctrl-D Ctrl-U", "Half a page down or up"],
+  ["h  l", "Previous or next settings page"],
+  ["Enter", "Use the setting: flip, open, or edit"],
+  ["i", "Focus the setting's control"],
+  ["Esc", "Back to the keys from a control"],
   ["/", "Search settings"],
   ["↑ ↓  Ctrl-N Ctrl-P", "Move through results"],
-  ["Enter", "Open the setting and focus it"],
   ["n  N", "Open the next or previous result"],
-  ["Esc", "Clear the search, then leave it"],
   ["?", "Show these keys"],
 ];
 
@@ -172,8 +180,19 @@ export const SETTINGS_SEARCH_CSS = `
   color: var(--ring);
   font-weight: 600;
 }
-[${HIT_ATTRIBUTE}] {
+[${HIT_ATTRIBUTE}],
+[${CURSOR_ATTRIBUTE}] {
   position: relative;
+}
+[${CURSOR_ATTRIBUTE}]::before {
+  content: "";
+  position: absolute;
+  inset: -6px -8px;
+  border-radius: 8px;
+  background: var(--state-hover);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ring) 45%, transparent);
+  pointer-events: none;
+  animation: bbm-fade-in var(--bbm-duration-fast) var(--bbm-ease-out) both;
 }
 /* A ring that fades in and out over the setting a search landed on, so the
    eye finds it after the page scrolls. */
@@ -257,7 +276,17 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
   let hit: Element | null = null;
   let frame = 0;
 
-  const allEntries = () => [...pages.map(pageEntry), ...pages.flatMap((page) => indexed.get(page.href) ?? [])];
+  const allEntries = () => {
+    const found = pages.flatMap((page) => indexed.get(page.href) ?? []);
+    // A heading every plugin page has, like Configuration, finds nothing useful.
+    const headingPages = new Map<string, Set<string>>();
+    for (const entry of found) {
+      if (entry.kind !== "heading") continue;
+      headingPages.set(entry.label, (headingPages.get(entry.label) ?? new Set()).add(entry.href));
+    }
+    const shared = (entry: SettingEntry) => entry.kind === "heading" && headingPages.get(entry.label)!.size > 1;
+    return [...pages.map(pageEntry), ...found.filter((entry) => !shared(entry))];
+  };
 
   const readPages = (nav: Element): SettingsPage[] =>
     [...nav.querySelectorAll<HTMLAnchorElement>(SETTINGS_LINK)]
@@ -380,6 +409,7 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
         const row = rowFor(element);
         row.scrollIntoView({ block: "center" });
         flash(row);
+        cursor.place(row);
         if (focus && entry.kind === "setting") {
           row.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true });
         }
@@ -446,11 +476,38 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     event.stopPropagation();
   };
 
+  const stepPage = (delta: number) => {
+    if (!sidebar) return;
+    const links = [...sidebar.querySelectorAll<HTMLAnchorElement>(`[${NAV_ATTRIBUTE}] ${SETTINGS_LINK}`)];
+    const path = win.location.pathname;
+    const here = links.reduce<{ at: number; length: number }>(
+      (best, link, at) => {
+        const href = link.getAttribute("href")!;
+        const matches = path === href || path.startsWith(`${href}/`);
+        return matches && href.length > best.length ? { at, length: href.length } : best;
+      },
+      { at: -1, length: -1 },
+    ).at;
+    links[Math.max(0, Math.min(links.length - 1, here + delta))]?.click();
+  };
+
+  const cursor = createPageCursor(doc, win, { stepPage });
+
   const onDocumentKey = (event: KeyboardEvent) => {
     if (!input || event.defaultPrevented || event.isComposing) return;
-    if (event.metaKey || event.altKey || event.ctrlKey || isEditable(event.target)) return;
+    if (event.metaKey || event.altKey) return;
+    if (isEditable(event.target)) {
+      const target = event.target as HTMLElement;
+      if (event.key === "Escape" && target !== input && target.closest(PAGE_ROOT)) target.blur();
+      return;
+    }
     // Keyboard settings record a shortcut from the next key pressed anywhere.
     if (doc.querySelector('button[aria-pressed="true"][aria-label^="Record shortcut"]')) return;
+    if (doc.querySelector(OVERLAY)) return;
+    if (event.ctrlKey) {
+      if (cursor.handleKey(event)) event.preventDefault();
+      return;
+    }
     const hasResults = input.value.trim() !== "" && results.length > 0;
     if (event.key === "/") {
       input.focus();
@@ -460,7 +517,7 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     else if ((event.key === "n" || event.key === "N") && hasResults) {
       const delta = event.key === "n" ? 1 : -1;
       open((selected + delta + results.length) % results.length, true);
-    } else return;
+    } else if (!cursor.handleKey(event)) return;
     event.preventDefault();
   };
 
@@ -550,6 +607,7 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     if (sidebar && (target !== sidebar || !root?.isConnected)) detach();
     if (target && !sidebar) attach(target);
     if (!sidebar) return;
+    cursor.sync();
     const nav = sidebar.querySelector(NAV_LIST);
     nav?.setAttribute(NAV_ATTRIBUTE, "");
     if (nav) {
@@ -574,6 +632,7 @@ export function mountSettingsSearch(doc: Document, win: Window, options: Setting
     if (frame !== 0) win.cancelAnimationFrame(frame);
     doc.removeEventListener("keydown", onDocumentKey);
     detach();
+    cursor.dispose();
     hit?.removeAttribute(HIT_ATTRIBUTE);
     style.remove();
   };
