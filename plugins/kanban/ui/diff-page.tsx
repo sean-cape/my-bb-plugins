@@ -144,8 +144,8 @@ function KanbanSubmitBar({ subjectId, pending, canApprove, onOpenThread, onSubmi
         </>
       ) : null}
       {githubDrafts.length > 0 ? (
-        <span className={cn("inline-flex items-center gap-3", local.length > 0 && "ml-auto")}>
-          <span className="text-sm">
+        <span className={cn("flex flex-wrap items-center gap-x-3 gap-y-1.5", local.length > 0 && "ml-auto")}>
+          <span className="whitespace-nowrap text-sm">
             <span key={draftsPop.key} onAnimationEnd={draftsPop.onAnimationEnd} className={cn("inline-block font-medium tabular-nums", draftsPop.className)}>
               {githubDrafts.length}
             </span>{" "}
