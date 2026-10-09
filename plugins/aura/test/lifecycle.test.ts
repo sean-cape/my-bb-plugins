@@ -22,6 +22,8 @@ test("applies scoped backgrounds, disables cleanly and ignores a late fetch afte
     assert.match(document.head.textContent!, /data-root-compose-mobile-recents.*data-overflow-fade.*display:none/s);
     assert.match(document.head.textContent!, /:root:not\(\.dark\).*data-root-compose-mobile-recents.*background:color-mix\(in oklab,var\(--background\) 94%,transparent\)/s);
     assert.match(document.head.textContent!, /\.dark.*data-root-compose-mobile-recents.*background:color-mix\(in oklab,var\(--background\) 30%,transparent\)/s);
+    assert.match(document.head.textContent!, /\.thread-scrollbar > div > \.mx-auto::before.*background-color:color-mix\(in oklab,var\(--background\) 75%,transparent\);\s*-webkit-backdrop-filter:blur\(12px\); backdrop-filter:blur\(12px\)/s);
+    assert.ok(!/\.mx-auto \{\s*background-color:var\(--background\)/.test(document.head.textContent!), "The reading column is smoky glass, not a solid paint");
     assert.ok(!document.head.textContent!.includes("aside"));
     assert.equal(document.querySelectorAll('.aura-capy-layer').length, 2);
     notifyChange({ settings: { ...defaults, newThreadOnly: true }, image: null, slots: [], activeSlot: null });

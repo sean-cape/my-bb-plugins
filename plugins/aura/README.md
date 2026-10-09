@@ -76,9 +76,10 @@ never image bytes.
 
 ## Reading and composing
 
-Existing conversations have an opaque, theme-colored reading column. Background
-images remain undimmed in the side margins all the way to the bottom, including
-beside the composer, never directly behind message text.
+Existing conversations have a smoky, translucent reading column: the theme
+background at 75% over a 12px blur of the wallpaper, like the Kanban board's
+columns. Background images remain undimmed in the side margins all the way to
+the bottom, including beside the composer.
 Wide Markdown tables get an opaque backing across their entire width, including
 where they extend beyond the normal reading column.
 Half-wallpaper mode applies only to the New thread screen.

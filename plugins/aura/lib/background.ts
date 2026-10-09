@@ -101,7 +101,7 @@ export const READING_SURFACE = `
   background-color:transparent;
 }
 [id="thread-detail-timeline-panel"] .thread-scrollbar > div > .mx-auto {
-  background-color:var(--background); box-shadow:0 0 0 1px var(--border);
+  position:relative; box-shadow:0 0 0 1px var(--border),0 1px 3px 0 rgb(0 0 0 / .1),0 1px 2px -1px rgb(0 0 0 / .1);
 }
 /* Continue the wallpaper beside the sticky composer instead of covering
    the bottom of the whole pane with the host's full-width footer paint. */
@@ -109,10 +109,20 @@ export const READING_SURFACE = `
   background-color:transparent;
 }
 [id="thread-detail-timeline-panel"] [data-scroll-footer] > .bg-background > .mx-auto {
-  background-color:var(--background);
+  position:relative;
 }
+/* The smoky glass of the Kanban board's columns. It lives on a pseudo-element
+   because backdrop-filter on the column itself would make it a stacking
+   context and the containing block for fixed-position descendants. */
+[id="thread-detail-timeline-panel"] .thread-scrollbar > div > .mx-auto::before,
+[id="thread-detail-timeline-panel"] [data-scroll-footer] > .bg-background > .mx-auto::before {
+  content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background-color:color-mix(in oklab,var(--background) 75%,transparent);
+  -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+}
+/* Its gradient ends in solid --background, a dark band on the glass. */
 [id="thread-detail-timeline-panel"] [data-scroll-footer] > .bg-background:has(> .mx-auto) > [data-overflow-fade] {
-  left:50%; right:auto; width:min(760px,100%); transform:translateX(-50%);
+  display:none;
 }
 /* BB intentionally lets wide Markdown tables extend beyond the text column.
    Paint the whole scrollable table surface, including its overflow area. */

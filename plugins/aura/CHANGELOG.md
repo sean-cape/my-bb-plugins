@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.4
+
+- Give the conversation column and the composer beside it the Kanban board's smoky glass: the theme background at 75% over a blurred wallpaper.
+
 ## 0.2.3
 
 - Fill any element marked `data-aura-surface` with the full wallpaper, so plugin pages (the Kanban board) can share the thread background.
