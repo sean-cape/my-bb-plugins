@@ -148,17 +148,25 @@ function RailButton({
   );
 }
 
+// After bb's shortcut pill on its navigation and thread rows, but opaque and smaller so it reads over an icon.
+const SHORTCUT_PILL_CLASS =
+  "pointer-events-none absolute -bottom-1 -right-1.5 inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-sm border border-border bg-popover px-1 py-0.5 font-sans text-[10px] font-normal leading-none tabular-nums text-muted-foreground shadow-sm";
+
 function ItemButton({
   item,
   slotLabel,
+  showShortcut,
   active,
   onActivate,
 }: {
   item: ExperimentalSidebarNavigationItem;
   slotLabel: string | null;
+  /** True while the shortcut modifier is held, when bb's rows reveal their shortcuts. */
+  showShortcut: boolean;
   active: boolean;
   onActivate: (openInSplit: boolean) => void;
 }) {
+  const heldLabel = slotLabel ?? item.shortcut?.label ?? null;
   const Accessory = item.experimental_Accessory;
   const shortcuts = [item.shortcut?.label, slotLabel].filter(
     (shortcut): shortcut is string => Boolean(shortcut),
@@ -176,6 +184,11 @@ function ItemButton({
         <span className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 origin-top-right scale-[0.8] items-center justify-center overflow-hidden rounded-full bg-sidebar-accent px-0.5 text-[10px] leading-none text-sidebar-foreground">
           <Accessory />
         </span>
+      ) : null}
+      {showShortcut && heldLabel !== null ? (
+        <kbd aria-hidden className={cx(SHORTCUT_PILL_CLASS, enter.fade, speed.fast)}>
+          {heldLabel}
+        </kbd>
       ) : null}
     </RailButton>
   );
@@ -321,7 +334,8 @@ function ActiveIndicator({ activeIndex }: { activeIndex: number }) {
 }
 
 export function SlimNavigation() {
-  const { items, activeItemId, actions } = experimental_useSidebarNavigation();
+  const { items, activeItemId, isShortcutModifierHeld, actions } =
+    experimental_useSidebarNavigation();
   const visible = items.filter((item) => item.isVisible);
   const hidden = items.filter((item) => !item.isVisible);
   const isActive = (item: ExperimentalSidebarNavigationItem) =>
@@ -352,6 +366,7 @@ export function SlimNavigation() {
           key={item.id}
           item={item}
           slotLabel={railSlotLabel(index, navigator.platform)}
+          showShortcut={isShortcutModifierHeld}
           active={isActive(item)}
           onActivate={(openInSplit) =>
             actions.activate(item.id, { openInSplit })
