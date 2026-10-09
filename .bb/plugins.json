@@ -17,6 +17,7 @@
     { "name": "history-keys", "source": "./plugins/history-keys" },
     { "name": "minimal-top-bar", "source": "./plugins/minimal-top-bar" },
     { "name": "motion", "source": "./plugins/motion" },
+    { "name": "aura", "source": "./plugins/aura" },
     { "name": "settings-search", "source": "./plugins/settings-search" }
   ]
 }

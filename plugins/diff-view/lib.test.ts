@@ -12,6 +12,7 @@ import { navRows, patchRows, selectionRange } from "./lib/app/text/patch-rows";
 import { keyToken, parseKeys } from "./lib/app/keys/keymap";
 import { anchorsAtCursor, hunkSpanAt, moveChange, moveFile, moveHunk, moveLines, nextAnchor, visualRange, type Cursor, type NavFile } from "./lib/app/keys/nav";
 import { rankFiles } from "./lib/app/keys/rank-files";
+import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
 import { checkedLineRange, locationLabel, longLineLabel, shortLineLabel } from "./lib/line-range";
 import { splitUnifiedDiff } from "./lib/server";
 import type { DiffComment, DiffFile, Finding, GithubComment, Review, StructuralDiff } from "./lib/types";
@@ -508,6 +509,14 @@ describe("review keys", () => {
     expect(moveLines(files, at("a.ts", 12), 99)).toEqual(at("c.ts", null));
   });
 
+  it("steps back through loading and collapsed files to the last line of the file before, stopping at the top", () => {
+    expect(moveLines(files, at("d.ts", null), -1)).toEqual(at("c.ts", null));
+    expect(moveLines(files, at("c.ts", null), -1)).toEqual(at("b.ts", null));
+    expect(moveLines(files, at("b.ts", null), -1)).toEqual(at("a.ts", 12));
+    expect(moveLines(files, at("d.ts", null), -3)).toEqual(at("a.ts", 12));
+    expect(moveLines(files, at("d.ts", null), -99)).toEqual(at("a.ts", null));
+  });
+
   it("jumps by change, hunk and file", () => {
     expect(moveChange(files, at("a.ts", null), 1, 1)).toEqual({ ...at("a.ts", 2), side: "LEFT" });
     expect(moveChange(files, at("a.ts", 2), 1, 1)).toEqual(at("a.ts", 11));
@@ -562,6 +571,8 @@ describe("review keys", () => {
     expect(parseKeys(["3"])).toEqual({ status: "pending" });
     expect(parseKeys(["g", "g"])).toMatchObject({ status: "command", command: { kind: "top" } });
     expect(parseKeys(["F"])).toMatchObject({ status: "command", command: { kind: "findingFilter" } });
+    expect(parseKeys(["t"])).toMatchObject({ status: "command", command: { kind: "fileTree" } });
+    expect(parseKeys(["T"])).toMatchObject({ status: "command", command: { kind: "target" } });
     expect(parseKeys(["]", "c"])).toMatchObject({ status: "command", command: { kind: "change", direction: 1 } });
     expect(parseKeys(["d", "d"])).toMatchObject({ status: "command", command: { kind: "delete" } });
     expect(parseKeys(["g", "j"])).toEqual({ status: "none" });
@@ -597,5 +608,45 @@ describe("threadKeyActions", () => {
     expect(threadKeyActions(fileLevel!, true).moveTo).toBeNull();
     const [answered] = buildDiffThreads([local({ id: "r1", applyId: "a1" }), local({ id: "r2", inReplyTo: "r1", author: "agent", authorThreadId: "thr_x", createdAt: 5 })], []);
     expect(threadKeyActions(answered!, true)).toMatchObject({ ownUnsent: null, moveTo: null, agentThread: "thr_x" });
+  });
+});
+
+describe("h into the file list", () => {
+  const rows = navRows(patchRows(["@@ -1,2 +1,3 @@", " a", "+b", " c", ""].join("\n")), "split");
+  const files: NavFile[] = [{ path: "a.ts", collapsed: false, rows }];
+  const run = (cursor: Cursor) => {
+    let state = { cursor, visual: null, pending: "", focused: null } as ReturnType<ReviewEnv["keys"]["get"]>;
+    const calls: string[] = [];
+    const env = {
+      keys: { get: () => state, set: (patch: Partial<typeof state>) => (state = { ...state, ...patch }), models: new Map([["a.ts", { rows, cutToHunk: false, element: () => null }]]), threads: new Map(), findings: new Map() },
+      files,
+      threads: [],
+      findings: [],
+      onScreen: () => true,
+      seat: () => cursor,
+      reveal: () => {},
+      focusFileTree: () => {
+        calls.push("tree");
+        return true;
+      },
+      notify: (message: string) => calls.push(message),
+    } as unknown as ReviewEnv;
+    runReviewCommand({ kind: "side", side: "LEFT" }, 1, env);
+    return { cursor: state.cursor, calls };
+  };
+  const at = (side: "LEFT" | "RIGHT", line: number | null, want: "LEFT" | "RIGHT" = side): Cursor => ({ path: "a.ts", side, line, want });
+
+  it("moves to the old side first, then into the list", () => {
+    expect(run(at("RIGHT", 1))).toEqual({ cursor: at("LEFT", 1), calls: [] });
+    expect(run(at("LEFT", 1)).calls).toEqual(["tree"]);
+  });
+
+  it("goes straight to the list from a file header", () => {
+    expect(run(at("RIGHT", null)).calls).toEqual(["tree"]);
+  });
+
+  it("on an added line, the first h only wants the old side and the second enters the list", () => {
+    expect(run(at("RIGHT", 2))).toEqual({ cursor: at("RIGHT", 2, "LEFT"), calls: [] });
+    expect(run(at("RIGHT", 2, "LEFT")).calls).toEqual(["tree"]);
   });
 });

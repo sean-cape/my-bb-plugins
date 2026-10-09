@@ -26,6 +26,8 @@ export interface DiffPreferences {
   layout: "unified" | "split";
   /** Which review findings show inline in the diff. */
   findingFilter: FindingFilter;
+  /** The file list beside the diff, where the view is wide enough for one. */
+  fileTreeOpen: boolean;
 }
 
 function createStore<T>(initial: T) {
@@ -47,11 +49,13 @@ function createStore<T>(initial: T) {
 const preferences = createStore<DiffPreferences>({
   layout: "split",
   findingFilter: parseFindingFilter(readPreference("findingFilter"), readPreference("showFindings")),
+  fileTreeOpen: readPreference("fileTreeOpen") !== "false",
 });
 
 export function setDiffPreferences(patch: Partial<DiffPreferences>): void {
   preferences.set({ ...preferences.get(), ...patch });
   if (patch.findingFilter !== undefined) writePreference("findingFilter", patch.findingFilter);
+  if (patch.fileTreeOpen !== undefined) writePreference("fileTreeOpen", String(patch.fileTreeOpen));
 }
 
 export function useDiffPreferences(): DiffPreferences {

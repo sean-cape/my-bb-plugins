@@ -1,5 +1,5 @@
 import type { Ticket } from "../../shared/board";
-import type { CommentApply, DiffComment, DiffCommentTarget, PrComment } from "../../shared/comments";
+import type { CommentApply, DiffComment, DiffCommentTarget, PrComment, ReviewEvent } from "../../shared/comments";
 import type { KanbanContext } from "../context";
 import { rowToDiffComment, type DiffCommentRow } from "../db/rows";
 import type { Changes } from "../diff/changes";
@@ -137,7 +137,7 @@ export function createDiffComments(
    * Post GitHub drafts: new threads as one review (inline where a line is given, otherwise in the review body), then
    * replies into their threads. Each draft records the synced comment it became so the board shows it once.
    */
-  async function postDiffCommentsToGithub(ticket: Ticket, drafts: DiffComment[]): Promise<{ posted: number; url: string | null }> {
+  async function postDiffCommentsToGithub(ticket: Ticket, drafts: DiffComment[], event: ReviewEvent): Promise<{ posted: number; url: string | null }> {
     if (ticket.pr === null || !ticket.canPostToGithub) throw new Error("Only PR cards can post to GitHub");
     const auth = await resolveToken(settings);
     if (auth === null) throw new Error("No GitHub token configured.");
@@ -156,7 +156,7 @@ export function createDiffComments(
       let inlinePosted = inline.length > 0;
       try {
         review = await githubPost(path, auth.token, {
-          event: "COMMENT",
+          event,
           ...(commitId === null ? {} : { commit_id: commitId }),
           body: general.length === 0 ? "" : summarize(general),
           comments: inline.map((comment) => ({
@@ -170,7 +170,7 @@ export function createDiffComments(
       } catch (error) {
         // A line outside the diff makes GitHub reject the whole review; fall back to one body-only review.
         if (!(error instanceof GithubHttpError) || error.status !== 422) throw error;
-        review = await githubPost(path, auth.token, { event: "COMMENT", body: summarize(topLevel) });
+        review = await githubPost(path, auth.token, { event, body: summarize(topLevel) });
         inlinePosted = false;
       }
       // Mark first so nothing reposts these if the read-back below fails or the server stops.
@@ -215,6 +215,14 @@ export function createDiffComments(
       } catch (error) {
         failed.push(`${locationLabel(reply.path, rowRange(reply))}: ${errorMessage(error)}`);
       }
+    }
+    // Replies alone post no review, so an approval or change request goes up as its own once they are in.
+    if (topLevel.length === 0 && event !== "COMMENT" && failed.length === 0) {
+      const review = await githubPost<{ html_url: string }>(`/repos/${repo}/pulls/${number}/reviews`, auth.token, {
+        event,
+        ...(event === "REQUEST_CHANGES" ? { body: "Requesting changes; see my replies in the review threads." } : {}),
+      });
+      url = review.html_url;
     }
     const row = stmts.byId.get(ticket.id);
     if (repliesPosted > 0 && row !== undefined) {
@@ -324,12 +332,14 @@ export function createDiffComments(
   async function submitDiffComments({
     ticketId,
     postToGithub,
+    reviewEvent,
     address,
     autoApprove,
     push,
   }: {
     ticketId: string;
     postToGithub: boolean;
+    reviewEvent: ReviewEvent;
     address: boolean;
     autoApprove: boolean;
     push: boolean;
@@ -345,7 +355,8 @@ export function createDiffComments(
     if (drafts.length > 0) {
       postingDrafts.add(ticket.id);
       try {
-        const result = await postDiffCommentsToGithub(ticket, drafts);
+        if (reviewEvent !== "COMMENT" && ticket.pr?.role === "authored") throw new Error("GitHub doesn't let you approve or request changes on your own pull request");
+        const result = await postDiffCommentsToGithub(ticket, drafts, reviewEvent);
         posted = result.posted;
         postedUrl = result.url;
       } finally {

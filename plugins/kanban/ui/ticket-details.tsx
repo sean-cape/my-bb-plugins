@@ -19,6 +19,9 @@ import { CommentsPanel } from "./comments-panel";
 import { SubtasksGroup } from "./subtasks";
 import { type RunAction, usePendingAction } from "./actions";
 
+/** The header line truncates, which clips an outline to a sliver at the link's end, so focus draws inside the link. */
+const LINE_LINK = "rounded-sm hover:text-foreground hover:underline focus-visible:bg-state-hover focus-visible:text-foreground focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+
 function TicketDetails({
   ticket,
   columns,
@@ -136,7 +139,7 @@ function TicketDetails({
           <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={`${kindLabel} ${ticket.id} · ${columnName}`}>
             {ticket.pr !== null ? (
               <>
-                <ExternalLink href={ticket.pr.url} title={`Open ${ticket.pr.repo}#${ticket.pr.number} on GitHub`} className="hover:text-foreground hover:underline">
+                <ExternalLink href={ticket.pr.url} title={`Open ${ticket.pr.repo}#${ticket.pr.number} on GitHub`} className={LINE_LINK}>
                   {ticket.pr.repo.split("/")[1]}#{ticket.pr.number}
                 </ExternalLink>
                 {` · ${ticket.pr.state}`}
@@ -144,7 +147,7 @@ function TicketDetails({
             ) : null}
             {ticket.jira !== null ? (
               <>
-                <ExternalLink href={ticket.jira.url} title={`Open ${ticket.jira.key} in Jira`} className="hover:text-foreground hover:underline">
+                <ExternalLink href={ticket.jira.url} title={`Open ${ticket.jira.key} in Jira`} className={LINE_LINK}>
                   {ticket.jira.key}
                 </ExternalLink>
                 {` · ${ticket.jira.status || "unknown"}`}

@@ -3,6 +3,7 @@ import type { DragEvent } from "react";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { PRESS, STAGGER, enter, stagger, type Arrival, useEntrance, usePopOnChange } from "bb-motion";
 import type { Column, Ticket } from "../shared/board";
+import { COLUMN } from "../shared/columns";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,7 @@ export function ColumnView({
   threads,
   hiddenTags,
   today,
+  now,
   isDone,
   draggingId,
   dropTarget,
@@ -50,6 +52,7 @@ export function ColumnView({
   threads: ReadonlyMap<string, PluginSidebarThread>;
   hiddenTags: ReadonlySet<string>;
   today: string;
+  now: number;
   isDone: boolean;
   draggingId: string | null;
   dropTarget: DropTarget | null;
@@ -91,14 +94,15 @@ export function ColumnView({
       onDragOver={(event) => onDragOver({ columnId: column.id, index: indexFromPointer(event) }, event)}
       onDrop={(event) => onDrop({ columnId: column.id, index: indexFromPointer(event) }, event)}
       className={cn(
-        "flex w-72 shrink-0 flex-col rounded-lg border border-border bg-muted/30",
+        "flex w-72 shrink-0 flex-col rounded-lg border border-border bg-background/75 shadow-sm backdrop-blur-md",
         entrance.className,
         isTarget && draggingId !== null && "border-primary/50 bg-primary/5",
       )}
     >
       <header className="flex items-center gap-2 px-3 py-2">
+        <span aria-hidden className={cn("size-2 shrink-0 rounded-full", COLUMN_ACCENT[column.id] ?? "bg-muted-foreground/40")} />
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{column.name}</h2>
-        <span key={countPop.key} onAnimationEnd={countPop.onAnimationEnd} className={cn("text-xs tabular-nums text-muted-foreground", countPop.className)}>
+        <span key={countPop.key} onAnimationEnd={countPop.onAnimationEnd} className={cn("rounded-full bg-muted px-1.5 text-[11px] font-medium leading-5 tabular-nums text-muted-foreground", countPop.className)}>
           {tickets.length}
         </span>
         <Button
@@ -106,13 +110,15 @@ export function ColumnView({
           size="icon"
           className="size-6 text-muted-foreground"
           aria-label={`Add card to ${column.name}`}
+          data-kanban-column-add=""
+          data-column-id={column.id}
           onClick={onAdd}
         >
           <Icon name="Plus" className="size-3.5" />
         </Button>
       </header>
       {/* pt-0.5 leaves room for a hovered card's lift so the top card isn't clipped. */}
-      <div ref={listRef} className="flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2 pt-0.5">
+      <div ref={listRef} data-kanban-column-list="" className="flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2 pt-0.5">
         {tickets.map((ticket, index) => (
           <div key={ticket.id} className="flex flex-col gap-2">
             {isTarget && dropTarget.index === index && draggingId !== ticket.id ? (
@@ -128,6 +134,8 @@ export function ColumnView({
               thread={ticket.threadId === null ? null : threads.get(ticket.threadId)}
               hiddenTags={hiddenTags}
               today={today}
+              now={now}
+              columnName={column.name}
               isDone={isDone}
               isDragging={draggingId === ticket.id}
               onOpen={(viaKeyboard) => onOpen(ticket, viaKeyboard)}
@@ -162,3 +170,11 @@ export function ColumnView({
     </section>
   );
 }
+
+const COLUMN_ACCENT: Record<string, string> = {
+  [COLUMN.backlog]: "bg-muted-foreground/40",
+  [COLUMN.todo]: "bg-sky-500",
+  [COLUMN.inProgress]: "bg-primary",
+  [COLUMN.review]: "bg-amber-500",
+  [COLUMN.done]: "bg-emerald-500",
+};

@@ -3,6 +3,8 @@ const TOP_BAR_HEIGHT_PX = 50;
 const CUSTOMIZE_WIDTH_PX = 280;
 const FOOTER_INSET_PX = 10;
 const FOOTER_MEASURE_WIDTH_PX = 400;
+const FOOTER_ICON_PX = 32;
+const FOOTER_GLYPH_PX = 16;
 const HEADER_GAP_PX = 20;
 // Phone-width windows keep bb's stock chrome.
 const WIDE_VIEWPORT = "(min-width: 768px)";
@@ -98,6 +100,35 @@ export const SLIM_SIDEBAR_CSS = `
   /* Settings and Mobile render as links rather than buttons. */
   ${SIDEBAR} [data-sidebar="footer"] :is(a, button) {
     pointer-events: auto;
+  }
+  /* The update badges are labelled pills sized for the full sidebar. In the
+     rail they stack as icon-only circles in the footer's icon column, and the
+     tooltip still names the update. */
+  ${SIDEBAR} [data-sidebar="footer"] :has(> [data-testid^="sidebar-updates-badge"]) {
+    flex-direction: column;
+    max-width: none;
+  }
+  ${SIDEBAR} [data-testid^="sidebar-updates-badge"] {
+    width: ${FOOTER_ICON_PX}px;
+    height: ${FOOTER_ICON_PX}px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    font-size: 0;
+  }
+  ${SIDEBAR} [data-testid^="sidebar-updates-badge"] > svg {
+    width: ${FOOTER_GLYPH_PX}px;
+    height: ${FOOTER_GLYPH_PX}px;
+  }
+  /* The provider badge shows which agents need updating, or its spinner while
+     one installs. */
+  ${SIDEBAR} [data-testid="sidebar-updates-badge-providers"] > svg:not(.animate-spin),
+  ${SIDEBAR} [data-testid="sidebar-updates-badge-providers"]:has(> svg.animate-spin) > span {
+    display: none;
+  }
+  ${SIDEBAR} [data-testid="sidebar-updates-badge-providers"] > span {
+    flex-wrap: wrap;
+    justify-content: center;
   }
   /* bb nudges desktop header content 2px below the row's center; without it
      the title lines up with the macOS window buttons, which sit on the row's

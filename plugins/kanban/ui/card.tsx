@@ -4,9 +4,10 @@ import { LIFT, OPACITY_TRANSITION, POP, PRESS, STAGGER, enter, stagger, type Arr
 import type { Ticket } from "../shared/board";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { dueStatus, shortSha, threadStatusText } from "./format";
+import { cardSnippet, dueStatus, shortAge, threadStatusText } from "./format";
 import { ExternalLink, ThreadStatusDot } from "./primitives";
 import { TagBadges } from "./tags";
+import { ReviewBadge } from "./badges";
 
 export function CardView({
   ticket,
@@ -17,6 +18,8 @@ export function CardView({
   thread,
   hiddenTags,
   today,
+  now,
+  columnName,
   isDone,
   isDragging,
   onOpen,
@@ -38,6 +41,8 @@ export function CardView({
   hiddenTags: ReadonlySet<string>;
   /** The viewer's local day, `YYYY-MM-DD`, that due dates are measured against. */
   today: string;
+  now: number;
+  columnName: string;
   isDone: boolean;
   isDragging: boolean;
   /** `viaKeyboard` moves focus into the opened card. */
@@ -57,6 +62,8 @@ export function CardView({
   const status = ticket.threadId === null ? null : threadStatusText(thread);
   const loud = status === "working" || status === "needs you" || status === "error" || status === "provisioning";
   const shownTags = ownTags.slice(0, CARD_MAX_TAGS);
+  const snippet = cardSnippet(ticket.description);
+  const edge = status === "working" || status === "provisioning" ? "busy" : status === "needs you" ? "input" : status === "error" ? "error" : null;
   const stopping = (action: () => void) => (event: { stopPropagation: () => void }) => {
     event.stopPropagation();
     action();
@@ -86,12 +93,17 @@ export function CardView({
         "group relative flex cursor-grab flex-col gap-2 rounded-md border border-border bg-card px-3 py-2.5 text-left text-sm shadow-sm hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring active:cursor-grabbing",
         // The drag source dims instantly and stays put; lift and press would fight the drag image.
         isDragging ? "opacity-40" : cn(LIFT, PRESS),
+        isDone && !isDragging && "opacity-70 hover:opacity-100 focus-visible:opacity-100",
         settling ? POP : entrance.className,
       )}
     >
-      <span className="line-clamp-2 break-words font-medium leading-5">{ticket.title}</span>
-      {shownTags.length > 0 ? (
+      {edge !== null ? <span aria-hidden className={cn("absolute inset-y-2 left-0 w-0.5 rounded-full", STATUS_EDGE[edge])} /> : null}
+      <span className="line-clamp-3 break-words font-medium leading-5">{ticket.title}</span>
+      {snippet !== "" ? <p className="-mt-1 line-clamp-2 break-words text-xs leading-4 text-muted-foreground">{snippet}</p> : null}
+      <CardSource ticket={ticket} />
+      {review !== null || shownTags.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1">
+          <ReviewBadge ticket={ticket} />
           <TagBadges tags={shownTags} />
           {ownTags.length > shownTags.length ? (
             <span className="text-[11px] text-muted-foreground" title={ownTags.slice(CARD_MAX_TAGS).join(", ")}>
@@ -106,22 +118,21 @@ export function CardView({
             <ThreadStatusDot thread={thread} />
             {loud ? <span className={cn(status === "error" && "text-destructive", status === "needs you" && "text-amber-700 dark:text-amber-300")}>{status}</span> : null}
           </span>
-        ) : (
-          <span className="size-2 shrink-0 rounded-full border border-border" title="No thread yet" />
-        )}
-        <CardIdentity ticket={ticket} />
+        ) : null}
         <span className="ml-auto flex shrink-0 items-center gap-2.5">
           {ticket.dueDate !== null ? <CardDueDate dueDate={ticket.dueDate} today={today} isDone={isDone} /> : null}
           {ticket.children.total > 0 ? (
             <CardCounter icon="ListTodo" count={`${ticket.children.done}/${ticket.children.total}`} tone={ticket.children.done === ticket.children.total ? "good" : "quiet"} title={`${ticket.children.done} of ${ticket.children.total} subtasks done`} />
           ) : null}
-          <CardReviewIndicator ticket={ticket} />
           {ticket.comments !== null && ticket.comments.open > 0 ? (
             <CardCounter icon="MessageSquare" count={ticket.comments.open} tone="attention" title={`${ticket.comments.open} PR comment${ticket.comments.open === 1 ? "" : "s"} not yet addressed`} />
           ) : null}
           {ticket.pendingDiffComments > 0 ? (
             <CardCounter icon="kanban-diff" count={ticket.pendingDiffComments} tone="attention" title={`${ticket.pendingDiffComments} diff comment${ticket.pendingDiffComments === 1 ? "" : "s"} not sent yet`} />
           ) : null}
+          <span className="tabular-nums" title={`In ${columnName} since ${new Date(ticket.columnEnteredAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}>
+            {shortAge(ticket.columnEnteredAt, now)}
+          </span>
         </span>
         {/* Hover actions sit over the counters instead of reserving room for themselves. */}
         <span className={`pointer-events-none absolute inset-y-0 right-0 flex items-center gap-0.5 bg-card pl-3 opacity-0 ${OPACITY_TRANSITION} [mask-image:linear-gradient(to_right,transparent,black_12px)] focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100`}>
@@ -154,12 +165,11 @@ export function CardView({
 
 const CARD_MAX_TAGS = 3;
 
-const COUNTER_TONE: Record<"quiet" | "attention" | "danger" | "good" | "busy", string> = {
+const COUNTER_TONE: Record<"quiet" | "attention" | "danger" | "good", string> = {
   quiet: "",
   attention: "text-amber-700 dark:text-amber-300",
   danger: "text-destructive",
   good: "text-emerald-700 dark:text-emerald-300",
-  busy: "text-primary animate-pulse",
 };
 
 /** A footer stat: an icon and a number, coloured only when it asks for attention. */
@@ -180,51 +190,51 @@ function CardDueDate({ dueDate, today, isDone }: { dueDate: string; today: strin
   return <CardCounter icon="kanban-calendar" count={due.label} tone={tone} title={due.title} />;
 }
 
-/** Where the card comes from, as quiet text: `widgets #7 · draft`, `PROJ-12 · In Progress`, or `↳ subtask`. */
-function CardIdentity({ ticket }: { ticket: Ticket }) {
+const STATUS_EDGE: Record<"busy" | "input" | "error", string> = {
+  busy: "bg-primary animate-pulse",
+  input: "bg-amber-500",
+  error: "bg-destructive",
+};
+
+/** Where the card comes from: `widgets #7 · draft` and who asked for the review, `PROJ-12 · In Progress` and priority, or `↳ subtask`. */
+function CardSource({ ticket }: { ticket: Ticket }) {
+  const row = "flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground";
+  const link = "min-w-0 truncate hover:text-foreground hover:underline";
   if (ticket.pr !== null) {
     const { pr } = ticket;
     const stateClass = pr.state === "merged" ? "text-violet-700 dark:text-violet-300" : pr.state === "closed" ? "text-destructive" : "";
     return (
-      <ExternalLink href={pr.url} title={`Open ${pr.repo}#${pr.number} on GitHub`} className="min-w-0 truncate hover:text-foreground hover:underline">
-        {pr.repo.split("/")[1] ?? pr.repo} #{pr.number}
-        {pr.state !== "open" ? <span className={stateClass}> · {pr.state}</span> : null}
-      </ExternalLink>
+      <div className={row}>
+        <Icon name="GitPullRequest" className="size-3 shrink-0" />
+        <ExternalLink href={pr.url} title={`Open ${pr.repo}#${pr.number} on GitHub`} className={link}>
+          {pr.repo.split("/")[1] ?? pr.repo} #{pr.number}
+          {pr.state !== "open" ? <span className={stateClass}> · {pr.state}</span> : null}
+        </ExternalLink>
+        {pr.role === "other" ? (
+          <span className="ml-auto min-w-0 truncate" title={`Your review was requested on @${pr.author}'s PR`}>
+            reviewing @{pr.author}
+          </span>
+        ) : null}
+      </div>
     );
   }
   if (ticket.jira !== null) {
     const { jira } = ticket;
     return (
-      <ExternalLink href={jira.url} title={`Open ${jira.key} in Jira${jira.priority !== null ? ` · ${jira.priority} priority` : ""}`} className="min-w-0 truncate hover:text-foreground hover:underline">
-        {jira.key}
-        {jira.status !== "" ? ` · ${jira.status}` : ""}
-      </ExternalLink>
+      <div className={row}>
+        <Icon name="kanban-ticket" className="size-3 shrink-0" />
+        <ExternalLink href={jira.url} title={`Open ${jira.key} in Jira`} className={link}>
+          {jira.key}
+          {jira.status !== "" ? ` · ${jira.status}` : ""}
+        </ExternalLink>
+        {jira.priority !== null ? (
+          <span className="ml-auto shrink-0" title="Priority">
+            {jira.priority}
+          </span>
+        ) : null}
+      </div>
     );
   }
-  if (ticket.parentId !== null) return <span className="min-w-0 truncate">↳ subtask</span>;
+  if (ticket.parentId !== null) return <div className={row}>↳ subtask</div>;
   return null;
-}
-
-/** The latest review collapsed to one icon: pulsing while it runs, the finding count coloured by the worst severity once done. */
-function CardReviewIndicator({ ticket }: { ticket: Ticket }) {
-  const review = ticket.latestReview;
-  if (review === null) return null;
-  if (review.status === "running") return <CardCounter icon="kanban-search-check" tone="busy" title="Review running" />;
-  if (review.status === "failed") return <CardCounter icon="kanban-search-check" tone="danger" title="Review failed" />;
-  if (review.apply !== null && review.apply.completedAt === null) return <CardCounter icon="kanban-wrench" tone="busy" title="Applying review fixes" />;
-  if (review.apply !== null) {
-    return <CardCounter icon="Check" tone="good" title={`Review fixes ${review.apply.push ? "pushed" : "committed"} as ${shortSha(review.apply.pushedCommit)}`} />;
-  }
-  const counts = review.counts;
-  if (counts === null) return <CardCounter icon="kanban-search-check" tone="quiet" title={`Reviewed at ${shortSha(review.commitSha)}`} />;
-  const total = counts.critical + counts.important + counts.minor;
-  if (total === 0) return <CardCounter icon="kanban-search-check" tone="good" title="Review found nothing" />;
-  return (
-    <CardCounter
-      icon="kanban-search-check"
-      count={total}
-      tone={counts.critical > 0 ? "danger" : counts.important > 0 ? "attention" : "quiet"}
-      title={`${counts.critical} critical, ${counts.important} important, ${counts.minor} minor · ${review.selectedCount ?? 0} selected to apply`}
-    />
-  );
 }

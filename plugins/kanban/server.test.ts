@@ -1517,6 +1517,26 @@ describe("diff view and diff comments", () => {
     await expect(current().harness.behavior.callRpc("diff_comments_submit", { ticketId: card.id, postToGithub: false, address: false })).rejects.toThrow();
   });
 
+  it("posts GitHub drafts as an approval or change request on someone else's PR, but not on your own", async () => {
+    vi.stubGlobal(
+      "fetch",
+      stubGithub({ requested: [searchItem("acme-co/widgets", 7, { user: { login: "alice" } })], authored: [searchItem("acme-co/widgets", 8, { user: { login: "sean" } })] }),
+    );
+    await load({ autoStartThreads: false });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const tickets = (await board()).tickets;
+    const theirs = tickets.find((ticket) => ticket.pr?.number === 7)!;
+    const mine = tickets.find((ticket) => ticket.pr?.number === 8)!;
+
+    await current().harness.behavior.callRpc("diff_comment_add", { ticketId: theirs.id, path: "a.go", line: 3, side: "LEFT", body: "Looks good", target: "github" });
+    await current().harness.behavior.callRpc("diff_comments_submit", { ticketId: theirs.id, postToGithub: true, reviewEvent: "APPROVE", address: false });
+    expect(posted[0]).toMatchObject({ event: "APPROVE", comments: [{ path: "a.go", body: "Looks good" }] });
+
+    await current().harness.behavior.callRpc("diff_comment_add", { ticketId: mine.id, path: "a.go", line: 3, side: "LEFT", body: "Note to self", target: "github" });
+    await expect(current().harness.behavior.callRpc("diff_comments_submit", { ticketId: mine.id, postToGithub: true, reviewEvent: "REQUEST_CHANGES", address: false })).rejects.toThrow(/your own pull request/u);
+    expect(posted).toHaveLength(1);
+  });
+
   it("hides vendored files by default and never gives them a structural diff", async () => {
     const files = [
       { filename: "a.go", status: "modified", additions: 2, deletions: 1, patch: "@@ -1,2 +1,3 @@\n line\n-old\n+new\n+more" },

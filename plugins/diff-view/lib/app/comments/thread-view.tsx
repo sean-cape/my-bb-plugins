@@ -177,7 +177,7 @@ function ThreadEntryView({
 }
 
 /** The keys that act on the thread under the cursor, so they are discoverable without the `?` sheet. */
-function ThreadKeyHint({ thread, open }: { thread: DiffThread; open: boolean }) {
+function ThreadKeyHint({ thread, open, shown }: { thread: DiffThread; open: boolean; shown: boolean }) {
   const { canPostToGithub } = useContext(DiffCommentsContext);
   const actions = threadKeyActions(thread, canPostToGithub);
   const hints = [
@@ -190,7 +190,7 @@ function ThreadKeyHint({ thread, open }: { thread: DiffThread; open: boolean }) 
     open ? "↩ fold" : "↩ unfold",
     "c next",
   ].filter((hint): hint is string => hint !== null);
-  return <p className={cn("border-t border-border/60 px-2.5 py-1 font-mono text-[10px] text-muted-foreground", enter.fade, FAST)}>{hints.join(" · ")}</p>;
+  return <p className={cn("border-t border-border/60 px-2.5 py-1 font-mono text-[10px] text-muted-foreground", enter.fade, FAST, !shown && "hidden")}>{hints.join(" · ")}</p>;
 }
 
 /** One thread under its line: the root, its replies (GitHub and local interleaved by time), and a reply box. Resolved threads start collapsed. */
@@ -275,7 +275,9 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
           )}
         </div>
       ) : null}
-      {focused ? <ThreadKeyHint thread={thread} open={open} /> : null}
+      {/* Hidden rather than unmounted: the cursor passes over threads on every j, and inserting an element restyles
+          the whole page under bb themes with broad :has() rules. */}
+      <ThreadKeyHint thread={thread} open={open} shown={focused} />
     </div>
   );
 }

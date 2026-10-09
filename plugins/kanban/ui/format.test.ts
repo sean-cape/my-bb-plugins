@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agedOut, doneColumnId, todoColumnId } from "../shared/columns";
-import { dueStatus, localDay, parseQuickAdd, parseTagList, relativeTime, slugify } from "./format";
+import { cardSnippet, dueStatus, localDay, parseQuickAdd, parseTagList, relativeTime, shortAge, slugify } from "./format";
 
 describe("parseQuickAdd", () => {
   it("pulls #tags out of a title, lowercased and deduplicated", () => {
@@ -82,5 +82,26 @@ describe("agedOut", () => {
   it("keeps every card when the column has no limit", () => {
     expect(agedOut({}, 0, 1000 * day)).toBe(false);
     expect(agedOut({ hideAfterDays: null }, 0, 1000 * day)).toBe(false);
+  });
+});
+
+describe("shortAge", () => {
+  const now = Date.UTC(2026, 9, 9, 12);
+  it("picks the largest unit that keeps the number readable", () => {
+    expect(shortAge(now - 20_000, now)).toBe("now");
+    expect(shortAge(now - 12 * 60_000, now)).toBe("12m");
+    expect(shortAge(now - 5 * 3_600_000, now)).toBe("5h");
+    expect(shortAge(now - 23 * 3_600_000, now)).toBe("23h");
+    expect(shortAge(now - 47 * 3_600_000, now)).toBe("1d");
+    expect(shortAge(now - 3 * 86_400_000, now)).toBe("3d");
+    expect(shortAge(now + 60_000, now)).toBe("now");
+  });
+});
+
+describe("cardSnippet", () => {
+  it("flattens Markdown to one line of prose", () => {
+    expect(cardSnippet("## Goal\n- [ ] Ship the **new** [docs](https://x.test)\n> quoted `code`")).toBe("Goal Ship the new docs quoted code");
+    expect(cardSnippet("Before\n```ts\nconst x = 1;\n```\nafter ![img](a.png)")).toBe("Before after");
+    expect(cardSnippet("   \n\n")).toBe("");
   });
 });

@@ -12,7 +12,11 @@ export type BoardCommand =
   | { kind: "diff" }
   | { kind: "add" }
   | { kind: "help" }
-  | { kind: "toggle-hidden" };
+  | { kind: "toggle-hidden" }
+  | { kind: "toggle-view" }
+  | { kind: "toggle-done" }
+  | { kind: "focus-input" }
+  | { kind: "scroll"; direction: 1 | -1 };
 
 export const KEYMAP: Record<string, BoardCommand> = {
   h: { kind: "cursor", motion: "left" },
@@ -34,7 +38,16 @@ export const KEYMAP: Record<string, BoardCommand> = {
   t: { kind: "thread" },
   d: { kind: "diff" },
   a: { kind: "add" },
+  T: { kind: "toggle-view" },
+  x: { kind: "toggle-done" },
+  i: { kind: "focus-input" },
   "?": { kind: "help" },
+};
+
+/** Ctrl chords, which the single-key map can't hold because every other modifier turns keys off. */
+export const CTRL_KEYMAP: Record<string, BoardCommand> = {
+  d: { kind: "scroll", direction: 1 },
+  u: { kind: "scroll", direction: -1 },
 };
 
 export interface KeyHelpSection {
@@ -54,7 +67,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
     title: "Board",
     keys: [
       { keys: ["h", "l"], action: "Previous / next column" },
-      { keys: ["j", "k"], action: "Next / previous card" },
+      { keys: ["j", "k"], action: "Next / previous card; k past the top card reaches the column's + and then the top bar" },
       { keys: ["gg", "G"], action: "First / last card in the column" },
       { keys: ["0", "$"], action: "First / last column" },
       { keys: ["H", "L"], action: "Move card to the previous / next column" },
@@ -64,7 +77,32 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["d"], action: "View the card's changes" },
       { keys: ["a"], action: "New card in this column" },
       { keys: ["za"], action: "Show / hide cards past the column's hide-after days" },
+      { keys: ["Ctrl-d", "Ctrl-u"], action: "Scroll the column half a page" },
+      { keys: ["T"], action: "Switch between the board and the todo list" },
       { keys: ["?"], action: "Show these shortcuts" },
+    ],
+  },
+  {
+    title: "Todo list",
+    keys: [
+      { keys: ["j", "k"], action: "Next / previous todo; k past the top reaches the tag filters and the top bar" },
+      { keys: ["gg", "G"], action: "First / last todo" },
+      { keys: ["x"], action: "Mark done / reopen" },
+      { keys: ["o", "Enter"], action: "Open the card" },
+      { keys: ["t"], action: "Open the card's thread" },
+      { keys: ["i", "a"], action: "Type a new todo; Esc (twice with vim-mode) returns to the list" },
+      { keys: ["Ctrl-d", "Ctrl-u"], action: "Scroll half a page" },
+      { keys: ["T"], action: "Switch back to the board" },
+    ],
+  },
+  {
+    title: "Top bar, column + and filters",
+    keys: [
+      { keys: ["h", "l"], action: "Previous / next button" },
+      { keys: ["0", "$"], action: "First / last button" },
+      { keys: ["j", "k"], action: "Down to the cards / up to the top bar" },
+      { keys: ["o", "Enter", "Space"], action: "Press the button" },
+      { keys: ["j", "k"], action: "Inside the settings menu: next / previous item" },
     ],
   },
   {

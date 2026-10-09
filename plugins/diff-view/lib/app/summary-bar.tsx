@@ -1,4 +1,4 @@
-import type { DiffCommentTarget, DiffFile, DiffResult } from "../types";
+import type { DiffCommentTarget, DiffResult } from "../types";
 import { cn } from "./utils";
 import { shortSha } from "./format";
 import { useDiffSource } from "./source";
@@ -6,11 +6,20 @@ import { setDiffPreferences } from "./state";
 import { FINDING_FILTER_LABEL, nextFindingFilter, type FindingFilter } from "./findings/findings";
 import { PRESS, TRANSFORM_TRANSITION, enter } from "./ui/motion";
 
-function DiffStats({ files }: { files: readonly DiffFile[] }) {
+/** Totals, with what the diff is against and what it leaves out in the tooltip. */
+function DiffStats({ diff }: { diff: DiffResult }) {
+  const { files, hiddenVendored } = diff;
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
+  const details = [
+    diff.baseRef !== null ? `Against ${diff.baseRef}` : null,
+    diff.headSha !== null ? `Head ${shortSha(diff.headSha)}` : null,
+    hiddenVendored !== null
+      ? `${hiddenVendored.files} vendored file${hiddenVendored.files === 1 ? "" : "s"} hidden (+${hiddenVendored.additions} −${hiddenVendored.deletions} under vendor/, node_modules/ and similar). Turn off "Hide vendored files" in the plugin settings to show them.`
+      : null,
+  ].filter((line) => line !== null);
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs tabular-nums">
+    <span className={cn("inline-flex items-center gap-1.5 text-xs tabular-nums", details.length > 0 && "cursor-help")} title={details.length > 0 ? details.join("\n") : undefined}>
       <span className="text-muted-foreground">{files.length} file{files.length === 1 ? "" : "s"}</span>
       <span className="text-emerald-600 dark:text-emerald-400">+{additions}</span>
       <span className="text-red-600 dark:text-red-400">−{deletions}</span>
@@ -44,7 +53,7 @@ function CommentTargetSwitch({ target, onChange }: { target: DiffCommentTarget; 
   );
 }
 
-/** The strip above a non-empty diff: totals, what it is against, keyboard help, where comments go, comment and finding controls, and viewed progress. */
+/** The strip above a non-empty diff: totals (what it is against in their tooltip), keyboard help, where comments go, comment and finding controls, and viewed progress. */
 export function SummaryBar({
   diff,
   viewed,
@@ -70,14 +79,7 @@ export function SummaryBar({
   const viewedCount = diff.files.filter((entry) => viewed.has(entry.path)).length;
   return (
     <div className={cn("flex flex-wrap items-center gap-2 border-b border-border px-3 py-1 text-xs text-muted-foreground", enter.fade)}>
-      <DiffStats files={diff.files} />
-      {diff.baseRef !== null ? <span>· against {diff.baseRef}</span> : null}
-      {diff.headSha !== null ? <span>· {shortSha(diff.headSha)}</span> : null}
-      {diff.hiddenVendored !== null ? (
-        <span title={`+${diff.hiddenVendored.additions} −${diff.hiddenVendored.deletions} under vendor/, node_modules/ and similar. Turn off "Hide vendored files" in the plugin settings to show them.`}>
-          · {diff.hiddenVendored.files} vendored file{diff.hiddenVendored.files === 1 ? "" : "s"} hidden
-        </span>
-      ) : null}
+      <DiffStats diff={diff} />
       <button type="button" className={cn("rounded px-1 text-muted-foreground/70 hover:bg-state-hover hover:text-foreground", PRESS)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onShowKeys}>
         ⌨
       </button>

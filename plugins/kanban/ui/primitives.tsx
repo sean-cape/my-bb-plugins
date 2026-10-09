@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AnimationEvent, ReactNode } from "react";
+import type { AnimationEvent, KeyboardEvent, ReactNode } from "react";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { CHEVRON, PRESS, STAGGER, TRANSFORM_TRANSITION, enter, exit, speed, stagger, usePresence, type Arrival, useEntrance, usePopOnChange } from "bb-motion";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -258,6 +258,8 @@ export function SegmentedTabs<T extends string>({
   value,
   options,
   onChange,
+  onActivate,
+  selectedTabProps,
   className,
   tabClassName,
 }: {
@@ -265,10 +267,35 @@ export function SegmentedTabs<T extends string>({
   value: T;
   options: ReadonlyArray<{ value: T; label: string }>;
   onChange: (value: T) => void;
+  /**
+   * Makes the tabs a picker that acts: one tab stop, h/l and the arrows move the choice, and Enter does this (send with
+   * that choice, say). Without it each tab is its own stop, so bands that walk buttons with h/l (the top bar) still can.
+   */
+  onActivate?: () => void;
+  /** Attributes for the selected tab alone, such as a marker that a host focuses it from. */
+  selectedTabProps?: Record<`data-${string}`, string>;
   className?: string;
   tabClassName?: string;
 }) {
   const index = Math.max(0, options.findIndex((option) => option.value === value));
+  const picker = onActivate !== undefined;
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (!picker || event.metaKey || event.altKey || event.ctrlKey) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onActivate();
+      return;
+    }
+    const step = event.key === "ArrowLeft" || event.key === "h" ? -1 : event.key === "ArrowRight" || event.key === "l" ? 1 : 0;
+    if (step === 0) return;
+    // Handled here, so the views behind (the diff's review keys) leave h and l alone.
+    event.preventDefault();
+    const next = options[Math.min(options.length - 1, Math.max(0, index + step))]!;
+    if (next.value === value) return;
+    onChange(next.value);
+    const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    tabs?.[options.indexOf(next)]?.focus();
+  };
   return (
     <div
       role="tablist"
@@ -287,14 +314,40 @@ export function SegmentedTabs<T extends string>({
           type="button"
           role="tab"
           aria-selected={option.value === value}
+          tabIndex={!picker || option.value === value ? 0 : -1}
+          {...(option.value === value ? selectedTabProps : undefined)}
+          onKeyDown={onKeyDown}
           onClick={() => onChange(option.value)}
-          className={cn("relative rounded text-xs font-medium", PRESS, option.value === value ? "text-foreground" : "text-muted-foreground hover:text-foreground", tabClassName)}
+          className={cn("relative rounded text-xs font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", PRESS, option.value === value ? "text-foreground" : "text-muted-foreground hover:text-foreground", tabClassName)}
         >
           {option.label}
         </button>
       ))}
     </div>
   );
+}
+
+export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
+  return <kbd className={cn("min-w-6 rounded border border-border bg-muted px-1.5 py-0.5 text-center font-mono text-xs", className)}>{children}</kbd>;
+}
+
+/** Moves a Radix menu's highlight one item, from wherever focus is; Radix itself answers only to the arrows. */
+export function stepMenu(menu: HTMLElement, step: 1 | -1): void {
+  const items = Array.from(menu.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([data-disabled])'));
+  const at = items.indexOf(document.activeElement as HTMLElement);
+  items[at === -1 ? (step === 1 ? 0 : items.length - 1) : Math.min(items.length - 1, Math.max(0, at + step))]?.focus();
+}
+
+/** Marks the plugin's own menus so board keys can find them; a class because bb's menu drops data attributes. */
+export const KANBAN_MENU = "kanban-menu";
+
+/** j and k step through a menu's items while focus is inside it. */
+export function menuVimKeys(event: KeyboardEvent<HTMLElement>): void {
+  const step = event.key === "j" ? 1 : event.key === "k" ? -1 : 0;
+  if (step === 0 || event.metaKey || event.ctrlKey || event.altKey) return;
+  // Claimed before Radix's typeahead, which would jump to an item starting with the letter.
+  event.preventDefault();
+  stepMenu(event.currentTarget, step);
 }
 
 export const MENU_ITEM_CLASS =

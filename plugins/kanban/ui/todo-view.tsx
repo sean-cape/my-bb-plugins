@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent, MutableRefObject } from "react";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { PRESS, STAGGER, enter, exit, speed, stagger, type Arrival, useArrivals, useEntrance, usePopOnChange, usePresenceList } from "bb-motion";
 import type { Board, Column, Ticket } from "../shared/board";
@@ -11,12 +11,15 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { localDay, parseQuickAdd } from "./format";
 import { type Rpc, useNow } from "./data";
-import { ThreadStatusDot } from "./primitives";
+import { Kbd, ThreadStatusDot } from "./primitives";
 import { tagTone, TagBadges } from "./tags";
 import { PrBadges, JiraBadges, ReviewBadge, DueBadge } from "./badges";
 import { toastError } from "./actions";
+import type { BoardCommand } from "./board-nav";
+import { focusStop, focusedStop, moveAlongBand, nearestStop, pressStop, scrollHalfPage } from "./stops";
 
 export function TodoView({
+  commandRef,
   board,
   threads,
   rpc,
@@ -24,6 +27,8 @@ export function TodoView({
   onOpenThread,
   refetch,
 }: {
+  /** Where the page's key handler sends board commands while the todo list shows. */
+  commandRef: MutableRefObject<((command: BoardCommand) => void) | null>;
   board: Board;
   threads: ReadonlyMap<string, PluginSidebarThread>;
   rpc: Rpc;
@@ -50,6 +55,91 @@ export function TodoView({
   // Rows cascade as one list across sections.
   const byColumn = groups.map((group, index) => ({ ...group, offset: groups.slice(0, index).reduce((sum, previous) => sum + previous.rows.length, 0) }));
   const arrival = useArrivals(board.tickets.map((ticket) => ticket.id));
+  const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // A todo moving between sections remounts there and has to be focused again.
+  const pendingFocusId = useRef<string | null>(null);
+  const lastRowId = useRef<string | null>(null);
+  const rowElements = () => Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-todo-row]:not([aria-hidden])") ?? []);
+  const rowFor = (ticketId: string | null) => (ticketId === null ? undefined : rowElements().find((row) => row.dataset.ticketId === ticketId));
+  const focusRow = (row: HTMLElement) => {
+    row.querySelector<HTMLElement>("[data-todo-open]")?.focus({ preventScroll: true });
+    row.scrollIntoView({ block: "nearest" });
+  };
+  useEffect(() => {
+    const row = rowFor(pendingFocusId.current);
+    if (row === undefined) return;
+    pendingFocusId.current = null;
+    focusRow(row);
+  });
+  const enterFromTop = (from: Element) => {
+    const filter = nearestStop("filters", from);
+    const first = rowElements()[0];
+    if (filter !== null) focusStop(filter);
+    else if (first !== undefined) focusRow(first);
+  };
+  commandRef.current = (command) => {
+    const at = focusedStop();
+    const rows = rowElements();
+    const row = (document.activeElement?.closest<HTMLElement>("[data-todo-row]") ?? null);
+    const index = row === null ? -1 : rows.indexOf(row);
+    const ticket = row === null ? undefined : byId.get(row.dataset.ticketId ?? "");
+    switch (command.kind) {
+      case "cursor": {
+        const { motion } = command;
+        if (at !== null) {
+          if (moveAlongBand(at.band, at.stop, motion)) return;
+          if (motion === "up" && at.band === "filters") {
+            const next = nearestStop("header", at.stop);
+            if (next !== null) focusStop(next);
+          } else if (motion === "down" && at.band === "header") enterFromTop(at.stop);
+          else if (motion === "down" && at.band === "filters" && rows[0] !== undefined) focusRow(rows[0]);
+          return;
+        }
+        if (index === -1) {
+          const resume = rowFor(lastRowId.current) ?? rows[0];
+          if (resume !== undefined) focusRow(resume);
+          return;
+        }
+        if (motion === "up" && index === 0) {
+          const next = nearestStop("filters", row!) ?? nearestStop("header", row!);
+          if (next !== null) focusStop(next);
+          return;
+        }
+        const next = motion === "up" ? rows[index - 1] : motion === "down" ? rows[index + 1] : motion === "top" ? rows[0] : motion === "bottom" ? rows[rows.length - 1] : undefined;
+        if (next !== undefined) focusRow(next);
+        return;
+      }
+      case "open":
+        if (at !== null) pressStop(at.stop);
+        else if (ticket !== undefined) onOpen(ticket);
+        return;
+      case "thread":
+        if (ticket?.threadId != null) onOpenThread(ticket.threadId);
+        return;
+      case "toggle-done": {
+        if (ticket === undefined) return;
+        // Without "Show done" the row leaves the list, so the cursor steps off it first.
+        const neighbour = showDone ? row : (rows[index + 1] ?? rows[index - 1] ?? null);
+        if (neighbour !== null) pendingFocusId.current = neighbour.dataset.ticketId ?? null;
+        void toggleDone(ticket);
+        return;
+      }
+      case "add":
+      case "focus-input":
+        inputRef.current?.focus();
+        return;
+      case "scroll": {
+        const scroller = listRef.current?.closest<HTMLElement>("[data-kanban-keys]");
+        if (scroller == null) return;
+        const next = scrollHalfPage(scroller, rows, row, command.direction);
+        if (next !== null && next !== row) focusRow(next);
+        return;
+      }
+      default:
+        return;
+    }
+  };
   const toggleDone = async (ticket: Ticket) => {
     const target = ticket.columnId === doneId ? todoId : doneId;
     if (target === null) return;
@@ -73,11 +163,26 @@ export function TodoView({
     refetch();
   };
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 md:p-5">
+    <div
+      ref={listRef}
+      onFocus={(event) => {
+        const ticketId = (event.target as Element).closest<HTMLElement>("[data-todo-row]")?.dataset.ticketId;
+        if (ticketId !== undefined) lastRowId.current = ticketId;
+      }}
+      className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 md:my-4 md:rounded-xl md:border md:border-border md:bg-background/75 md:p-5 md:shadow-sm md:backdrop-blur-md">
       <form onSubmit={quickAdd} className="flex items-center gap-2">
         <Input
+          ref={inputRef}
           value={quick}
           onChange={(event) => setQuick(event.target.value)}
+          onKeyDown={(event) => {
+            // With vim-mode, this is the second Escape: the first only entered vim's normal mode.
+            if (event.key !== "Escape" || event.defaultPrevented) return;
+            event.preventDefault();
+            const row = rowFor(lastRowId.current) ?? rowElements()[0];
+            if (row !== undefined) focusRow(row);
+            else listRef.current?.closest<HTMLElement>("[data-kanban-keys]")?.focus({ preventScroll: true });
+          }}
           placeholder="Add a todo… use #tag for tags"
           aria-label="New todo"
         />
@@ -87,7 +192,7 @@ export function TodoView({
         </Button>
       </form>
       {board.tags.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div data-kanban-filters="" className="flex flex-wrap items-center gap-1.5">
           {board.tags.map((tag) => {
             const active = tagFilter.includes(tag);
             return (
@@ -97,7 +202,7 @@ export function TodoView({
                 aria-pressed={active}
                 onClick={() => setTagFilter(active ? tagFilter.filter((entry) => entry !== tag) : [...tagFilter, tag])}
                 className={cn(
-                  "inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs",
+                  "inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                   PRESS,
                   active ? cn(tagTone(tag).chip, "font-medium") : "border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
                 )}
@@ -133,9 +238,31 @@ export function TodoView({
           onOpenThread={onOpenThread}
         />
       ))}
+      <p className="hidden flex-wrap items-center justify-center gap-x-4 gap-y-1.5 border-t border-border pt-3 text-xs text-muted-foreground md:flex">
+        {TODO_HINTS.map(({ keys, action }) => (
+          <span key={action} className="inline-flex items-center gap-1.5">
+            {keys.map((key) => (
+              <Kbd key={key} className="min-w-5 px-1 py-0 text-[11px]">
+                {key}
+              </Kbd>
+            ))}
+            {action}
+          </span>
+        ))}
+      </p>
     </div>
   );
 }
+
+const TODO_HINTS = [
+  { keys: ["j", "k"], action: "move" },
+  { keys: ["x"], action: "done" },
+  { keys: ["o"], action: "open" },
+  { keys: ["t"], action: "thread" },
+  { keys: ["i"], action: "add" },
+  { keys: ["T"], action: "board" },
+  { keys: ["?"], action: "all keys" },
+] as const;
 
 function TodoSection({
   column,
@@ -220,6 +347,8 @@ function TodoRow({
   const entrance = useEntrance(arrival === "intro" ? cn(enter.rise, speed.fast, STAGGER) : arrival === "new" ? enter.rise : undefined);
   return (
     <li
+      data-todo-row=""
+      data-ticket-id={ticket.id}
       style={stagger(index)}
       aria-hidden={exiting || undefined}
       inert={exiting}
@@ -227,10 +356,10 @@ function TodoRow({
         if (exiting && event.target === event.currentTarget) onExited();
         else entrance.onAnimationEnd(event);
       }}
-      className={cn("flex items-center gap-3 px-3 py-2 text-sm", ticket.parentId !== null && "pl-9", exiting ? exit.sink : entrance.className)}
+      className={cn("flex items-center gap-3 px-3 py-2 text-sm has-[[data-todo-open]:focus-visible]:bg-state-hover", ticket.parentId !== null && "pl-9", exiting ? exit.sink : entrance.className)}
     >
       <Checkbox checked={isDone} onCheckedChange={onToggleDone} aria-label={isDone ? `Reopen "${ticket.title}"` : `Mark "${ticket.title}" done`} />
-      <button type="button" onClick={onOpen} className={cn("min-w-0 flex-1 truncate text-left hover:underline", isDone && "text-muted-foreground line-through")}>
+      <button type="button" data-todo-open="" onClick={onOpen} className={cn("min-w-0 flex-1 truncate text-left outline-none hover:underline", isDone && "text-muted-foreground line-through")}>
         {ticket.title}
       </button>
       <div className="hidden flex-wrap items-center gap-1 sm:flex">

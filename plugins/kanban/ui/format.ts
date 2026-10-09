@@ -91,3 +91,31 @@ export function dueStatus(dueDate: string, today: string): { label: string; rela
     days === 0 ? "today" : days === 1 ? "tomorrow" : days > 0 ? `in ${days} days` : days === -1 ? "1 day overdue" : `${-days} days overdue`;
   return { label, relative, title: `Due ${long} · ${relative}`, tone: days < 0 ? "overdue" : days <= 1 ? "soon" : "later" };
 }
+
+/** How long ago, as the shortest readable unit: `now`, `12m`, `5h`, `3d`. */
+export function shortAge(epochMs: number, now: number): string {
+  const minutes = Math.floor(Math.max(0, now - epochMs) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/** A card description flattened to plain prose for a two-line preview: Markdown markers, links and code fences dropped. */
+export function cardSnippet(description: string): string {
+  return description
+    .replace(/```[\s\S]*?(```|$)/gu, " ")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^\s*(#{1,6}\s+|[-*+]\s+(\[[ xX]\]\s+)?|>\s*|\d+[.)]\s+)/u, "")
+        .replace(/!\[[^\]]*\]\([^)]*\)/gu, "")
+        .replace(/\[([^\]]*)\]\([^)]*\)/gu, "$1")
+        .replace(/[*_`~]+/gu, ""),
+    )
+    .join(" ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 240);
+}

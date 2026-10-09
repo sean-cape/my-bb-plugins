@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { usePortalScopeProps } from "@/lib/portal-scope";
 import { parseQuickAdd } from "./format";
 import { type Rpc } from "./data";
 import { Badge, ThreadStatusDot, COMPACT, Group, MENU_ITEM_CLASS } from "./primitives";
@@ -172,7 +173,7 @@ export function SubtasksGroup({
               </Button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
-              <DropdownMenu.Content align="start" sideOffset={4} className={cn("z-50 min-w-64 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md", POPOVER_MOTION)}>
+              <DropdownMenu.Content {...usePortalScopeProps()} align="start" sideOffset={4} className={cn("z-50 min-w-64 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md", POPOVER_MOTION)}>
                 <DropdownMenu.Item
                   className={cn(MENU_ITEM_CLASS, "items-start")}
                   disabled={unstarted.length === 0}

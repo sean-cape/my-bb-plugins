@@ -106,6 +106,36 @@ export function useFileCursor(path: string): FileCursor | null {
   return useSyncExternalStore(keys?.subscribe ?? NO_SUBSCRIPTION, () => keys?.fileCursor(path) ?? null);
 }
 
+/**
+ * The side of a row the cursor is on, or null. A row re-renders only when the cursor arrives or leaves, not on every
+ * move within its file.
+ */
+export function useCursorSide(path: string, left: number | null, right: number | null): DiffSide | null {
+  const keys = useContext(ReviewKeysContext);
+  return useSyncExternalStore(keys?.subscribe ?? NO_SUBSCRIPTION, () => {
+    const cursor = keys?.get().cursor;
+    if (cursor == null || cursor.path !== path || cursor.line === null) return null;
+    return (cursor.side === "LEFT" ? left : right) === cursor.line ? cursor.side : null;
+  });
+}
+
+export function useCursorOnHeader(path: string): boolean {
+  const keys = useContext(ReviewKeysContext);
+  return useSyncExternalStore(keys?.subscribe ?? NO_SUBSCRIPTION, () => {
+    const cursor = keys?.get().cursor;
+    return cursor != null && cursor.path === path && cursor.line === null;
+  });
+}
+
+/** The cursor in this file while `V` selects lines in it; null otherwise, so plain cursor moves leave the file be. */
+export function useFileSelection(path: string): FileCursor | null {
+  const keys = useContext(ReviewKeysContext);
+  return useSyncExternalStore(keys?.subscribe ?? NO_SUBSCRIPTION, () => {
+    const fileCursor = keys?.fileCursor(path) ?? null;
+    return fileCursor?.visual != null ? fileCursor : null;
+  });
+}
+
 export function useIsFocused(kind: FocusedAnnotation["kind"], id: string): boolean {
   const keys = useContext(ReviewKeysContext);
   return useSyncExternalStore(keys?.subscribe ?? NO_SUBSCRIPTION, () => {

@@ -86,8 +86,10 @@ export function FindingAnnotation({
         {item.isNew ? <span className="shrink-0 rounded border border-sky-500/50 px-1 text-[10px] text-sky-700 dark:text-sky-300" title="Reported since you last looked">new</span> : null}
         {item.touched ? <span className="shrink-0 rounded border border-amber-500/50 px-1 text-[10px] text-amber-700 dark:text-amber-300" title="These lines changed since you last looked">touched</span> : null}
       </div>
-      {expanded && !editing ? (
-        <div className={cn("flex flex-col gap-1 pb-1.5 text-sm", reveal)}>
+      {/* Mounted while folded: it opens as the cursor passes, and mounting it then restyles the whole page under bb
+          themes with broad :has() rules. */}
+      {!editing ? (
+        <div className={cn("flex flex-col gap-1 pb-1.5 text-sm", reveal, !expanded && "hidden")}>
           <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
             <span className="min-w-0">{meta.join(" · ")}</span>
             <button type="button" className={cn("ml-auto rounded px-1 hover:bg-state-hover hover:text-foreground", PRESS)} onClick={beginEdit}>
@@ -123,11 +125,9 @@ export function FindingAnnotation({
           </div>
         </div>
       ) : null}
-      {focused ? (
-        <p className={cn("pb-1 font-mono text-[10px] text-muted-foreground", enter.fade, FAST)}>
-          {[item.selected ? "x exclude" : "x include", editing ? null : "e edit", expanded ? "↩ fold" : "↩ unfold", "c next"].filter((hint) => hint !== null).join(" · ")}
-        </p>
-      ) : null}
+      <p className={cn("pb-1 font-mono text-[10px] text-muted-foreground", enter.fade, FAST, !focused && "hidden")}>
+        {[item.selected ? "x exclude" : "x include", editing ? null : "e edit", expanded ? "↩ fold" : "↩ unfold", "c next"].filter((hint) => hint !== null).join(" · ")}
+      </p>
     </div>
   );
 }

@@ -100,18 +100,32 @@ function positions(files: readonly NavFile[], from: number, stopAtPending: boole
   return list;
 }
 
-/** `count` rows down (or up, when negative), through file headers, stopping at the ends. */
+/** The position after `at` in reading order, as `positions` lists them with `stopAtPending`; null at the end. */
+function nextPosition(files: readonly NavFile[], at: NavPosition): NavPosition | null {
+  const file = files[at.fileIndex]!;
+  if (!file.collapsed && file.rows === null) return null;
+  if (at.row + 1 < visibleRows(file).length) return { fileIndex: at.fileIndex, row: at.row + 1 };
+  return at.fileIndex + 1 < files.length ? { fileIndex: at.fileIndex + 1, row: -1 } : null;
+}
+
+function previousPosition(files: readonly NavFile[], at: NavPosition): NavPosition | null {
+  if (at.row > -1) return { fileIndex: at.fileIndex, row: at.row - 1 };
+  if (at.fileIndex === 0) return null;
+  return { fileIndex: at.fileIndex - 1, row: visibleRows(files[at.fileIndex - 1]!).length - 1 };
+}
+
+/** `count` rows down (or up, when negative), through file headers, stopping at the ends. Runs on every held `j`, so it steps rather than listing positions. */
 export function moveLines(files: readonly NavFile[], cursor: Cursor, count: number): Cursor {
   const here = cursorPosition(files, cursor);
   if (here === null) return cursor;
-  if (count > 0) {
-    const ahead = positions(files, here.fileIndex, true).filter((position) => compare(position, here) > 0);
-    const target = ahead[Math.min(count, ahead.length) - 1];
-    return target === undefined ? cursor : cursorAt(files, target, cursor.want);
+  const step = count > 0 ? nextPosition : previousPosition;
+  let at = here;
+  for (let remaining = Math.abs(count); remaining > 0; remaining--) {
+    const next = step(files, at);
+    if (next === null) break;
+    at = next;
   }
-  const behind = positions(files, 0, false).filter((position) => compare(position, here) < 0);
-  const target = behind[Math.max(0, behind.length + count)];
-  return target === undefined ? cursor : cursorAt(files, target, cursor.want);
+  return at === here ? cursor : cursorAt(files, at, cursor.want);
 }
 
 export function firstPosition(files: readonly NavFile[], want: DiffSide): Cursor | null {

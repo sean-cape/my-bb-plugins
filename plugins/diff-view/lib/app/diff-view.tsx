@@ -1,11 +1,11 @@
 // The changes view: a file tree beside every changed file rendered as a structural (difftastic) or text (Pierre)
 // diff, with viewed marks, line comments, ⌘-click symbol peeks and, when the data source has them, review findings,
 // an agent-written tour and hunk explanations. It renders whatever a `DiffSource` serves, so any plugin can embed it.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { DiffComment, DiffFile, SymbolLookup } from "../types";
+import type { DiffComment, DiffFile, SemanticChange, SymbolLookup } from "../types";
 import { requestReload, setDiffPreferences, useDiffInstance, useDiffPreferences } from "./state";
 import { DEFAULT_LABELS, DiffSourceContext, type DiffSource, type DiffViewLabels } from "./source";
 import { DeltaStrip, useDelta } from "./delta-strip";
@@ -66,6 +66,8 @@ export interface DiffViewProps {
 
 const NO_PLACED_FINDINGS: PlacedFinding[] = [];
 const NO_THREADS: DiffThread[] = [];
+const NO_SEMANTICS: SemanticChange[] = [];
+const NO_RANGES: Array<[number, number]> = [];
 /** How long a focus request (the "Review changes with the keyboard" command) stays good for a view that is still mounting. */
 const FOCUS_REQUEST_TTL_MS = 5_000;
 /** Approximate height of one diff line, for turning a page scroll into cursor rows. */
@@ -73,18 +75,47 @@ const LINE_PX = 20;
 /** How long after a wheel or touch event a scroll still counts as the reader's. */
 const SCROLL_INTENT_MS = 250;
 
+/** The file list shows from the `@3xl` container width (48rem) up. */
+const FILE_TREE_MIN_REM = 48;
+
 /** The vim-style mode and half-typed keys, shown while the view has the keyboard. */
 function ModeLabel() {
   const { visual, pending } = useReviewKeysState();
   return (
     <span className="pointer-events-none absolute bottom-2 right-4 z-10 hidden rounded bg-background/85 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground shadow-sm group-focus-within/diff:block">
       {visual !== null ? "-- VISUAL LINE --" : "NORMAL"}
-      {pending !== "" ? <span className="ml-2 text-foreground">{pending}</span> : null}
+      <span className={cn("ml-2 text-foreground", pending === "" && "hidden")}>{pending}</span>
       <span className="ml-2 opacity-70">? keys</span>
     </span>
   );
 }
 const DIFF_SKELETON = ["38%", "86%", "72%", "91%", "58%", "80%", "66%"];
+
+/** The file the scroller is in, outside React state so scrolling past a file boundary re-renders only the file list. */
+function createActivePath() {
+  let value: string | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set(next: string | null) {
+      if (next === value) return;
+      value = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+type ActivePath = ReturnType<typeof createActivePath>;
+
+function ActiveFileTreeSidebar({ active, ...props }: { active: ActivePath } & Omit<Parameters<typeof FileTreeSidebar>[0], "activePath">) {
+  const activePath = useSyncExternalStore(active.subscribe, active.get);
+  return <FileTreeSidebar activePath={activePath} {...props} />;
+}
 
 /** The whole changes view. Narrow containers (a side panel) drop the file tree; wide ones show it beside the diff. */
 export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, labels: labelOverrides, renderSubmitBar, deltaActions, toolbar }: DiffViewProps) {
@@ -101,7 +132,7 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
   const [keys] = useState(createReviewKeys);
   const [overlay, setOverlay] = useState<{ kind: "help" } | { kind: "files" } | { kind: "symbols"; names: string[]; pick: (name: string) => void } | null>(null);
   const [lastSearch, setLastSearch] = useState<string | null>(null);
-  const [activePath, setActivePath] = useState<string | null>(null);
+  const [active] = useState(createActivePath);
   const [composer, setComposer] = useState<({ path: string } & ComposerAnchor) | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
@@ -163,7 +194,7 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
     keys.set({ cursor: { path, side: want, line: null, want }, visual: null, focused: null });
   };
   const jumpTo = (path: string) => {
-    setActivePath(path);
+    active.set(path);
     expand(path);
     parkCursor(path);
     sectionRefs.current.get(path)?.scrollIntoView({ block: "start" });
@@ -308,6 +339,8 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
     [findingsByPath],
   );
   const notify = (message: string) => toast.message(message, { duration: 1800 });
+  const fileTreeFits = () => (rootRef.current?.clientWidth ?? 0) >= FILE_TREE_MIN_REM * Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const returnFromFileTree = () => rootRef.current?.focus({ preventScroll: true });
   const runCommand: Parameters<typeof useReviewKeys>[3] = (command, count) => {
     const env: ReviewEnv = {
       keys,
@@ -362,13 +395,45 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
       toggleFinding,
       explain: explainHunk,
       toggleLayout: () => setDiffPreferences({ layout: preferences.layout === "split" ? "unified" : "split" }),
+      toggleFileTree: () => {
+        const open = !preferences.fileTreeOpen;
+        setDiffPreferences({ fileTreeOpen: open });
+        if (open && !fileTreeFits()) notify("The file list needs a wider view");
+      },
+      focusFileTree: () => {
+        if (!fileTreeFits()) return false;
+        if (!preferences.fileTreeOpen) setDiffPreferences({ fileTreeOpen: true });
+        const path = keys.get().cursor?.path ?? null;
+        // A list that was hidden renders after this key; wait for its rows.
+        let frames = 0;
+        const focus = () => {
+          const tree = rootRef.current?.querySelector<HTMLElement>("[data-file-tree]") ?? null;
+          const visible = tree !== null && tree.getClientRects().length > 0;
+          const row = !visible ? null : ((path === null ? null : tree.querySelector<HTMLElement>(`[data-file-tree-path="${CSS.escape(path)}"]`)) ?? tree.querySelector<HTMLElement>("[data-tree-row]"));
+          if (row !== null) {
+            row.focus();
+            row.scrollIntoView({ block: "nearest" });
+          } else if (++frames < 10) requestAnimationFrame(focus);
+        };
+        focus();
+        return true;
+      },
       findingFilter: allFindings.length === 0 ? null : { value: findingFilter, set: (filter) => setDiffPreferences({ findingFilter: filter }) },
       refresh: () => requestReload(instanceKey),
       focusSendBar: () => {
-        // The bar's first action, past any checkbox or toggle that only sets an option for it.
-        const button = rootRef.current?.querySelector<HTMLElement>('[data-diff-submit-bar] button:not(:disabled):not([role="checkbox"]):not([role="switch"]):not([role="radio"]):not([aria-pressed])') ?? null;
+        // The bar's first action, past any checkbox or toggle that only sets an option for it, unless the host marks a
+        // control to start on (an option picker whose Enter sends).
+        const button =
+          rootRef.current?.querySelector<HTMLElement>(
+            '[data-diff-submit-bar] [data-send-bar-focus], [data-diff-submit-bar] button:not(:disabled):not([role="checkbox"]):not([role="switch"]):not([role="radio"]):not([role="tab"]):not([aria-pressed])',
+          ) ?? null;
         button?.focus();
         return button !== null;
+      },
+      leaveSendBar: () => {
+        if (document.activeElement?.closest("[data-diff-submit-bar]") == null) return false;
+        rootRef.current?.focus({ preventScroll: true });
+        return true;
       },
       openOverlay: (kind) => setOverlay({ kind }),
       search: lastSearch === null || diff === null ? null : { query: lastSearch, matches: new Set(rankFiles(diff.files, lastSearch).map((file) => file.path)) },
@@ -405,14 +470,17 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
   useEffect(() => {
     if (Date.now() - focusRequestedAt < FOCUS_REQUEST_TTL_MS) rootRef.current?.focus({ preventScroll: true });
   }, [focusRequestedAt]);
-  useEffect(() => {
-    if (activePath === null) return;
-    rootRef.current?.querySelector(`[data-file-tree-path="${CSS.escape(activePath)}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [activePath]);
-  const { markers, recompute: recomputeMarkers } = useScrollMarkers(mainRef, [diff, comments.threads, collapsed]);
+  useEffect(
+    () =>
+      active.subscribe(() => {
+        const path = active.get();
+        if (path !== null) rootRef.current?.querySelector(`[data-file-tree-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: "nearest" });
+      }),
+    [active],
+  );
+  const markers = useScrollMarkers(mainRef, [diff, comments.threads, collapsed]);
   // The sidebar tracks whichever file header is at (or just above) the top of the scroller, like GitHub's file tree.
   const trackActive = () => {
-    recomputeMarkers();
     const main = mainRef.current;
     if (main === null || diff === null) return;
     const top = main.getBoundingClientRect().top + 8;
@@ -423,7 +491,7 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
       if (section.getBoundingClientRect().top <= top) current = entry.path;
       else break;
     }
-    setActivePath(current ?? diff.files[0]?.path ?? null);
+    active.set(current ?? diff.files[0]?.path ?? null);
   };
 
   const annotationsFor = (file: DiffFile): PatchAnnotationProps => {
@@ -479,15 +547,19 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
             ) : null}
 
             <div className="flex min-h-0 flex-1">
-              <FileTreeSidebar
+              <ActiveFileTreeSidebar
+                active={active}
                 diff={diff}
-                activePath={activePath}
                 viewed={viewed}
                 commentCount={(path) => forPath(path).filter(threadIsOpen).length}
                 findingCount={(path) => findingsByPath.get(path)?.length ?? 0}
                 risk={(path) => risk.get(path) ?? null}
                 changedSince={(path) => changedRangesByPath.has(path)}
-                onSelect={jumpTo}
+                onSelect={(path) => {
+                  jumpTo(path);
+                  returnFromFileTree();
+                }}
+                onLeave={returnFromFileTree}
               />
               <div className="relative flex min-h-0 min-w-0 flex-1">
                 <main
@@ -533,8 +605,8 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
                       onOpenFile={openDefinition}
                       explanations={explanations.filter((entry) => entry.path === file.path)}
                       onExplain={explainHunk === null ? null : (side, startLine, endLine) => explainHunk(file.path, side, startLine, endLine)}
-                      semantics={semanticsByPath.get(file.path) ?? []}
-                      changedRanges={changedRangesByPath.get(file.path) ?? []}
+                      semantics={semanticsByPath.get(file.path) ?? NO_SEMANTICS}
+                      changedRanges={changedRangesByPath.get(file.path) ?? NO_RANGES}
                     />
                   ))}
                 </main>

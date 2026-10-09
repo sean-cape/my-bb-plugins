@@ -52,6 +52,10 @@ export type CommentApply = z.infer<typeof commentApplySchema>;
 export const diffCommentTargetSchema = z.enum(["local", "github"]);
 export type DiffCommentTarget = z.infer<typeof diffCommentTargetSchema>;
 
+/** How posted GitHub drafts conclude the review; approving and requesting changes need a PR by someone else. */
+export const reviewEventSchema = z.enum(["COMMENT", "APPROVE", "REQUEST_CHANGES"]);
+export type ReviewEvent = z.infer<typeof reviewEventSchema>;
+
 /** A comment left on the card's diff: by the user (`author` null), or an agent's reply in a thread. */
 export const diffCommentSchema = z.object({
   id: z.string(),

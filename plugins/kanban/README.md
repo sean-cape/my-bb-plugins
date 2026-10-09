@@ -37,8 +37,12 @@ its PR is reviewed and its review findings and comments are handed to agents.
   `H`/`L` move the card to the neighbouring column and `J`/`K` reorder it.
   `o` (or Enter) opens the card, `t` its thread, `d` its changes, `a` adds a
   card to the current column, `za` shows or hides the column's old cards
-  (see Columns), and `?` (or Settings → Keyboard shortcuts) lists
-  them all. Arrow keys work as `h`/`j`/`k`/`l`.
+  (see Columns), Ctrl-d/Ctrl-u scroll the column, `T` switches to the Todo
+  view, and `?` (or Settings → Keyboard shortcuts) lists them all. Arrow keys
+  work as `h`/`j`/`k`/`l`. `k` past a column's top card lands on its + button
+  and then on the title bar's controls, where `h`/`l` and `0`/`$` step along,
+  `j` comes back down, and `o`, Enter or Space press; `j`/`k` also step through
+  the Settings menu.
   Opening a card from the keyboard puts the keys in the card, with the cursor
   on its View changes button when it has one; the keys move the way the card
   is laid out: `j`/`k` go to the field or button below or above,
@@ -82,7 +86,15 @@ its PR is reviewed and its review findings and comments are handed to agents.
   changes them. A card's thread is told its due date.
 - **Todo view** (toggle at the top of the board, or `/plugins/kanban/board/todo`):
   a flat checklist grouped by column with tag filters, quick-add
-  (`Fix thing #infra`), and a checkbox that moves a card to Done.
+  (`Fix thing #infra`), and a checkbox that moves a card to Done. Its keys:
+  `j`/`k` and `gg`/`G` move through the todos (`k` past the top reaches the
+  tag filters and the title bar), `x` marks done or reopens, `o`/Enter opens
+  the card, `t` its thread, `i` or `a` types a new todo (Escape, twice with
+  vim-mode, returns to the list), Ctrl-d/Ctrl-u scroll, and `T` goes back to
+  the board.
+- **Aura wallpaper**: with the Aura plugin's fork in this repo
+  (`plugins/aura`), the board and Todo view show the same background as
+  threads; columns and the todo list sit on translucent, blurred panels.
 - **Ad hoc cards** from the page, from `bb kanban add`, or from an agent inside
   a thread (the card is linked to that thread).
 - **Review PR** button on every PR card: spawns a review thread in a fresh
@@ -195,7 +207,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
   view).
 - **Vendored files**: files under `vendor/`, `node_modules/`, `third_party/`,
   `bower_components/`, `.yarn/`, `Pods/` and `Carthage/Checkouts/` are left
-  out of the changes view (the stats line says how many were hidden). Turn off
+  out of the changes view (the stats line's tooltip says how many were hidden). Turn off
   "Hide vendored files in the changes view" in the plugin settings to show them;
   even then they stay collapsed and use the text diff, never difftastic.
 - **Diff comments**: hover a line in the changes view and press the "+" gutter
@@ -203,7 +215,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   side of the diff. Drag the "+" or the line numbers, or shift-click a second
   line number, to comment on a range instead; it posts to GitHub as a
   multi-line comment, and the text view keeps a range inside one hunk, as
-  GitHub requires. "Comment on file" leaves a file-level note. On PR cards a
+  GitHub requires. The comment icon on a file header (shown under the pointer
+  or the cursor), or `O`, leaves a file-level note. On PR cards a
   **Comments go to Local / GitHub PR** switch in the strip above the diff sets
   where every new comment and reply goes: local comments stay on the board for
   an agent, GitHub ones are drafts until you post them. It starts on GitHub for
@@ -215,7 +228,10 @@ its PR is reviewed and its review findings and comments are handed to agents.
   `apply-pr-comments` (with the same and-push and skip-triage options), and
   **Post N to GitHub** posts the drafts: new threads as one review (inline
   where a line is given, in the review body otherwise) and replies into their
-  GitHub threads.
+  GitHub threads. On someone else's PR a **Comment / Approve / Request
+  changes** picker beside it sets how that review concludes, as GitHub's
+  "Finish your review" does. From the diff, `s` lands on the picker: `h`/`l`
+  (or the arrows) choose, Enter posts, Tab reaches the button, Escape returns.
 - **Comment threads**: the changes view shows the PR's inline GitHub review
   comments under their lines, threaded with their replies, alongside the
   board's own comments. Resolved threads start collapsed; comments whose line
