@@ -16,7 +16,7 @@ export type ClientCommand =
   | { kind: "mode" }
   | { kind: "copyCommand" }
   | { kind: "delete" }
-  | { kind: "scroll"; step: 1 | -1 }
+  | { kind: "scroll"; step: 1 | -1; amount: "half" | "page" }
   | { kind: "escape"; fromField: boolean }
   | { kind: "help" };
 
@@ -58,16 +58,18 @@ export const PREFIX_KEYMAP: Record<string, ClientCommand> = {
 
 /** Vim's scroll keys keep their Ctrl. */
 export const CTRL_KEYMAP: Record<string, ClientCommand> = {
-  d: { kind: "scroll", step: 1 },
-  u: { kind: "scroll", step: -1 },
+  d: { kind: "scroll", step: 1, amount: "half" },
+  u: { kind: "scroll", step: -1, amount: "half" },
+  f: { kind: "scroll", step: 1, amount: "page" },
+  b: { kind: "scroll", step: -1, amount: "page" },
 };
 
 /** What the shortcuts dialog lists, in display order. */
 export const KEY_HELP: readonly { keys: readonly string[]; action: string }[] = [
-  { keys: ["j", "k"], action: "Next / previous method, call, or request field" },
+  { keys: ["j", "k"], action: "Next / previous method, call, or request field; scroll the response" },
   { keys: ["gg", "G"], action: "First / last row" },
-  { keys: ["l"], action: "Expand, open the method and go to its fields, or step to a field's buttons (like Now)" },
-  { keys: ["h"], action: "Step back, collapse, go up a level, or go from the fields back to the list" },
+  { keys: ["l"], action: "Expand, open the method into its fields, step to a field's buttons (like Now), then on to the response" },
+  { keys: ["h"], action: "Step back: collapse, go up a level, or from the response to the fields and on to the list" },
   { keys: ["o", "Enter"], action: "Open the method or call, toggle the section, or edit the field" },
   { keys: ["i", "I"], action: "Edit the field, with the caret at the start" },
   { keys: ["a", "A"], action: "Edit the field, with the caret at the end" },
@@ -81,8 +83,9 @@ export const KEY_HELP: readonly { keys: readonly string[]; action: string }[] = 
   { keys: ["[", "]"], action: "Previous / next request tab" },
   { keys: ["{", "}"], action: "Previous / next response tab" },
   { keys: ["m"], action: "Switch between form and JSON" },
-  { keys: ["y"], action: "Copy as grpcurl command" },
-  { keys: ["Ctrl-d", "Ctrl-u"], action: "Scroll the response down / up" },
+  { keys: ["y"], action: "Copy as grpcurl command, or the response when you're in it" },
+  { keys: ["Ctrl-d", "Ctrl-u"], action: "Half a page down / up in the pane you're in" },
+  { keys: ["Ctrl-f", "Ctrl-b"], action: "A page down / up in the pane you're in" },
   { keys: ["⌘↵"], action: "Send" },
   { keys: ["Esc"], action: "Stop editing a field, then clear the search" },
   { keys: ["?"], action: "Show these shortcuts" },

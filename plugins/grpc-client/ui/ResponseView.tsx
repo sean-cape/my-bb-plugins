@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { cx, enter, NUDGE, OPACITY_TRANSITION, PRESS, speed, stagger, STAGGER, useFlag } from "bb-motion";
 import type { CallResult } from "../contract";
 import { formatResponse } from "../shared/common";
+import { FOCUS_RING } from "./controls";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
@@ -233,7 +234,7 @@ export function ResponseView({
           {body !== "" ? <CopyButton text={body} /> : null}
         </div>
       </div>
-      <div key={`${id}:${tab}`} data-grpc-response-scroll="" className={cx("min-h-0 flex-1 overflow-auto px-4 py-3", enter.rise)}>
+      <div key={`${id}:${tab}`} data-grpc-response-scroll="" tabIndex={-1} className={cx("min-h-0 flex-1 overflow-auto px-4 py-3", FOCUS_RING, enter.rise)}>
         {tab === "response" ? (
           <div className="space-y-3">
             {!result.ok ? (

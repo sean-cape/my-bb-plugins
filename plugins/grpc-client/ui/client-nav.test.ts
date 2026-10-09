@@ -93,7 +93,7 @@ test("no prefix's first key is also a command of its own", () => {
 });
 
 test("every key in the help is mapped", () => {
-  const unmapped = new Set(["Enter", "Ctrl-d", "Ctrl-u", "⌘↵", "Esc"]);
+  const unmapped = new Set(["Enter", "Ctrl-d", "Ctrl-u", "Ctrl-f", "Ctrl-b", "⌘↵", "Esc"]);
   for (const { keys } of KEY_HELP) {
     for (const key of keys) if (!unmapped.has(key)) assert.ok((KEYMAP[key] ?? PREFIX_KEYMAP[key]) !== undefined, `${key} is listed but not mapped`);
   }

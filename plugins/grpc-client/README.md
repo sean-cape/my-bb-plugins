@@ -12,9 +12,11 @@ through the method list (or call history) and the request's fields. `j`/`k`
 move it, `gg`/`G` jump to the ends, and `l` goes deeper: it expands a service,
 opens a method and carries the cursor into its fields, steps into a section,
 or steps across a field's buttons (a timestamp's Now, a list item's remove;
-Enter or Space presses them). `h` goes back out: it steps back from those
-buttons, collapses a section or service, climbs to the enclosing one, and from
-a top-level field returns to the method list.
+Enter or Space presses them), and past the last of those moves on to the
+response. `h` goes back out: it steps back from those buttons, collapses a
+section or service, climbs to the enclosing one, and goes from the response
+to the fields and from a top-level field to the method list. In the response,
+`j`/`k` scroll a line, `gg`/`G` jump to its ends, and `y` copies it.
 `o` or Enter opens the row under the cursor; `i`/`I` edit the field under it
 with the caret at the start and `a`/`A` with it at the end, and Escape stops
 editing and puts the cursor back on that field. Editing an enum, bool, or
@@ -29,8 +31,9 @@ goes back to unset), and otherwise empties the field's box.
 clears the search, then leaves it), `f` opens the filters, `e` the endpoint
 picker, `c` toggles call history, and `b` shows or hides the list. `[`/`]` and
 `{`/`}` cycle the request and response tabs, `m` switches between form and
-JSON, `y` copies the grpcurl command, Ctrl-d/Ctrl-u scroll the response, and
-⌘↵ sends. `j`/`k` and the arrows step through the open endpoint, filter, and
+JSON, `y` copies the grpcurl command, and ⌘↵ sends. Ctrl-d/Ctrl-u (half a
+page) and Ctrl-f/Ctrl-b (a page) work in whichever pane you're in: in the list
+and the fields they move the cursor and scroll with it, as in vim. `j`/`k` and the arrows step through the open endpoint, filter, and
 actions panels. `?` (or More → Keyboard shortcuts) lists them all; arrows work
 as `hjkl`.
 

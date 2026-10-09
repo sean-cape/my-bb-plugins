@@ -249,6 +249,32 @@ export function deleteRow(row: HTMLElement): boolean {
   return changed;
 }
 
+function scrollParent(element: HTMLElement): HTMLElement | null {
+  for (let node = element.parentElement; node !== null; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node);
+    if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) return node;
+  }
+  return null;
+}
+
+/**
+ * Vim's Ctrl-d and friends for a cursor: moves it the given share of its pane's height through
+ * `rows` and scrolls the pane by as much, so it stays where it was on screen.
+ */
+export function pageCursor(rows: HTMLElement[], current: HTMLElement, step: 1 | -1, share: number): void {
+  const pane = scrollParent(current);
+  const from = current.getBoundingClientRect().top;
+  const target = from + step * share * (pane?.clientHeight ?? window.innerHeight);
+  let best = current;
+  for (const row of rows) {
+    if (Math.abs(row.getBoundingClientRect().top - target) < Math.abs(best.getBoundingClientRect().top - target)) best = row;
+  }
+  if (best === current) best = rows[rows.indexOf(current) + step] ?? current;
+  pane?.scrollBy({ top: best.getBoundingClientRect().top - from });
+  best.focus({ preventScroll: true });
+  best.scrollIntoView({ block: "nearest" });
+}
+
 export function focusRow(element: HTMLElement): void {
   element.focus({ preventScroll: true });
   element.scrollIntoView({ block: "nearest" });

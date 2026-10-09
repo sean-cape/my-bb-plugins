@@ -5,13 +5,13 @@ import { cx, enter, exit, PRESS, speed, usePresence } from "bb-motion";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { CallResult } from "../contract";
 import type { HistoryEntry, Overview, rpcContract } from "../server/rpc-contract";
-import { CHANGED_CHANNEL, MASKED_VALUE, errorMessage, isClientStreaming } from "../shared/common";
+import { CHANGED_CHANNEL, MASKED_VALUE, errorMessage, formatResponse, isClientStreaming } from "../shared/common";
 import type { MethodInfo } from "../shared/schema";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { activateRow, deleteRow, editField, FIELD_ROW, focusRow, rowCells, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
+import { activateRow, deleteRow, editField, FIELD_ROW, focusRow, pageCursor, rowCells, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
 import { type Caret, type ClientCommand, cycle, listAction, type ListMotion } from "./client-nav";
 import { Centered, FOCUS_RING, MenuItem, Segmented, Tabs } from "./controls";
 import { EndpointSwitcher } from "./EndpointSwitcher";
@@ -43,6 +43,8 @@ const MAX_LIST_SHARE = 0.6;
 const COLLAPSE_LIST_WIDTH = 160;
 const NO_OVERRIDES: Record<string, string> = {};
 const REQUEST_TABS = ["body", "metadata", "options"] as const;
+/** Where hjkl and the scroll keys act. */
+type Pane = "list" | "fields" | "response";
 /** A key's focus request that waits for its panel to mount; older ones are dropped. */
 const PENDING_FOCUS_MS = 2000;
 const PENDING_FOCUS_RETRY_MS = 50;
@@ -250,8 +252,8 @@ export function ClientView() {
   /** The request field the cursor was last on; fields remount per method, so this is the element. */
   const lastFieldRow = useRef<HTMLElement | null>(null);
   /** Where hjkl go when focus is in neither pane. */
-  const lastPane = useRef<"list" | "fields">("list");
-  const [pendingFocus, setPendingFocus] = useState<{ target: "cursor" | "fields" | "search" | "filters"; at: number } | null>(null);
+  const lastPane = useRef<Pane>("list");
+  const [pendingFocus, setPendingFocus] = useState<{ target: "cursor" | "fields" | "response" | "search" | "filters"; at: number } | null>(null);
   const [, retryPendingFocus] = useReducer((count: number) => count + 1, 0);
   const listShown = overlayList ? listOpen : !listCollapsed;
 
@@ -291,7 +293,13 @@ export function ClientView() {
     }
     const handle = methodListRef.current;
     const landed =
-      pendingFocus.target === "cursor" ? listRef.current !== null && landCursor(listRef.current) : pendingFocus.target === "fields" ? landFieldCursor() : handle !== null;
+      pendingFocus.target === "cursor"
+        ? listRef.current !== null && landCursor(listRef.current)
+        : pendingFocus.target === "fields"
+          ? landFieldCursor()
+          : pendingFocus.target === "response"
+            ? focusResponse()
+            : handle !== null;
     if (!landed) {
       // Rows can arrive in a child's own render (call history loads itself), which doesn't re-run this.
       const timer = setTimeout(retryPendingFocus, PENDING_FOCUS_RETRY_MS);
@@ -306,11 +314,40 @@ export function ClientView() {
     const row = document.activeElement?.closest<HTMLElement>(NAV_ROW) ?? null;
     return row !== null && container?.contains(row) === true ? row : null;
   };
-  const currentPane = (): "list" | "fields" => {
+  const responseScroller = () => root?.querySelector<HTMLElement>("[data-grpc-response-scroll]") ?? null;
+  const currentPane = (): Pane => {
     const active = document.activeElement;
     if (requestPaneRef.current?.contains(active)) return "fields";
     if (listRef.current?.contains(active)) return "list";
+    if (responseScroller()?.contains(active)) return "response";
     return lastPane.current;
+  };
+  const focusResponse = (): boolean => {
+    const scroller = responseScroller();
+    if (scroller === null) return false;
+    lastPane.current = "response";
+    scroller.focus({ preventScroll: true });
+    return true;
+  };
+  const backToFields = () => {
+    lastPane.current = "fields";
+    if (!landFieldCursor()) backToList();
+  };
+
+  /** The response has no cursor: j/k scroll it a line, gg/G to its ends, and h goes back to the fields. */
+  const moveResponse = (motion: ListMotion) => {
+    const scroller = responseScroller();
+    if (scroller === null) {
+      backToFields();
+      return;
+    }
+    scroller.focus({ preventScroll: true });
+    const line = parseFloat(getComputedStyle(scroller.querySelector("pre") ?? scroller).lineHeight) || 20;
+    if (motion === "down") scroller.scrollBy({ top: line });
+    if (motion === "up") scroller.scrollBy({ top: -line });
+    if (motion === "top") scroller.scrollTo({ top: 0 });
+    if (motion === "bottom") scroller.scrollTo({ top: scroller.scrollHeight });
+    if (motion === "left") backToFields();
   };
   const backToList = () => {
     lastPane.current = "list";
@@ -351,13 +388,20 @@ export function ClientView() {
     const { elements, rows } = readRows(pane);
     const cursor = focusedRow(pane) ?? savedFieldRow();
     const current = cursor === null ? -1 : elements.indexOf(cursor);
-    // On a field, l and h step across the buttons beside its box instead of editing it.
-    if (cursor !== null && rows[current]?.kind === "item" && !(cursor instanceof HTMLButtonElement) && (motion === "right" || motion === "left")) {
+    // A form without fields (JSON mode) still leads on to the response.
+    if (motion === "right" && elements.length === 0) {
+      focusResponse();
+      return;
+    }
+    // On a field, l and h step across the buttons beside its box instead of editing it, and l
+    // past the last one moves on to the response.
+    if (cursor !== null && rows[current]?.kind === "item" && (motion === "right" || (motion === "left" && !(cursor instanceof HTMLButtonElement)))) {
       const cells = rowCells(cursor);
       const at = cells.indexOf(document.activeElement as HTMLElement);
       if (motion === "right") {
         const next = cells[at + 1];
         if (next !== undefined) next.focus({ preventScroll: true });
+        else focusResponse();
         return;
       }
       if (at !== -1) {
@@ -410,10 +454,13 @@ export function ClientView() {
   const runCommand = (command: ClientCommand): boolean | void => {
     const hasMethod = endpoint !== null && method !== null;
     switch (command.kind) {
-      case "list":
-        if (currentPane() === "fields") moveFieldCursor(command.motion);
+      case "list": {
+        const pane = currentPane();
+        if (pane === "fields") moveFieldCursor(command.motion);
+        else if (pane === "response") moveResponse(command.motion);
         else moveListCursor(command.motion);
         return;
+      }
       case "search":
       case "filters":
         setLeftTab("methods");
@@ -456,20 +503,46 @@ export function ClientView() {
       case "responseTab":
         if (results[resultKey] === undefined) return false;
         setResponseTab(cycle(RESPONSE_TABS, responseTab, command.step));
+        // The new tab's scroller replaces the focused one.
+        if (currentPane() === "response") setPendingFocus({ target: "response", at: Date.now() });
         return;
       case "mode":
         if (!hasMethod) return false;
         setMode(mode === "json" ? "form" : "json");
         setRequestTab("body");
         return;
-      case "copyCommand":
+      case "copyCommand": {
+        const shownResult = results[resultKey]?.result;
+        if (currentPane() === "response" && shownResult !== undefined) {
+          navigator.clipboard.writeText(shownResult.responses.map(formatResponse).join("\n\n")).then(
+            () => toast.success("Copied the response"),
+            (cause) => toast.error(errorMessage(cause)),
+          );
+          return;
+        }
         if (!hasMethod) return false;
         copyCommand();
         return;
+      }
       case "scroll": {
-        const pane = root?.querySelector<HTMLElement>("[data-grpc-response-scroll]");
-        if (pane == null) return false;
-        pane.scrollBy({ top: (command.step * pane.clientHeight) / 2 });
+        const share = command.amount === "half" ? 0.5 : 1;
+        const pane = currentPane();
+        if (pane === "response") {
+          const scroller = responseScroller();
+          if (scroller === null) return false;
+          scroller.scrollBy({ top: command.step * share * scroller.clientHeight });
+          return;
+        }
+        const container = pane === "fields" ? requestPaneRef.current : listShown ? listRef.current : null;
+        if (container === null) return false;
+        const { elements } = readRows(container);
+        const cursor = focusedRow(container) ?? (pane === "fields" ? savedFieldRow() : (elements.find((element) => element.dataset.navKey === lastRowKey.current) ?? null));
+        if (cursor === null) {
+          if (pane === "fields") landFieldCursor();
+          else landCursor(container);
+          return;
+        }
+        pageCursor(elements, cursor, command.step, share);
         return;
       }
       case "delete":
@@ -871,7 +944,20 @@ export function ClientView() {
                 {method.comment}
               </p>
             ) : null}
-            <SplitPane vertical={!sideBySide} first={requestPane} second={<ResponseView result={shown?.result ?? null} recordedAt={shown?.recordedAt ?? null} sending={sending} tab={responseTab} onTab={setResponseTab} />} />
+            <SplitPane
+              vertical={!sideBySide}
+              first={requestPane}
+              second={
+                <div
+                  className="contents"
+                  onFocus={() => {
+                    lastPane.current = "response";
+                  }}
+                >
+                  <ResponseView result={shown?.result ?? null} recordedAt={shown?.recordedAt ?? null} sending={sending} tab={responseTab} onTab={setResponseTab} />
+                </div>
+              }
+            />
           </div>
         )}
       </div>
