@@ -30,7 +30,9 @@ const MAX_ROW_HEIGHT_PX = 240;
 // follow the shipped DOM; a bb update that renames them just leaves the
 // sidebar without a search bar.
 const SETTINGS_SIDEBAR = '[data-sidebar="sidebar"]:has(> [data-testid="settings-sidebar-top-reserve-row"])';
-const BACK_ROW = ':scope > div:has(a[href="/"])';
+// Back to app links to wherever settings were opened from, so the block is
+// found by its place under the top row rather than by its link.
+const BACK_ROW = ':scope > [data-testid="settings-sidebar-top-reserve-row"] + div';
 const NAV_LIST = ":scope > .overflow-auto";
 // Lists of threads and plugin cards, not settings. Installed plugins also has
 // no page viewport, so indexing it only waits out the timeout.

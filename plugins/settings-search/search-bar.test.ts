@@ -25,12 +25,12 @@ const flush = async () => {
   for (let i = 0; i < 4; i++) await nextFrame();
 };
 
-function renderSettings(path = "/settings") {
+function renderSettings(path = "/settings", backTo = "/") {
   window.history.replaceState(null, "", path);
   document.body.innerHTML = `
     <div data-sidebar="sidebar">
       <div data-testid="settings-sidebar-top-reserve-row"></div>
-      <div class="shrink-0 px-2 py-2"><div><a href="/">Back to app</a></div></div>
+      <div class="shrink-0 px-2 py-2"><div><a href="${backTo}">Back to app</a></div></div>
       <div class="flex-1 overflow-auto">
         <a href="/settings">General</a>
         <a href="/settings/appearance">Appearance</a>
@@ -107,6 +107,13 @@ describe("mountSettingsSearch", () => {
     expect(input().hasAttribute("data-vim-ignore")).toBe(true);
     expect(loader.loaded).toEqual(["/settings/appearance", "/settings/plugins/vim-mode"]);
     expect(loader.dispose).toHaveBeenCalled();
+  });
+
+  it("finds its place when settings were opened from a thread", async () => {
+    renderSettings("/settings", "/projects/proj_a/threads/thr_b");
+    cleanup = mountSettingsSearch(document, window, { createLoader: fakeLoader().createLoader });
+    await flush();
+    expect(document.querySelector("[data-settings-search] input")).not.toBeNull();
   });
 
   it("swaps the page list for results from every page while there is a query", async () => {
