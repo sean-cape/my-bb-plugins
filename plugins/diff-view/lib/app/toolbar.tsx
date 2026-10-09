@@ -4,7 +4,7 @@ import { cn } from "./utils";
 import { PRESS } from "./ui/motion";
 import { requestReload, setDiffPreferences, useDiffInstance, useDiffPreferences } from "./state";
 
-/** Text or structural engine, unified or split layout, and line wrapping: preferences shared by every diff view. */
+/** Text or structural engine, and unified or split layout: preferences shared by every diff view. Long lines always wrap. */
 export function DiffDisplayControls() {
   const preferences = useDiffPreferences();
   return (
@@ -38,15 +38,6 @@ export function DiffDisplayControls() {
           </button>
         ))}
       </div>
-      <button
-        type="button"
-        aria-pressed={preferences.wrap}
-        title={preferences.wrap ? "Long lines wrap; click to scroll horizontally instead" : "Long lines scroll horizontally; click to wrap"}
-        onClick={() => setDiffPreferences({ wrap: !preferences.wrap })}
-        className={cn("rounded-md border border-border px-2 py-0.5 text-xs", PRESS, preferences.wrap ? "bg-state-active text-foreground" : "text-muted-foreground hover:text-foreground")}
-      >
-        Wrap
-      </button>
     </>
   );
 }

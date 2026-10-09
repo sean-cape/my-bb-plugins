@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 /** Every preference the view keeps in localStorage, under `diff-view:<name>`. */
-export type PreferenceName = "diffMode" | "diffWrap" | "showFindings" | "tourOpen" | "fileTreeOpen" | "fileTreeWidth";
+export type PreferenceName = "diffMode" | "showFindings" | "tourOpen" | "fileTreeOpen" | "fileTreeWidth";
 
 /** Reads a preference, falling back to the key kanban stored it under before the diff view became its own plugin. */
 export function readPreference(name: PreferenceName): string | null {
@@ -24,8 +24,6 @@ export interface DiffPreferences {
   /** Text (Pierre) or structural (difftastic) rendering of a file's changes. */
   mode: "text" | "structural";
   layout: "unified" | "split";
-  /** Wrap long lines (GitHub default) or scroll them horizontally. */
-  wrap: boolean;
   /** Show review findings inline in the diff. */
   showFindings: boolean;
 }
@@ -48,15 +46,13 @@ function createStore<T>(initial: T) {
 
 const preferences = createStore<DiffPreferences>({
   mode: readPreference("diffMode") === "text" ? "text" : "structural",
-  layout: "unified",
-  wrap: readPreference("diffWrap") !== "false",
+  layout: "split",
   showFindings: readPreference("showFindings") !== "false",
 });
 
 export function setDiffPreferences(patch: Partial<DiffPreferences>): void {
   preferences.set({ ...preferences.get(), ...patch });
   if (patch.mode !== undefined) writePreference("diffMode", patch.mode);
-  if (patch.wrap !== undefined) writePreference("diffWrap", String(patch.wrap));
   if (patch.showFindings !== undefined) writePreference("showFindings", String(patch.showFindings));
 }
 

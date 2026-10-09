@@ -1,6 +1,6 @@
 import type { DiffCommentTarget, LineRange } from "../../types";
 import { checkedLineRange } from "../../line-range";
-import { isUnsent, type DiffThread } from "../comments/threads";
+import { threadKeyActions, type DiffThread } from "../comments/threads";
 import type { InlineFinding } from "../findings/findings";
 import { WHOLE_FILE } from "../patch-annotations";
 import type { ReviewCommand } from "./keymap";
@@ -51,9 +51,13 @@ export interface ReviewEnv {
   setCollapsed: (paths: readonly string[], collapsed: boolean) => void;
   markViewed: (path: string, viewed: boolean) => void;
   deleteComment: (id: string) => void;
+  canPostToGithub: boolean;
+  moveComment: (id: string, target: DiffCommentTarget) => void;
+  openUrl: (url: string) => void;
+  openThread: (threadId: string) => void;
   toggleFinding: (item: InlineFinding, selected: boolean) => void;
   explain: ((path: string, side: "old" | "new", startLine: number, endLine: number) => void) | null;
-  setDisplay: (setting: "mode" | "layout" | "wrap") => void;
+  setDisplay: (setting: "mode" | "layout") => void;
   refresh: () => void;
   focusSendBar: () => boolean;
   openOverlay: (overlay: "help" | "files") => void;
@@ -74,11 +78,6 @@ function focusedThread(env: ReviewEnv, cursor: Cursor): DiffThread | null {
   return env.threads.find((thread) => thread.id === id) ?? threadAt(env, cursor);
 }
 
-/** The reader's own comment that is still editable in a thread: the latest unsent one. */
-function ownUnsent(thread: DiffThread): string | null {
-  const entry = thread.entries.filter(isUnsent).at(-1);
-  return entry === undefined ? null : entry.comment.id;
-}
 
 function go(env: ReviewEnv, cursor: Cursor, options: { block?: "center" | "start" | "end"; thread?: string | null } = {}): void {
   env.keys.set({ cursor, focusedThread: options.thread !== undefined ? options.thread : (threadAt(env, cursor)?.id ?? null) });
@@ -143,7 +142,7 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       move(moveFile(files, cursor, command.direction, count), "start");
       return;
     case "thread": {
-      const thread = nextAnchor(files, cursor, env.threads, command.direction, count);
+      const thread = nextAnchor(files, cursor, env.threads, command.direction, count, state.focusedThread);
       if (thread === null) {
         env.notify(env.threads.length === 0 ? "No comments yet" : command.direction === 1 ? "No more comments below" : "No more comments above");
         return;
@@ -234,13 +233,35 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
     case "edit":
     case "delete": {
       const thread = focusedThread(env, cursor);
-      const id = thread === null ? null : ownUnsent(thread);
+      const id = thread === null ? null : (threadKeyActions(thread, env.canPostToGithub).ownUnsent?.id ?? null);
       if (thread === null || id === null) {
         env.notify(thread === null ? "No comment thread on this line" : "Nothing unsent of yours in this thread");
         return;
       }
       if (command.kind === "edit") env.keys.threads.get(thread.id)?.edit(id);
       else env.deleteComment(id);
+      return;
+    }
+    case "move":
+    case "openGithub":
+    case "openThread": {
+      const thread = focusedThread(env, cursor);
+      if (thread === null) {
+        env.notify("No comment thread on this line");
+        return;
+      }
+      const actions = threadKeyActions(thread, env.canPostToGithub);
+      if (command.kind === "move") {
+        if (actions.ownUnsent === null || actions.moveTo === null) env.notify(actions.ownUnsent === null ? "Nothing unsent of yours in this thread" : "This comment can only stay local");
+        else {
+          env.moveComment(actions.ownUnsent.id, actions.moveTo);
+          env.notify(actions.moveTo === "github" ? "Moved to the GitHub PR drafts" : "Made local");
+        }
+      } else if (command.kind === "openGithub") {
+        if (actions.url === null) env.notify("This thread is not on GitHub");
+        else env.openUrl(actions.url);
+      } else if (actions.agentThread === null) env.notify("No agent has replied in this thread");
+      else env.openThread(actions.agentThread);
       return;
     }
     case "toggleFinding": {

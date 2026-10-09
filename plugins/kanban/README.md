@@ -174,8 +174,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
 - **Review aids**: a per-file "Viewed" checkbox collapses the file and counts
   toward "n of m viewed" at the top (scoped to the PR head, so a push resets
   it); lockfiles, vendored and generated files collapse by default; the file
-  tree groups by directory with per-directory stats; a Wrap toggle switches
-  long lines between wrapping and horizontal scroll; comment markers sit on a
+  tree groups by directory with per-directory stats; long lines always wrap,
+  and the diff opens split; comment markers sit on a
   track beside the scrollbar; and the whole review runs from the keyboard with
   vim-style keys (see the Diff view plugin's README, or press `?` in the
   view).

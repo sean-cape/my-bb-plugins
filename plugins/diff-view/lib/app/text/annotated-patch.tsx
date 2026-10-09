@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { experimental_useCodeTheme as useCodeTheme } from "@get-bb/plugin-sdk/app";
-import { PatchDiff, useWorkerPool } from "@pierre/diffs/react";
+import { PatchDiff, VirtualizerContext, useWorkerPool } from "@pierre/diffs/react";
 import { useDiffPreferences } from "../state";
 import { useHostPierreThemes } from "../theme";
 import { WHOLE_FILE, type PatchAnnotationProps } from "../patch-annotations";
@@ -13,6 +13,13 @@ import { useFileCursor, usePublishNavModel, type FileNavModel } from "../keys/re
 import type { DiffSide, LineRange } from "../../types";
 import { buildLineAnnotations, fromPierreSide, toPierreSide, type AnnotationMeta, type PierreSide } from "./line-annotations";
 import { navRows, patchRows, selectionRange } from "./patch-rows";
+
+/**
+ * Pierre sizes each code column `1fr`, which cannot shrink below its widest unbreakable content: a long token or an
+ * inline comment then widens its column, squeezes the other side of a split diff to a sliver, and pushes the comment's
+ * buttons off screen. A zero minimum keeps the columns to the panel and lets their content wrap.
+ */
+const COLUMN_CSS = "[data-diff],[data-file]{--diffs-code-grid:var(--diffs-grid-number-column-width) minmax(0, 1fr)}";
 
 interface PierreSelection {
   start: number;
@@ -62,7 +69,7 @@ export function AnnotatedPatch({
   onCancelComposer,
   onSubmitComposer,
 }: PatchAnnotationProps & { patch: string }) {
-  const { layout, wrap } = useDiffPreferences();
+  const { layout } = useDiffPreferences();
   const { mode: themeMode } = useCodeTheme();
   const themes = useHostPierreThemes();
   const workerPool = useWorkerPool();
@@ -120,7 +127,8 @@ export function AnnotatedPatch({
       theme: themes,
       themeType: themeMode,
       disableFileHeader: true,
-      overflow: wrap ? ("wrap" as const) : ("scroll" as const),
+      overflow: "wrap" as const,
+      unsafeCSS: COLUMN_CSS,
       lineHoverHighlight: "both" as const,
       enableGutterUtility: true,
       enableLineSelection: true,
@@ -129,7 +137,7 @@ export function AnnotatedPatch({
       onLineSelectionChange: setDragged,
       onLineSelectionEnd: finish,
     };
-  }, [layout, themes, themeMode, wrap, onStartComment, rows]);
+  }, [layout, themes, themeMode, onStartComment, rows]);
   return (
     <div ref={hostRef}>
       <FileLevelComments
@@ -139,24 +147,28 @@ export function AnnotatedPatch({
         onSubmit={onSubmitComposer}
         onCancel={onCancelComposer}
       />
-      <PatchDiff<AnnotationMeta>
-        patch={fullPatch}
-        options={options}
-        lineAnnotations={annotations}
-        selectedLines={dragged ?? composerSelection ?? cursorSelection}
-        disableWorkerPool={workerPool === undefined}
-        className="text-xs"
-        renderAnnotation={({ metadata }) => {
-          if (metadata.kind === "composer") {
-            return <DiffCommentForm key={metadata.key} path={path} range={composer ?? WHOLE_FILE} onSubmit={onSubmitComposer} onCancel={onCancelComposer} />;
-          }
-          if (metadata.kind === "finding") {
-            const item = metadata.finding;
-            return <FindingAnnotation key={metadata.key} item={item} entrance={!committedKeys.current.has(metadata.key)} onToggle={(selected) => onToggleFinding(item, selected)} onEdit={(edit) => onEditFinding(item, edit)} />;
-          }
-          return <DiffThreadView key={metadata.key} thread={metadata.thread} />;
-        }}
-      />
+      {/* bb's thread page provides a virtualizer for its own scroller; under it Pierre re-renders these diffs on every
+          scroll of ours, which flickers. Each file here is mounted near the viewport by LazyMount instead. */}
+      <VirtualizerContext.Provider value={undefined}>
+        <PatchDiff<AnnotationMeta>
+          patch={fullPatch}
+          options={options}
+          lineAnnotations={annotations}
+          selectedLines={dragged ?? composerSelection ?? cursorSelection}
+          disableWorkerPool={workerPool === undefined}
+          className="text-xs"
+          renderAnnotation={({ metadata }) => {
+            if (metadata.kind === "composer") {
+              return <DiffCommentForm key={metadata.key} path={path} range={composer ?? WHOLE_FILE} onSubmit={onSubmitComposer} onCancel={onCancelComposer} />;
+            }
+            if (metadata.kind === "finding") {
+              const item = metadata.finding;
+              return <FindingAnnotation key={metadata.key} item={item} entrance={!committedKeys.current.has(metadata.key)} onToggle={(selected) => onToggleFinding(item, selected)} onEdit={(edit) => onEditFinding(item, edit)} />;
+            }
+            return <DiffThreadView key={metadata.key} thread={metadata.thread} />;
+          }}
+        />
+      </VirtualizerContext.Provider>
     </div>
   );
 }

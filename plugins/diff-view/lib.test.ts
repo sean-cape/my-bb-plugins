@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDiffThreads, localCommentState, threadIsOpen } from "./lib/app/comments/threads";
+import { buildDiffThreads, localCommentState, threadIsOpen, threadKeyActions } from "./lib/app/comments/threads";
 import { buildFileTree } from "./lib/app/file-tree/build-file-tree";
 import { activeReviews, inlineFindingsByPath } from "./lib/app/findings/findings";
 import { isGeneratedFile } from "./lib/app/generated";
@@ -500,6 +500,18 @@ describe("review keys", () => {
     expect(anchorsAtCursor(files, at("a.ts", null), anchors).map((anchor) => anchor.id)).toEqual(["file"]);
   });
 
+  it("steps through several anchors on one line one at a time", () => {
+    const anchors = [
+      { id: "first", path: "a.ts", side: "RIGHT" as const, line: 3 },
+      { id: "second", path: "a.ts", side: "RIGHT" as const, line: 3 },
+      { id: "later", path: "a.ts", side: "RIGHT" as const, line: 12 },
+    ];
+    expect(nextAnchor(files, at("a.ts", 3), anchors, 1, 1, "first")?.id).toBe("second");
+    expect(nextAnchor(files, at("a.ts", 3), anchors, 1, 1, "second")?.id).toBe("later");
+    expect(nextAnchor(files, at("a.ts", 3), anchors, -1, 1, "second")?.id).toBe("first");
+    expect(nextAnchor(files, at("a.ts", 3), anchors, 1, 1)?.id).toBe("later");
+  });
+
   it("turns a line selection into a comment range in display order, cut to one hunk where GitHub needs it", () => {
     expect(visualRange(unified, at("a.ts", 3), { ...at("a.ts", 2), side: "LEFT" }, true)).toEqual({ line: 3, side: "RIGHT", startLine: 2, startSide: "LEFT" });
     expect(visualRange(unified, at("a.ts", 1), at("a.ts", 12), true)).toEqual({ line: 12, side: "RIGHT", startLine: 10, startSide: "RIGHT" });
@@ -535,5 +547,19 @@ describe("review keys", () => {
     const file = (path: string) => ({ path }) as DiffFile;
     expect(rankFiles([file("src/view/a.ts"), file("lib/view.ts"), file("other.ts")], "view").map((entry) => entry.path)).toEqual(["lib/view.ts", "src/view/a.ts"]);
     expect(rankFiles([file("src/view/a.ts")], "sva").map((entry) => entry.path)).toEqual(["src/view/a.ts"]);
+  });
+});
+
+describe("threadKeyActions", () => {
+  it("offers edit, delete and a move for your unsent comment, and links to where the thread lives", () => {
+    const [pending] = buildDiffThreads([local({ id: "c1" })], []);
+    expect(threadKeyActions(pending!, true)).toMatchObject({ canReply: true, ownUnsent: { id: "c1" }, moveTo: "github", url: null, agentThread: null });
+    expect(threadKeyActions(pending!, false).moveTo).toBeNull();
+    const [draft] = buildDiffThreads([local({ id: "d1", target: "github" })], []);
+    expect(threadKeyActions(draft!, true).moveTo).toBe("local");
+    const [fileLevel] = buildDiffThreads([local({ id: "f1", line: null })], []);
+    expect(threadKeyActions(fileLevel!, true).moveTo).toBeNull();
+    const [answered] = buildDiffThreads([local({ id: "r1", applyId: "a1" }), local({ id: "r2", inReplyTo: "r1", author: "agent", authorThreadId: "thr_x", createdAt: 5 })], []);
+    expect(threadKeyActions(answered!, true)).toMatchObject({ ownUnsent: null, moveTo: null, agentThread: "thr_x" });
   });
 });

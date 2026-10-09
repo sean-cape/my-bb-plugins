@@ -168,15 +168,26 @@ export function anchorPosition(files: readonly NavFile[], anchor: NavAnchor): Na
   return { fileIndex, row: rowIndexOf(visibleRows(files[fileIndex]!), anchor.side, anchor.line) };
 }
 
-/** The next (or previous) anchor strictly past the cursor, `count` times over. */
-export function nextAnchor<T extends NavAnchor>(files: readonly NavFile[], cursor: Cursor, anchors: readonly T[], direction: 1 | -1, count: number): T | null {
+/**
+ * The next (or previous) anchor past the cursor, `count` times over. `from` names the anchor the reader is on, so
+ * several on one line are stepped through one at a time.
+ */
+export function nextAnchor<T extends NavAnchor>(files: readonly NavFile[], cursor: Cursor, anchors: readonly T[], direction: 1 | -1, count: number, from: string | null = null): T | null {
   const here = cursorPosition(files, cursor);
   if (here === null) return null;
   const placed = anchors
     .map((anchor) => ({ anchor, position: anchorPosition(files, anchor) }))
     .filter((entry): entry is { anchor: T; position: NavPosition } => entry.position !== null)
     .sort((a, b) => compare(a.position, b.position));
-  const candidates = direction === 1 ? placed.filter((entry) => compare(entry.position, here) > 0) : placed.filter((entry) => compare(entry.position, here) < 0).reverse();
+  const at = from === null ? -1 : placed.findIndex((entry) => entry.anchor.id === from && compare(entry.position, here) === 0);
+  const candidates =
+    at !== -1
+      ? direction === 1
+        ? placed.slice(at + 1)
+        : placed.slice(0, at).reverse()
+      : direction === 1
+        ? placed.filter((entry) => compare(entry.position, here) > 0)
+        : placed.filter((entry) => compare(entry.position, here) < 0).reverse();
   return candidates[Math.min(count, candidates.length) - 1]?.anchor ?? null;
 }
 

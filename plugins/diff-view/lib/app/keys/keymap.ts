@@ -18,11 +18,14 @@ export type ReviewCommand =
   | { kind: "reply" }
   | { kind: "edit" }
   | { kind: "delete" }
+  | { kind: "move" }
+  | { kind: "openGithub" }
+  | { kind: "openThread" }
   | { kind: "toggleFinding" }
   | { kind: "explain" }
   | { kind: "viewed" }
   | { kind: "target" }
-  | { kind: "display"; setting: "mode" | "layout" | "wrap" }
+  | { kind: "display"; setting: "mode" | "layout" }
   | { kind: "refresh" }
   | { kind: "send" }
   | { kind: "findFile" }
@@ -96,13 +99,15 @@ const SEQUENCES: Record<string, ReviewCommand> = {
   r: { kind: "reply" },
   e: { kind: "edit" },
   dd: { kind: "delete" },
+  M: { kind: "move" },
+  gx: { kind: "openGithub" },
+  go: { kind: "openThread" },
   x: { kind: "toggleFinding" },
   K: { kind: "explain" },
   v: { kind: "viewed" },
   t: { kind: "target" },
   gm: { kind: "display", setting: "mode" },
   gl: { kind: "display", setting: "layout" },
-  gw: { kind: "display", setting: "wrap" },
   R: { kind: "refresh" },
   s: { kind: "send" },
   "/": { kind: "findFile" },
@@ -147,7 +152,7 @@ export const KEY_HELP: ReadonlyArray<{ group: string; keys: ReadonlyArray<{ keys
       { keys: ["]c", "[c"], action: "Next / previous change" },
       { keys: ["}", "{"], action: "Next / previous hunk" },
       { keys: ["]f", "[f"], action: "Next / previous file" },
-      { keys: ["c", "C"], action: "Next / previous comment thread" },
+      { keys: ["c", "C"], action: "Next / previous comment thread, one at a time on a shared line" },
       { keys: ["]d", "[d"], action: "Next / previous review finding" },
       { keys: ["gg", "G"], action: "First / last line" },
       { keys: ["⌃d", "⌃u"], action: "Half a page down / up (⌃f / ⌃b a whole page)" },
@@ -165,6 +170,9 @@ export const KEY_HELP: ReadonlyArray<{ group: string; keys: ReadonlyArray<{ keys
       { keys: ["r"], action: "Reply to the thread on the line" },
       { keys: ["e"], action: "Edit your unsent comment in that thread" },
       { keys: ["dd"], action: "Delete your unsent comment in that thread" },
+      { keys: ["M"], action: "Move that comment between local and the GitHub PR" },
+      { keys: ["za"], action: "Fold or unfold the thread" },
+      { keys: ["gx", "go"], action: "Open the thread on GitHub / the agent thread that replied" },
       { keys: ["t"], action: "Switch where new comments go: local or the GitHub PR" },
       { keys: ["s"], action: "Go to the send bar (↩ sends, Tab for the next action)" },
       { keys: ["⌘↩"], action: "In a comment box: add it" },
@@ -175,14 +183,14 @@ export const KEY_HELP: ReadonlyArray<{ group: string; keys: ReadonlyArray<{ keys
     group: "Review",
     keys: [
       { keys: ["v"], action: "Mark the file viewed (collapses it) or not" },
-      { keys: ["za"], action: "Fold the thread on the line, or the file" },
+      { keys: ["za"], action: "Fold the thread on the line, or else the file" },
       { keys: ["zo", "zc"], action: "Expand / collapse the file" },
       { keys: ["zR", "zM"], action: "Expand / collapse every file" },
       { keys: ["zr"], action: "Show more unchanged lines around the hunk, or the rest of a long new file (structural)" },
       { keys: ["x"], action: "Select or drop the review finding on the line" },
       { keys: ["K"], action: "Ask an agent to explain the hunk" },
       { keys: ["gd"], action: "Peek a symbol on the line: its definition and uses (structural)" },
-      { keys: ["gm", "gl", "gw"], action: "Text / structural, unified / split, wrap" },
+      { keys: ["gm", "gl"], action: "Text or structural, split or unified" },
       { keys: ["R"], action: "Refresh the diff" },
       { keys: ["Esc"], action: "Leave line selection" },
       { keys: ["?"], action: "This sheet" },

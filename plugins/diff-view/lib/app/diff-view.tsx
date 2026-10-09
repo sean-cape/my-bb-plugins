@@ -288,12 +288,15 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
         void comments.deleteComment(id);
         notify("Comment deleted");
       },
+      canPostToGithub: source.canPostToGithub ?? false,
+      moveComment: (id, target) => void comments.moveComment(id, target),
+      openUrl: (url) => window.open(url, "_blank", "noopener,noreferrer"),
+      openThread: onOpenThread,
       toggleFinding,
       explain: explainHunk,
       setDisplay: (setting) => {
         if (setting === "mode") setDiffPreferences({ mode: preferences.mode === "text" ? "structural" : "text" });
-        else if (setting === "layout") setDiffPreferences({ layout: preferences.layout === "split" ? "unified" : "split" });
-        else setDiffPreferences({ wrap: !preferences.wrap });
+        else setDiffPreferences({ layout: preferences.layout === "split" ? "unified" : "split" });
       },
       refresh: () => requestReload(instanceKey),
       focusSendBar: () => {

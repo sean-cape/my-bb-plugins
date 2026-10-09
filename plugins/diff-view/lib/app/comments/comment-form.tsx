@@ -44,8 +44,8 @@ export function DiffCommentForm({
     }
   };
   return (
-    <div data-comment-form={reply ? "reply" : "new"} className={cn("my-1 flex flex-col gap-2 rounded-md border bg-card p-2.5 text-sm", enter.drop, FAST, target === "github" ? "border-sky-500/50" : "border-primary/40")}>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+    <div data-comment-form={reply ? "reply" : "new"} className={cn("my-1 flex min-w-0 max-w-full flex-col gap-2 rounded-md border bg-card p-2.5 text-sm", enter.drop, FAST, target === "github" ? "border-sky-500/50" : "border-primary/40")}>
+      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
         <Icon name="MessageSquare" className="size-3.5" />
         {reply ? <span>Reply</span> : (
           <>
@@ -72,8 +72,8 @@ export function DiffCommentForm({
         aria-label="Comment"
         className="w-full resize-y rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       />
-      <div className="flex items-center justify-end gap-1.5">
-        <span className="mr-auto text-[11px] text-muted-foreground">{target === "github" ? "Draft until you post it to the PR" : viewTarget === "github" && canPostToGithub ? labels.localOnlyThread : labels.localHint}</span>
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <span className="mr-auto min-w-0 text-[11px] text-muted-foreground">{target === "github" ? "Draft until you post it to the PR" : viewTarget === "github" && canPostToGithub ? labels.localOnlyThread : labels.localHint}</span>
         <Button
           type="button"
           variant="ghost"

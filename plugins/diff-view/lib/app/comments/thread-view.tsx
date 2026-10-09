@@ -10,7 +10,7 @@ import { useDiffSource } from "../source";
 import { longLineLabel, shortLineLabel } from "../../line-range";
 import { DiffCommentForm } from "./comment-form";
 import { DiffCommentsContext } from "./context";
-import { isUnsent, localCommentState, threadIsOpen, type DiffThread, type LocalCommentState, type ThreadEntry } from "./threads";
+import { isUnsent, localCommentState, threadIsOpen, threadKeyActions, type DiffThread, type LocalCommentState, type ThreadEntry } from "./threads";
 import { returnToDiff, useIsFocusedThread, useThreadControls } from "../keys/review-keys-context";
 
 function useNow(intervalMs = 30_000): number {
@@ -175,6 +175,23 @@ function ThreadEntryView({
   );
 }
 
+/** The keys that act on the thread under the cursor, so they are discoverable without the `?` sheet. */
+function ThreadKeyHint({ thread, open }: { thread: DiffThread; open: boolean }) {
+  const { canPostToGithub } = useContext(DiffCommentsContext);
+  const actions = threadKeyActions(thread, canPostToGithub);
+  const hints = [
+    actions.canReply ? "r reply" : null,
+    actions.ownUnsent !== null ? "e edit" : null,
+    actions.ownUnsent !== null ? "dd delete" : null,
+    actions.moveTo === "github" ? "M move to GitHub" : actions.moveTo === "local" ? "M make local" : null,
+    actions.url !== null ? "gx open on GitHub" : null,
+    actions.agentThread !== null ? "go open agent thread" : null,
+    open ? "za fold" : "za unfold",
+    "c next",
+  ].filter((hint): hint is string => hint !== null);
+  return <p className={cn("border-t border-border/60 px-2.5 py-1 font-mono text-[10px] text-muted-foreground", enter.fade, FAST)}>{hints.join(" · ")}</p>;
+}
+
 /** One thread under its line: the root, its replies (GitHub and local interleaved by time), and a reply box. Resolved threads start collapsed. */
 export function DiffThreadView({ thread }: { thread: DiffThread }) {
   const actions = useContext(DiffCommentsContext);
@@ -216,7 +233,7 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
       data-comment-anchor=""
       data-comment-state={unsent ? "pending" : "done"}
       data-thread-id={thread.id}
-      className={cn("my-1 rounded-md border bg-card text-sm", enter.fade, FAST, OPACITY_TRANSITION, unsent ? "border-amber-500/60" : "border-border", !threadIsOpen(thread) && "opacity-75", focused && "ring-1 ring-primary/70")}
+      className={cn("my-1 min-w-0 max-w-full break-words rounded-md border bg-card text-sm [&_pre]:max-w-full [&_pre]:overflow-x-auto", enter.fade, FAST, OPACITY_TRANSITION, unsent ? "border-amber-500/60" : "border-border", !threadIsOpen(thread) && "opacity-75", focused && "ring-1 ring-primary/70")}
     >
       <button type="button" className="flex w-full items-center gap-2 px-2 py-1 text-left text-xs" onClick={() => setOpen((value) => !value)} aria-expanded={open} data-bbm-open={open}>
         <Icon name="ChevronRight" className={cn("size-3 shrink-0 text-muted-foreground", CHEVRON)} />
@@ -257,6 +274,7 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
           )}
         </div>
       ) : null}
+      {focused ? <ThreadKeyHint thread={thread} open={open} /> : null}
     </div>
   );
 }

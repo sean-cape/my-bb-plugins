@@ -49,7 +49,7 @@ export function FindingAnnotation({
   const field = "w-full rounded-md border border-border bg-background px-2 py-1 text-xs";
   const reveal = useOpenedSinceMount(open) ? cn(enter.rise, FAST) : undefined;
   return (
-    <div data-finding-anchor="" className={cn("my-0.5 border-l-2 pl-2 text-sm", entering && [enter.fade, FAST], OPACITY_TRANSITION, SEVERITY_BORDER[finding.severity], !item.selected && "opacity-60")}>
+    <div data-finding-anchor="" className={cn("my-0.5 min-w-0 max-w-full break-words border-l-2 pl-2 text-sm [&_pre]:max-w-full [&_pre]:overflow-x-auto", entering && [enter.fade, FAST], OPACITY_TRANSITION, SEVERITY_BORDER[finding.severity], !item.selected && "opacity-60")}>
       <div className="flex items-center gap-2 py-0.5 text-xs">
         <Checkbox checked={item.selected} onCheckedChange={(checked) => onToggle(checked === true)} aria-label={`${item.selected ? "Exclude" : "Include"} ${finding.id} in the apply round`} className="size-3.5" />
         <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setOpen((value) => !value)} aria-expanded={open} data-bbm-open={open}>

@@ -7,7 +7,7 @@ import { cn } from "../utils";
 import { FAST, PRESS, SHIMMER, enter } from "../ui/motion";
 import { errorMessage } from "../format";
 import { useDiffSource } from "../source";
-import { setDiffPreferences, useDiffPreferences } from "../state";
+import { setDiffPreferences } from "../state";
 import { useHostThemeName } from "../theme";
 import { rangesOverlap } from "../ranges";
 import type { PatchAnnotationProps } from "../patch-annotations";
@@ -80,7 +80,6 @@ export function StructuralPatch({
   const [showAll, setShowAll] = useState(false);
   const [drag, setDrag] = useState<LineDrag | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
-  const { wrap: diffWrap } = useDiffPreferences();
   const themeName = useHostThemeName();
   const shikiLang = shikiLangFor(path);
   const oldTokens = useShikiTokens(diff?.oldText ?? "", shikiLang, themeName);
@@ -278,7 +277,7 @@ export function StructuralPatch({
             <span className="absolute inset-0 hidden items-center justify-end pr-0.5 text-primary group-hover/ln:flex">+</span>
           </button>
         </td>
-        <td className={cn(diffWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre", "pl-2 pr-3 align-top", tint, atCursor && "ring-1 ring-inset ring-primary/70")} data-cursor={atCursor ? "" : undefined}>
+        <td className={cn("whitespace-pre-wrap break-words pl-2 pr-3 align-top", tint, atCursor && "ring-1 ring-inset ring-primary/70")} data-cursor={atCursor ? "" : undefined}>
           {movedLabel}
           <StructuralLine text={text} changes={sideLine} tokens={lineTokens} side={side} onSymbol={symbols.lookupSymbol} onSymbolHover={symbols.hoverSymbol} />
         </td>
@@ -474,8 +473,8 @@ export function StructuralPatch({
         onCancel={onCancelComposer}
       />
       {!hasChanges ? <p className="px-3 py-2 text-sm text-muted-foreground">No structural changes.</p> : null}
-      <div className={cn(!diffWrap && "overflow-x-auto")}>
-        <table ref={tableRef} className={cn("border-collapse font-mono text-[12px] leading-5", diffWrap ? "w-full table-fixed" : "min-w-full table-auto")}>
+      <div>
+        <table ref={tableRef} className="w-full table-fixed border-collapse font-mono text-[12px] leading-5">
           {/* table-fixed sizes columns from the first row, where an empty side is one colSpan=2 cell; pin the gutters here instead. */}
           <colgroup>
             <col className="w-12" />

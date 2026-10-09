@@ -1,4 +1,4 @@
-import type { DiffComment, GithubComment, LineRange } from "../../types";
+import type { DiffComment, DiffCommentTarget, GithubComment, LineRange } from "../../types";
 
 export type ThreadEntry = { source: "github"; comment: GithubComment } | { source: "local"; comment: DiffComment };
 
@@ -94,4 +94,37 @@ export function threadIsOpen(thread: DiffThread): boolean {
   if (thread.entries.some(isUnsent)) return true;
   const root = thread.entries[0]!;
   return root.source === "github" ? true : root.comment.addressedAt === null;
+}
+
+/** What the review keys can do in a thread, matching the buttons its comments show. */
+export interface ThreadKeyActions {
+  canReply: boolean;
+  /** Your latest comment that has not been sent yet: the one `e`, `dd` and `M` act on. */
+  ownUnsent: DiffComment | null;
+  /** Where `M` moves that comment, when it can move. */
+  moveTo: DiffCommentTarget | null;
+  /** The thread on GitHub, for `gx`. */
+  url: string | null;
+  /** The agent thread that last replied, for `go`. */
+  agentThread: string | null;
+}
+
+export function threadKeyActions(thread: DiffThread, canPostToGithub: boolean): ThreadKeyActions {
+  const local = thread.entries.filter((entry): entry is ThreadEntry & { source: "local" } => entry.source === "local");
+  const unsent = local.filter(isUnsent).at(-1) ?? null;
+  const ownUnsent = unsent?.comment ?? null;
+  let moveTo: DiffCommentTarget | null = null;
+  if (ownUnsent !== null && canPostToGithub) {
+    if (localCommentState(ownUnsent) === "draft") moveTo = "local";
+    else if (unsent === thread.entries[0] ? ownUnsent.line !== null : thread.onGithub) moveTo = "github";
+  }
+  const root = thread.entries[0]!;
+  const posted = local.map((entry) => entry.comment.postedUrl).filter((url): url is string => url !== null);
+  return {
+    canReply: !thread.orphaned,
+    ownUnsent,
+    moveTo,
+    url: root.source === "github" ? root.comment.url : (posted[0] ?? null),
+    agentThread: local.filter((entry) => entry.comment.author !== null && entry.comment.authorThreadId !== null).at(-1)?.comment.authorThreadId ?? null,
+  };
 }
