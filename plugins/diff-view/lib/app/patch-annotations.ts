@@ -12,7 +12,6 @@ export interface PatchAnnotationProps {
   path: string;
   threads: DiffThread[];
   composer: ComposerAnchor | null;
-  composeTarget: DiffCommentTarget;
   onStartComment: (anchor: ComposerAnchor) => void;
   onCancelComposer: () => void;
   onSubmitComposer: (body: string, target: DiffCommentTarget) => Promise<void>;

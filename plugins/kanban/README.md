@@ -188,13 +188,14 @@ its PR is reviewed and its review findings and comments are handed to agents.
   side of the diff. Drag the "+" or the line numbers, or shift-click a second
   line number, to comment on a range instead; it posts to GitHub as a
   multi-line comment, and the text view keeps a range inside one hunk, as
-  GitHub requires. "Comment on file" leaves a file-level note. On PR cards the
-  composer has a **Local / GitHub PR** switch: local comments stay on the board
-  for an agent, GitHub ones are drafts until you post them. New comments
-  default to GitHub on PRs carrying the review tag (`#pr-reviews` by default,
-  configurable in settings) and to local everywhere else; the last choice
-  sticks while the page is open, and "Make local" / "Move to GitHub" switches a
-  comment that has not been sent yet. The bar at the top has two actions:
+  GitHub requires. "Comment on file" leaves a file-level note. On PR cards a
+  **Comments go to Local / GitHub PR** switch in the strip above the diff sets
+  where every new comment and reply goes: local comments stay on the board for
+  an agent, GitHub ones are drafts until you post them. It starts on GitHub for
+  PRs carrying the review tag (`#pr-reviews` by default, configurable in
+  settings) and on local everywhere else, and holds while the page is open.
+  Replies in threads that are not on GitHub stay local either way. "Make local"
+  / "Move to GitHub" switches a comment that has not been sent yet. The bar at the top has two actions:
   **Send N to agent** hands the local comments to a thread running
   `apply-pr-comments` (with the same and-push and skip-triage options), and
   **Post N to GitHub** posts the drafts: new threads as one review (inline

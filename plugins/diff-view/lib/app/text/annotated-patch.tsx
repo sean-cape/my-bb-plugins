@@ -35,7 +35,6 @@ export function AnnotatedPatch({
   onEditFinding,
   threads,
   composer,
-  composeTarget,
   onStartComment,
   onCancelComposer,
   onSubmitComposer,
@@ -105,7 +104,6 @@ export function AnnotatedPatch({
         path={path}
         threads={threads.filter((thread) => thread.line === null)}
         composing={composer !== null && composer.line === null}
-        composeTarget={composeTarget}
         onSubmit={onSubmitComposer}
         onCancel={onCancelComposer}
       />
@@ -118,7 +116,7 @@ export function AnnotatedPatch({
         className="text-xs"
         renderAnnotation={({ metadata }) => {
           if (metadata.kind === "composer") {
-            return <DiffCommentForm key={metadata.key} path={path} range={composer ?? WHOLE_FILE} defaultTarget={composeTarget} onSubmit={onSubmitComposer} onCancel={onCancelComposer} />;
+            return <DiffCommentForm key={metadata.key} path={path} range={composer ?? WHOLE_FILE} onSubmit={onSubmitComposer} onCancel={onCancelComposer} />;
           }
           if (metadata.kind === "finding") {
             const item = metadata.finding;

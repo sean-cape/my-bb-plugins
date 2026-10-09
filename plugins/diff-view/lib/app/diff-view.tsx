@@ -154,7 +154,6 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
       path: file.path,
       threads: forPath(file.path),
       composer: fileComposer,
-      composeTarget: comments.newCommentTarget,
       onStartComment: (anchor) => setComposer({ path: file.path, ...anchor }),
       onCancelComposer: () => setComposer(null),
       onSubmitComposer: (body, target) => (fileComposer === null ? Promise.resolve() : comments.addComment(file.path, fileComposer, body, target)),
@@ -167,7 +166,8 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
     canPostToGithub: source.canPostToGithub ?? false,
     onReply: comments.reply,
     onEdit: comments.editComment,
-    onSetTarget: comments.setCommentTarget,
+    target: comments.target,
+    onMoveComment: comments.moveComment,
     onDelete: (id) => void comments.deleteComment(id),
     onOpenThread,
   };
@@ -191,6 +191,7 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
               findingTotal={allFindings.length}
               showFindings={showFindings}
               onNextComment={() => stepWithin("[data-comment-anchor]", 1)}
+              commentTarget={source.canPostToGithub === true ? { target: comments.target, onChange: comments.setTarget } : null}
             />
           ) : null}
 

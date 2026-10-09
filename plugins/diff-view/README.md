@@ -17,7 +17,9 @@ plugins embed.
 - **Comments**: "+" on a line or "Comment on file", with replies. Drag the "+"
   or the line numbers (or shift-click a second line number) to comment on a
   range of lines, as on GitHub. "Send N to the thread" sends every unsent
-  comment to the thread's agent as one message.
+  comment to the thread's agent as one message. Hosts whose comments can go to
+  GitHub (kanban's PR cards) get a "Comments go to Local / GitHub PR" switch
+  above the diff that applies to every new comment and reply.
 - **Viewed marks** remember the file's patch; a mark lapses once the file
   changes again.
 

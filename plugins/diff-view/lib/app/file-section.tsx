@@ -118,7 +118,6 @@ export function FileSection({
                   path={file.path}
                   threads={annotations.threads}
                   composing={annotations.composer !== null}
-                  composeTarget={annotations.composeTarget}
                   onSubmit={annotations.onSubmitComposer}
                   onCancel={annotations.onCancelComposer}
                 />

@@ -1,6 +1,7 @@
-import type { DiffFile, DiffResult } from "../types";
+import type { DiffCommentTarget, DiffFile, DiffResult } from "../types";
 import { cn } from "./utils";
 import { shortSha } from "./format";
+import { useDiffSource } from "./source";
 import { setDiffPreferences } from "./state";
 import { PRESS, TRANSFORM_TRANSITION, enter } from "./ui/motion";
 
@@ -16,7 +17,33 @@ function DiffStats({ files }: { files: readonly DiffFile[] }) {
   );
 }
 
-/** The strip above a non-empty diff: totals, what it is against, keyboard help, comment and finding controls, and viewed progress. */
+/** Where every new comment and reply in the view goes. GitHub replies are only possible in threads that are on GitHub; the rest stay local. */
+function CommentTargetSwitch({ target, onChange }: { target: DiffCommentTarget; onChange: (target: DiffCommentTarget) => void }) {
+  const { labels } = useDiffSource();
+  const option = (value: DiffCommentTarget, label: string, title: string) => (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={target === value}
+      title={title}
+      className={cn("rounded px-1.5 py-0.5", PRESS, target === value ? (value === "github" ? "bg-sky-500/15 text-sky-700 dark:text-sky-300" : "bg-state-active text-foreground") : "text-muted-foreground hover:text-foreground")}
+      onClick={() => onChange(value)}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      Comments go to
+      <span role="radiogroup" aria-label="Where new comments go" className="inline-flex items-center gap-0.5 rounded-md border border-border p-0.5 text-[11px]">
+        {option("local", "Local", labels.localTarget)}
+        {option("github", "GitHub PR", "Queued as drafts and posted to the pull request when you press Post")}
+      </span>
+    </span>
+  );
+}
+
+/** The strip above a non-empty diff: totals, what it is against, keyboard help, where comments go, comment and finding controls, and viewed progress. */
 export function SummaryBar({
   diff,
   viewed,
@@ -24,6 +51,7 @@ export function SummaryBar({
   findingTotal,
   showFindings,
   onNextComment,
+  commentTarget,
 }: {
   diff: DiffResult;
   viewed: ReadonlySet<string>;
@@ -31,6 +59,8 @@ export function SummaryBar({
   findingTotal: number;
   showFindings: boolean;
   onNextComment: () => void;
+  /** Null unless comments can go to GitHub. */
+  commentTarget: { target: DiffCommentTarget; onChange: (target: DiffCommentTarget) => void } | null;
 }) {
   const viewedCount = diff.files.filter((entry) => viewed.has(entry.path)).length;
   return (
@@ -46,6 +76,7 @@ export function SummaryBar({
       <span className="cursor-help text-muted-foreground/60" title="Keyboard: j/k next/previous change · n/p next/previous file · c/C next/previous comment · v toggle viewed">
         ⌨
       </span>
+      {commentTarget !== null ? <CommentTargetSwitch {...commentTarget} /> : null}
       {hasThreads ? (
         <button type="button" className={cn("rounded border border-border px-1.5 py-0.5 text-xs hover:bg-state-hover", PRESS)} title="Scroll to the next comment (c)" onClick={onNextComment}>
           Next comment

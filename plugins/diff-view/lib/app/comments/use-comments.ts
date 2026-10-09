@@ -12,8 +12,8 @@ import { buildDiffThreads, localCommentState, type DiffThread } from "./threads"
 export function useComments(source: DiffSource, refreshSignal: unknown) {
   const [comments, setComments] = useState<DiffComment[]>([]);
   const [prComments, setPrComments] = useState<GithubComment[]>([]);
-  // The target of the last comment added, so the next one defaults to it.
-  const [lastTarget, setLastTarget] = useState<DiffCommentTarget | null>(null);
+  // Where new comments and replies go, chosen once for the whole view; the source's default until the reviewer picks.
+  const [chosenTarget, setChosenTarget] = useState<DiffCommentTarget | null>(null);
   const loadComments = useCallback(() => {
     source.listComments().then(setComments, (cause: unknown) => toast.error(errorMessage(cause)));
     if (source.listGithubComments === undefined) setPrComments([]);
@@ -31,7 +31,7 @@ export function useComments(source: DiffSource, refreshSignal: unknown) {
       throw cause;
     }
   };
-  const setCommentTarget = async (id: string, target: DiffCommentTarget) => {
+  const moveComment = async (id: string, target: DiffCommentTarget) => {
     try {
       await source.updateComment(id, { target });
       loadComments();
@@ -42,7 +42,6 @@ export function useComments(source: DiffSource, refreshSignal: unknown) {
   const addComment = async (path: string, range: LineRange, body: string, target: DiffCommentTarget) => {
     try {
       await source.addComment({ path, line: range.line, side: range.side, startLine: range.startLine, startSide: range.startSide, body, target, inReplyTo: null });
-      setLastTarget(target);
       loadComments();
     } catch (cause) {
       toast.error(errorMessage(cause));
@@ -71,12 +70,13 @@ export function useComments(source: DiffSource, refreshSignal: unknown) {
     threads,
     localPending: comments.filter((comment) => localCommentState(comment) === "pending"),
     githubDrafts: comments.filter((comment) => localCommentState(comment) === "draft"),
-    newCommentTarget: lastTarget ?? source.defaultCommentTarget ?? "local",
+    target: source.canPostToGithub === true ? (chosenTarget ?? source.defaultCommentTarget ?? "local") : "local",
+    setTarget: setChosenTarget,
     loadComments,
     addComment,
     reply,
     editComment,
-    setCommentTarget,
+    moveComment,
     deleteComment,
   };
 }

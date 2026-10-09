@@ -100,7 +100,7 @@ function ThreadEntryView({ entry, thread, isRoot, now, arrived = false }: { entr
               type="button"
               className={cn("rounded px-1 hover:bg-state-hover hover:text-foreground", PRESS)}
               title={state === "draft" ? labels.makeLocal : "Post this to the pull request instead"}
-              onClick={() => void actions.onSetTarget(comment.id, state === "draft" ? "local" : "github")}
+              onClick={() => void actions.onMoveComment(comment.id, state === "draft" ? "local" : "github")}
             >
               {state === "draft" ? "Make local" : "Move to GitHub"}
             </button>
@@ -163,7 +163,6 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
   const unsent = thread.entries.some(isUnsent);
   const firstLine = root.comment.body.split("\n").find((text) => text.trim() !== "") ?? "";
   const where = shortLineLabel(thread) ?? (thread.outdated ? "outdated" : "file");
-  const rootIsLocal = root.source === "local";
   const reveal = useOpenedSinceMount(open) ? cn(enter.rise, FAST) : undefined;
   // Replies already here when the thread mounted (or seen before a collapse) arrive with it, not one by one.
   const seenReplies = useRef<Set<string> | null>(null);
@@ -204,7 +203,6 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
               range={thread}
               reply
               githubAllowed={thread.onGithub}
-              defaultTarget={thread.onGithub && root.source === "github" ? "github" : rootIsLocal && root.comment.target === "github" ? "github" : "local"}
               onSubmit={(body, target) => actions.onReply(thread, body, target)}
               onCancel={() => setReplying(false)}
             />

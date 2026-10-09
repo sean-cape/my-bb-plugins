@@ -9,14 +9,12 @@ export function FileLevelComments({
   path,
   threads,
   composing,
-  composeTarget,
   onSubmit,
   onCancel,
 }: {
   path: string;
   threads: DiffThread[];
   composing: boolean;
-  composeTarget: DiffCommentTarget;
   onSubmit: (body: string, target: DiffCommentTarget) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -24,7 +22,7 @@ export function FileLevelComments({
     <>
       {composing ? (
         <div className="px-3">
-          <DiffCommentForm path={path} range={WHOLE_FILE} defaultTarget={composeTarget} onSubmit={onSubmit} onCancel={onCancel} />
+          <DiffCommentForm path={path} range={WHOLE_FILE} onSubmit={onSubmit} onCancel={onCancel} />
         </div>
       ) : null}
       {threads.length > 0 ? (

@@ -49,7 +49,6 @@ export function StructuralPatch({
   path,
   threads,
   composer,
-  composeTarget,
   onStartComment,
   onCancelComposer,
   onSubmitComposer,
@@ -235,7 +234,7 @@ export function StructuralPatch({
           {list.map((thread) => (
             <DiffThreadView key={thread.id} thread={thread} />
           ))}
-          {composing && composer !== null ? <DiffCommentForm path={path} range={composer} defaultTarget={composeTarget} onSubmit={onSubmitComposer} onCancel={onCancelComposer} /> : null}
+          {composing && composer !== null ? <DiffCommentForm path={path} range={composer} onSubmit={onSubmitComposer} onCancel={onCancelComposer} /> : null}
           {lineFindings.map((entry) => (
             <FindingAnnotation key={`${entry.item.reviewId}:${entry.item.finding.id}`} item={entry.item} onToggle={(selected) => onToggleFinding(entry.item, selected)} onEdit={(edit) => onEditFinding(entry.item, edit)} />
           ))}
@@ -411,7 +410,6 @@ export function StructuralPatch({
         path={path}
         threads={threads.filter((thread) => thread.line === null)}
         composing={composer !== null && composer.line === null}
-        composeTarget={composeTarget}
         onSubmit={onSubmitComposer}
         onCancel={onCancelComposer}
       />
