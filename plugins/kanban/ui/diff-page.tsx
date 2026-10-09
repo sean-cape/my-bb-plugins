@@ -160,7 +160,7 @@ function KanbanSubmitBar({ subjectId, pending, canApprove, onOpenThread, onSubmi
                 if (submitting === null) void submit("github");
               }}
               selectedTabProps={{ "data-send-bar-focus": "" }}
-              className="w-72 shrink-0"
+              className="shrink-0"
               tabClassName="whitespace-nowrap px-2 py-0.5"
             /> : null}
           <span title="New threads post as one review; replies post into their threads">
