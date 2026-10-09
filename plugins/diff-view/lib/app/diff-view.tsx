@@ -421,10 +421,19 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
       findingFilter: allFindings.length === 0 ? null : { value: findingFilter, set: (filter) => setDiffPreferences({ findingFilter: filter }) },
       refresh: () => requestReload(instanceKey),
       focusSendBar: () => {
-        // The bar's first action, past any checkbox or toggle that only sets an option for it.
-        const button = rootRef.current?.querySelector<HTMLElement>('[data-diff-submit-bar] button:not(:disabled):not([role="checkbox"]):not([role="switch"]):not([role="radio"]):not([role="tab"]):not([aria-pressed])') ?? null;
+        // The bar's first action, past any checkbox or toggle that only sets an option for it, unless the host marks a
+        // control to start on (an option picker whose Enter sends).
+        const button =
+          rootRef.current?.querySelector<HTMLElement>(
+            '[data-diff-submit-bar] [data-send-bar-focus], [data-diff-submit-bar] button:not(:disabled):not([role="checkbox"]):not([role="switch"]):not([role="radio"]):not([role="tab"]):not([aria-pressed])',
+          ) ?? null;
         button?.focus();
         return button !== null;
+      },
+      leaveSendBar: () => {
+        if (document.activeElement?.closest("[data-diff-submit-bar]") == null) return false;
+        rootRef.current?.focus({ preventScroll: true });
+        return true;
       },
       openOverlay: (kind) => setOverlay({ kind }),
       search: lastSearch === null || diff === null ? null : { query: lastSearch, matches: new Set(rankFiles(diff.files, lastSearch).map((file) => file.path)) },

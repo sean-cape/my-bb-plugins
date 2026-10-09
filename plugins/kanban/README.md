@@ -218,7 +218,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   where a line is given, in the review body otherwise) and replies into their
   GitHub threads. On someone else's PR a **Comment / Approve / Request
   changes** picker beside it sets how that review concludes, as GitHub's
-  "Finish your review" does.
+  "Finish your review" does. From the diff, `s` lands on the picker: `h`/`l`
+  (or the arrows) choose, Enter posts, Tab reaches the button, Escape returns.
 - **Comment threads**: the changes view shows the PR's inline GitHub review
   comments under their lines, threaded with their replies, alongside the
   board's own comments. Resolved threads start collapsed; comments whose line

@@ -66,6 +66,8 @@ export interface ReviewEnv {
   findingFilter: { value: FindingFilter; set: (filter: FindingFilter) => void } | null;
   refresh: () => void;
   focusSendBar: () => boolean;
+  /** Hands the keyboard from the send bar back to the diff; false when focus is not in the bar. */
+  leaveSendBar: () => boolean;
   openOverlay: (overlay: "help" | "files") => void;
   /** The last `/` search, and the files it matches. */
   search: { query: string; matches: ReadonlySet<string> } | null;
@@ -453,6 +455,7 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       env.openOverlay("help");
       return;
     case "escape":
+      if (env.leaveSendBar()) return;
       if (state.visual !== null) env.keys.set({ visual: null });
       else env.closeEmptyComposer();
       return;

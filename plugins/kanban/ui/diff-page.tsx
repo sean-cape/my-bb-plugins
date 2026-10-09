@@ -151,7 +151,18 @@ function KanbanSubmitBar({ subjectId, pending, canApprove, onOpenThread, onSubmi
             </span>{" "}
             GitHub draft{githubDrafts.length === 1 ? "" : "s"}
           </span>
-          {canApprove ? <SegmentedTabs label="Review as" value={reviewEvent} options={REVIEW_EVENTS} onChange={setReviewEvent} className="w-72 shrink-0" tabClassName="whitespace-nowrap px-2 py-0.5" /> : null}
+          {canApprove ? <SegmentedTabs
+              label="Review as"
+              value={reviewEvent}
+              options={REVIEW_EVENTS}
+              onChange={setReviewEvent}
+              onActivate={() => {
+                if (submitting === null) void submit("github");
+              }}
+              selectedTabProps={{ "data-send-bar-focus": "" }}
+              className="w-72 shrink-0"
+              tabClassName="whitespace-nowrap px-2 py-0.5"
+            /> : null}
           <span title="New threads post as one review; replies post into their threads">
             <Button type="button" variant="secondary" className={COMPACT} disabled={submitting !== null} onClick={() => void submit("github")}>
               <Icon name={reviewEvent === "APPROVE" ? "Check" : "GitPullRequest"} className="size-3.5" />
