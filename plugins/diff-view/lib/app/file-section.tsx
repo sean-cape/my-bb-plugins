@@ -16,7 +16,7 @@ import { findingAnchorId } from "./findings/findings";
 import { StructuralPatch } from "./structural/structural-patch";
 import { AnnotatedPatch } from "./text/annotated-patch";
 import { DiffErrorBoundary } from "./text/diff-error-boundary";
-import { useFileCursor, usePublishNavModel, type FileNavModel } from "./keys/review-keys-context";
+import { useCursorOnHeader, usePublishNavModel, type FileNavModel } from "./keys/review-keys-context";
 
 const NO_ROWS: FileNavModel = { rows: [], cutToHunk: false, element: () => null };
 
@@ -65,7 +65,7 @@ export function FileSection({
   changedRanges: Array<[number, number]>;
 }) {
   const { layout } = useDiffPreferences();
-  const onHeader = useFileCursor(file.path)?.cursor.line === null;
+  const onHeader = useCursorOnHeader(file.path);
   const reveal = useOpenedSinceMount(!collapsed) ? cn(enter.rise, FAST) : undefined;
   // Sections past the cap are below the fold when the list mounts; animating hundreds of full diffs at once costs a
   // compositor layer each for nothing. Decided at mount, so a refresh that moves a shown file up the list leaves it be.

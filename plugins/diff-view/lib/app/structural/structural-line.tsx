@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import type { DiffSide, StructuralDiff } from "../../types";
 import { cn } from "../utils";
 import type { LineTokens } from "./syntax";
@@ -15,7 +15,7 @@ const HIGHLIGHT_CLASS: Record<string, string> = {
 export const IDENTIFIER = /[A-Za-z_$][A-Za-z0-9_$]*/gu;
 
 /** One side's line: Shiki colours per token, changed spans tinted by difftastic, identifiers made ⌘-clickable. */
-export function StructuralLine({
+export const StructuralLine = memo(function StructuralLine({
   text,
   changes,
   tokens,
@@ -100,4 +100,4 @@ export function StructuralLine({
       ))}
     </>
   );
-}
+});

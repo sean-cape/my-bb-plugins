@@ -509,6 +509,14 @@ describe("review keys", () => {
     expect(moveLines(files, at("a.ts", 12), 99)).toEqual(at("c.ts", null));
   });
 
+  it("steps back through loading and collapsed files to the last line of the file before, stopping at the top", () => {
+    expect(moveLines(files, at("d.ts", null), -1)).toEqual(at("c.ts", null));
+    expect(moveLines(files, at("c.ts", null), -1)).toEqual(at("b.ts", null));
+    expect(moveLines(files, at("b.ts", null), -1)).toEqual(at("a.ts", 12));
+    expect(moveLines(files, at("d.ts", null), -3)).toEqual(at("a.ts", 12));
+    expect(moveLines(files, at("d.ts", null), -99)).toEqual(at("a.ts", null));
+  });
+
   it("jumps by change, hunk and file", () => {
     expect(moveChange(files, at("a.ts", null), 1, 1)).toEqual({ ...at("a.ts", 2), side: "LEFT" });
     expect(moveChange(files, at("a.ts", 2), 1, 1)).toEqual(at("a.ts", 11));

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { experimental_useCodeTheme as useCodeTheme } from "@get-bb/plugin-sdk/app";
-import { PatchDiff, VirtualizerContext, useWorkerPool } from "@pierre/diffs/react";
+import { PatchDiff, VirtualizerContext, useWorkerPool, type DiffLineAnnotation } from "@pierre/diffs/react";
 import { useDiffPreferences } from "../state";
 import { useHostPierreThemes } from "../theme";
 import { WHOLE_FILE, type PatchAnnotationProps } from "../patch-annotations";
@@ -141,6 +141,20 @@ export function AnnotatedPatch({
       onLineSelectionEnd: finish,
     };
   }, [layout, themes, themeMode, rows]);
+  // Stable across cursor moves, which re-render this file for its selection, so Pierre leaves the annotations alone.
+  const renderAnnotation = useCallback(
+    ({ metadata }: DiffLineAnnotation<AnnotationMeta>) => {
+      if (metadata.kind === "composer") {
+        return <DiffCommentForm key={metadata.key} path={path} range={composer ?? WHOLE_FILE} onSubmit={onSubmitComposer} onCancel={onCancelComposer} />;
+      }
+      if (metadata.kind === "finding") {
+        const item = metadata.finding;
+        return <FindingAnnotation key={metadata.key} item={item} anchorId={metadata.anchorId} entrance={!committedKeys.current.has(metadata.key)} onToggle={(selected) => onToggleFinding(item, selected)} onEdit={(edit) => onEditFinding(item, edit)} />;
+      }
+      return <DiffThreadView key={metadata.key} thread={metadata.thread} />;
+    },
+    [path, composer, onSubmitComposer, onCancelComposer, onToggleFinding, onEditFinding],
+  );
   return (
     <div ref={hostRef}>
       <FileLevelComments
@@ -160,16 +174,7 @@ export function AnnotatedPatch({
           selectedLines={dragged ?? composerSelection ?? cursorSelection}
           disableWorkerPool={workerPool === undefined}
           className="text-xs"
-          renderAnnotation={({ metadata }) => {
-            if (metadata.kind === "composer") {
-              return <DiffCommentForm key={metadata.key} path={path} range={composer ?? WHOLE_FILE} onSubmit={onSubmitComposer} onCancel={onCancelComposer} />;
-            }
-            if (metadata.kind === "finding") {
-              const item = metadata.finding;
-              return <FindingAnnotation key={metadata.key} item={item} anchorId={metadata.anchorId} entrance={!committedKeys.current.has(metadata.key)} onToggle={(selected) => onToggleFinding(item, selected)} onEdit={(edit) => onEditFinding(item, edit)} />;
-            }
-            return <DiffThreadView key={metadata.key} thread={metadata.thread} />;
-          }}
+          renderAnnotation={renderAnnotation}
         />
       </VirtualizerContext.Provider>
     </div>

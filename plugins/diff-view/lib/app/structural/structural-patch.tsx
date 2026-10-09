@@ -1,4 +1,4 @@
-import { Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { DiffSide, HunkExplanation, SemanticChange, StructuralDiff, SymbolLookup } from "../../types";
 import { checkedLineRange } from "../../line-range";
@@ -20,15 +20,13 @@ import { ExplanationStrip } from "../explanations/explanation-strip";
 import { SymbolPeek } from "../symbols/symbol-peek";
 import { useSymbolNavigation } from "../symbols/use-symbol-navigation";
 import { visualRange, type NavRow } from "../keys/nav";
-import { useFileCursor, usePublishNavModel, type FileNavModel } from "../keys/review-keys-context";
+import { useFileSelection, usePublishNavModel, type FileNavModel } from "../keys/review-keys-context";
 import { enclosingDefinition } from "./enclosing-definition";
-import { detectMoves, type MovedRow } from "./moves";
+import { detectMoves } from "./moves";
 import { CONTEXT_LINES, hunkSpan, structuralRows, visibleRows, type StructuralRow } from "./rows";
-import { IDENTIFIER, StructuralLine } from "./structural-line";
+import { IDENTIFIER } from "./structural-line";
+import { EXPAND_STEP_LINES, GapRow, PreviewMoreRow, StructuralRowView, type RowContext } from "./structural-row";
 import { shikiLangFor, useShikiTokens } from "./syntax";
-
-/** Folded runs up to this long expand in one click; longer ones expand this many lines per click. */
-const EXPAND_STEP_LINES = 20;
 
 /** One row the keyboard cursor can stand on: a shown line, a fold of unchanged lines, or a long new file's "show more". */
 type NavEntry = { kind: "row"; row: StructuralRow } | { kind: "gap"; from: number; to: number } | { kind: "more"; at: number };
@@ -115,17 +113,31 @@ export function StructuralPatch({
   const symbols = useSymbolNavigation(source);
   const latestSymbols = useRef(symbols);
   latestSymbols.current = symbols;
-  const reveal = (from: number, to: number) => {
+  const reveal = useCallback((from: number, to: number) => {
     setRevealed((current) => {
       const next = new Set(current);
       for (let i = from; i < to; i++) next.add(i);
       return next;
     });
-  };
+  }, []);
+  const showEverything = useCallback(() => setShowAll(true), []);
   // GitHub-style hunks: changed rows plus a few lines of context stay visible; everything else collapses behind expanders.
+  const allRows = useMemo(() => (diff === null || !diff.available ? null : structuralRows(diff)), [diff]);
+  const text = useMemo(() => {
+    if (diff === null || allRows === null) return null;
+    const oldLines = diff.oldText.split("\n");
+    const newLines = diff.newText.split("\n");
+    return {
+      oldLines,
+      newLines,
+      oldChanges: new Map(diff.oldChanges.map((entry) => [entry.line, entry])),
+      newChanges: new Map(diff.newChanges.map((entry) => [entry.line, entry])),
+      moved: detectMoves(allRows, oldLines, newLines),
+    };
+  }, [diff, allRows]);
   const shape = useMemo(() => {
-    if (diff === null || !diff.available) return null;
-    const rows = structuralRows(diff);
+    if (diff === null || allRows === null) return null;
+    const rows = allRows;
     const visible = visibleRows(rows, { revealed, findingLines: findings.map((entry) => entry.line), threads });
     const wholeFile = diff.status === "created" || diff.status === "deleted" || rows.every((row) => row.changed);
     const previewLimit = wholeFile && !showAll && visible.size > LARGE_FILE_PREVIEW_ROWS + LARGE_FILE_PREVIEW_SLACK ? LARGE_FILE_PREVIEW_ROWS : null;
@@ -161,13 +173,13 @@ export function StructuralPatch({
     }
     if (gapStart !== null && (previewLimit === null || emitted < previewLimit)) pushFold({ kind: "gap", from: gapStart, to: rows.length });
     return { rows, visible, previewLimit, entries, nav };
-  }, [diff, revealed, findings, threads, showAll]);
+  }, [diff, allRows, revealed, findings, threads, showAll]);
   const navModel = useMemo<FileNavModel | null>(() => {
     // The fallback text diff publishes its own rows.
     if (error !== null || (diff !== null && !diff.available)) return null;
-    if (shape === null) return null;
+    if (shape === null || text === null) return null;
     const { entries, nav, visible, previewLimit, rows } = shape;
-    const sideLines = { LEFT: diff!.oldText.split("\n"), RIGHT: diff!.newText.split("\n") };
+    const sideLines = { LEFT: text.oldLines, RIGHT: text.newLines };
     const rowElement = (row: number) => {
       const entry = entries[row];
       if (entry === undefined) return null;
@@ -226,9 +238,61 @@ export function StructuralPatch({
         },
       },
     };
-  }, [error, diff, shape]);
+  }, [error, diff, shape, text, reveal]);
   usePublishNavModel(path, navModel);
-  const fileCursor = useFileCursor(path);
+  const fileSelection = useFileSelection(path);
+  // Rows read handlers through this, so their context stays stable while the composer and the hosts' callbacks change.
+  const latest = useRef({ composer, onStartComment, rows: allRows });
+  latest.current = { composer, onStartComment, rows: allRows };
+  const rowContext = useMemo<RowContext | null>(() => {
+    if (text === null) return null;
+    return {
+      path,
+      ...text,
+      oldTokens,
+      newTokens,
+      semantics,
+      changedRanges,
+      onLinePress: (side, line, extend) => {
+        const { composer: open } = latest.current;
+        // A shift-click extends the open comment's range on the same side, from whichever end stays put.
+        let anchor = line;
+        if (extend && open !== null && open.line !== null && open.side === side && (open.startSide ?? side) === side) {
+          const start = open.startLine ?? open.line;
+          anchor = line < start ? open.line : start;
+        }
+        setDrag({ side, anchor, current: line });
+      },
+      onLineActivate: (side, line) => latest.current.onStartComment(checkedLineRange({ line, side })),
+      onDragOver: (row) =>
+        setDrag((current) => {
+          if (current === null) return current;
+          const line = current.side === "LEFT" ? row.lhs : row.rhs;
+          return line === null || line === current.current ? current : { ...current, current: line };
+        }),
+      jumpToRow: (index) => {
+        const total = latest.current.rows?.length ?? 0;
+        reveal(Math.max(0, index - CONTEXT_LINES), Math.min(total, index + CONTEXT_LINES + 1));
+        requestAnimationFrame(() => {
+          tableRef.current?.querySelector(`[data-row="${index}"]`)?.scrollIntoView({ block: "center" });
+        });
+      },
+      onSymbol: (symbol, anchor) => latestSymbols.current.lookupSymbol(symbol, anchor),
+      onSymbolHover: (symbol, anchor) => latestSymbols.current.hoverSymbol(symbol, anchor),
+    };
+  }, [path, text, oldTokens, newTokens, semantics, changedRanges, reveal]);
+  const notesByLine = useMemo(() => {
+    const byLine = new Map<string, { threads: typeof threads; findings: typeof findings }>();
+    const at = (side: DiffSide, line: number) => {
+      const key = `${side}:${line}`;
+      let entry = byLine.get(key);
+      if (entry === undefined) byLine.set(key, (entry = { threads: [], findings: [] }));
+      return entry;
+    };
+    for (const thread of threads) if (thread.line !== null) at(thread.side, thread.line).threads.push(thread);
+    for (const entry of findings) if (entry.line !== null) at("RIGHT", entry.line).findings.push(entry);
+    return byLine;
+  }, [threads, findings]);
   useEffect(() => {
     if (drag === null) return;
     const finish = () => {
@@ -254,22 +318,10 @@ export function StructuralPatch({
       </>
     );
   }
-  if (diff === null || shape === null) return <p className={cn("relative overflow-hidden p-4 text-sm text-muted-foreground", SHIMMER)}>Running difftastic…</p>;
-  const oldLines = diff.oldText.split("\n");
-  const newLines = diff.newText.split("\n");
-  const oldChanges = new Map(diff.oldChanges.map((entry) => [entry.line, entry]));
-  const newChanges = new Map(diff.newChanges.map((entry) => [entry.line, entry]));
+  if (diff === null || shape === null || text === null || rowContext === null) return <p className={cn("relative overflow-hidden p-4 text-sm text-muted-foreground", SHIMMER)}>Running difftastic…</p>;
+  const { oldLines, newLines } = text;
   const { rows, visible, previewLimit } = shape;
-  const moved = detectMoves(rows, oldLines, newLines);
-  const jumpToRow = (index: number) => {
-    reveal(Math.max(0, index - CONTEXT_LINES), Math.min(rows.length, index + CONTEXT_LINES + 1));
-    requestAnimationFrame(() => {
-      tableRef.current?.querySelector(`[data-row="${index}"]`)?.scrollIntoView({ block: "center" });
-    });
-  };
-  const threadsAt = (side: DiffSide, line: number) => threads.filter((thread) => thread.line === line && thread.side === side);
-  const cursor = fileCursor?.cursor ?? null;
-  const visualSelection = fileCursor?.visual != null ? visualRange(shape.nav, fileCursor.visual, fileCursor.cursor, false) : null;
+  const visualSelection = fileSelection?.visual != null ? visualRange(shape.nav, fileSelection.visual, fileSelection.cursor, false) : null;
   const selected = (side: DiffSide, line: number): boolean => {
     if (drag !== null) return side === drag.side && line >= Math.min(drag.anchor, drag.current) && line <= Math.max(drag.anchor, drag.current);
     const range = composer !== null && composer.line !== null ? composer : visualSelection;
@@ -278,80 +330,11 @@ export function StructuralPatch({
     if (range.startSide === range.side) return side === range.side && line >= range.startLine && line <= range.line;
     return side === range.startSide ? line >= range.startLine : line <= range.line;
   };
-  /** A shift-click extends the open comment's range on the same side, from whichever end stays put. */
-  const dragAnchor = (side: DiffSide, line: number, extend: boolean): number => {
-    if (!extend || composer === null || composer.line === null || composer.side !== side || (composer.startSide ?? side) !== side) return line;
-    const start = composer.startLine ?? composer.line;
-    return line < start ? composer.line : start;
-  };
-  const semanticAt = (side: DiffSide, line: number): SemanticChange | null =>
-    semantics.find((change) => {
-      if (change.kind === "logic") return false;
-      const range = side === "LEFT" ? change.oldLines : change.newLines;
-      return range !== null && line >= range[0] && line <= range[1];
-    }) ?? null;
-  const lineCell = (line: number | null, side: DiffSide, rowChanged: boolean, movedRow: MovedRow | null) => {
-    if (line === null) {
-      return <td className="bg-[repeating-linear-gradient(135deg,transparent,transparent_6px,var(--color-border)_6px,var(--color-border)_7px)] opacity-40" colSpan={2} />;
-    }
-    const lines = side === "LEFT" ? oldLines : newLines;
-    const sideLine = movedRow !== null ? null : ((side === "LEFT" ? oldChanges : newChanges).get(line) ?? null);
-    const text = lines[line - 1] ?? "";
-    const lineTokens = (side === "LEFT" ? oldTokens : newTokens)?.[line - 1] ?? null;
-    const semantic = rowChanged && movedRow === null ? semanticAt(side, line) : null;
-    const neutral = movedRow !== null || semantic !== null;
-    const inSelection = selected(side, line);
-    const atCursor = cursor !== null && cursor.side === side && cursor.line === line;
-    const tint = inSelection ? "bg-amber-400/20" : neutral ? "bg-violet-500/10" : rowChanged && (side === "LEFT" ? "bg-red-500/10" : "bg-emerald-500/10");
-    const gutterTint = inSelection ? "bg-amber-400/35" : neutral ? "bg-violet-500/20" : rowChanged && (side === "LEFT" ? "bg-red-500/20" : "bg-emerald-500/20");
-    const changedSince = side === "RIGHT" && rangesOverlap(line, line, changedRanges);
-    const movedLabel =
-      movedRow !== null && movedRow.first ? (
-        <button
-          type="button"
-          className={cn("float-right ml-2 rounded border border-violet-500/40 px-1.5 font-sans text-[10px] text-violet-700 hover:bg-violet-500/20 dark:text-violet-300", PRESS)}
-          title={side === "LEFT" ? "This block moved; jump to where it went" : "This block moved; jump to where it came from"}
-          onClick={() => jumpToRow(movedRow.counterpart)}
-        >
-          moved {side === "LEFT" ? "to" : "from"} line {movedRow.counterpartLine}
-        </button>
-      ) : null;
-    return (
-      <>
-        <td
-          className={cn("group/ln select-none border-r border-border/60 pr-2 text-right align-top text-muted-foreground/70", gutterTint, changedSince && "shadow-[inset_2px_0_0_0_theme(colors.sky.500)]", atCursor && "bg-primary/25 font-medium text-foreground")}
-          title={changedSince ? "Changed since you last looked" : undefined}
-        >
-          <button
-            type="button"
-            className="relative w-full touch-none text-right tabular-nums hover:text-foreground"
-            title="Comment on this line; drag or shift-click for several"
-            onPointerDown={(event) => {
-              if (event.button !== 0) return;
-              // Keeps the drag from selecting text.
-              event.preventDefault();
-              setDrag({ side, anchor: dragAnchor(side, line, event.shiftKey), current: line });
-            }}
-            onClick={(event) => {
-              // Pointer clicks start from pointerdown; this is the keyboard's Enter or Space.
-              if (event.detail === 0) onStartComment(checkedLineRange({ line, side }));
-            }}
-          >
-            <span className="group-hover/ln:invisible">{line}</span>
-            <span className="absolute inset-0 hidden items-center justify-end pr-0.5 text-primary group-hover/ln:flex">+</span>
-          </button>
-        </td>
-        <td className={cn("whitespace-pre-wrap break-words pl-2 pr-3 align-top", tint, atCursor && "ring-1 ring-inset ring-primary/70")} data-cursor={atCursor ? "" : undefined}>
-          {movedLabel}
-          <StructuralLine text={text} changes={sideLine} tokens={lineTokens} side={side} onSymbol={symbols.lookupSymbol} onSymbolHover={symbols.hoverSymbol} />
-        </td>
-      </>
-    );
-  };
   const annotationRow = (side: DiffSide, line: number) => {
-    const list = threadsAt(side, line);
+    const notes = notesByLine.get(`${side}:${line}`);
+    const list = notes?.threads ?? [];
     const composing = composer !== null && composer.line === line && composer.side === side;
-    const lineFindings = side === "RIGHT" ? findings.filter((entry) => entry.line === line) : [];
+    const lineFindings = notes?.findings ?? [];
     if (list.length === 0 && !composing && lineFindings.length === 0) return null;
     return (
       <tr key={`${side}-${line}-notes`}>
@@ -363,45 +346,6 @@ export function StructuralPatch({
           {lineFindings.map((entry) => (
             <FindingAnnotation key={`${entry.item.reviewId}:${entry.item.finding.id}`} item={entry.item} anchorId={findingAnchorId(entry)} onToggle={(selected) => onToggleFinding(entry.item, selected)} onEdit={(edit) => onEditFinding(entry.item, edit)} />
           ))}
-        </td>
-      </tr>
-    );
-  };
-  const expanderButton = (label: string, title: string, onClick: () => void) => (
-    <button type="button" title={title} aria-label={title} className={cn("rounded px-1.5 py-0.5 text-sky-700 hover:bg-sky-500/20 dark:text-sky-300", PRESS)} onClick={onClick}>
-      {label}
-    </button>
-  );
-  const foldAtCursor = (entry: NavEntry & { kind: "gap" | "more" }) => {
-    if (cursor === null) return false;
-    const at = rows[foldCursorIndex(entry)]!;
-    return cursor.line === (cursor.side === "LEFT" ? at.lhs : at.rhs);
-  };
-  const gapRow = (from: number, to: number) => {
-    const count = to - from;
-    const leading = from === 0;
-    const trailing = to === rows.length;
-    const first = rows[from]!;
-    const last = rows[to - 1]!;
-    const range = `${first.rhs ?? first.lhs}–${last.rhs ?? last.lhs}`;
-    const atCursor = foldAtCursor({ kind: "gap", from, to });
-    return (
-      <tr key={`gap-${from}`} data-gap={from} className="bg-sky-500/10 text-[11px] text-muted-foreground">
-        <td colSpan={4} className={cn("px-2 py-0.5", atCursor && "ring-1 ring-inset ring-primary/70")} data-cursor={atCursor ? "" : undefined}>
-          <div className="flex items-center gap-1">
-            {count <= EXPAND_STEP_LINES ? (
-              expanderButton("↕", `Show ${count} unchanged lines`, () => reveal(from, to))
-            ) : (
-              <>
-                {!leading ? expanderButton("↓", `Show ${EXPAND_STEP_LINES} lines below`, () => reveal(from, from + EXPAND_STEP_LINES)) : null}
-                {!trailing ? expanderButton("↑", `Show ${EXPAND_STEP_LINES} lines above`, () => reveal(to - EXPAND_STEP_LINES, to)) : null}
-              </>
-            )}
-            <span className="ml-2 font-sans">
-              {count} unchanged {count === 1 ? "line" : "lines"} ({range})
-            </span>
-            {atCursor ? <span className={cn("ml-auto font-mono text-[10px]", enter.fade, FAST)}>↩ show {count <= EXPAND_STEP_LINES ? "them" : `${EXPAND_STEP_LINES} more`}</span> : null}
-          </div>
         </td>
       </tr>
     );
@@ -465,6 +409,9 @@ export function StructuralPatch({
       </Fragment>
     );
   };
+  const gapRow = (from: number, to: number) => (
+    <GapRow key={`gap-${from}`} path={path} from={from} to={to} total={rows.length} first={rows[from]!} last={rows[to - 1]!} at={rows[foldCursorIndex({ kind: "gap", from, to })]!} onReveal={reveal} />
+  );
   const body: ReactNode[] = [];
   let gapStart: number | null = null;
   let emitted = 0;
@@ -478,15 +425,7 @@ export function StructuralPatch({
       gapStart = null;
     }
     if (previewLimit !== null && emitted >= previewLimit) {
-      body.push(
-        <tr key="preview-more" data-preview-more="" className="bg-sky-500/10 text-xs text-muted-foreground">
-          <td colSpan={4} className={cn("px-3 py-1.5", foldAtCursor({ kind: "more", at: row.index }) && "ring-1 ring-inset ring-primary/70")} data-cursor={foldAtCursor({ kind: "more", at: row.index }) ? "" : undefined}>
-            <button type="button" className={cn("rounded px-1.5 py-0.5 text-sky-700 hover:bg-sky-500/20 dark:text-sky-300", PRESS)} onClick={() => setShowAll(true)}>
-              Show {visible.size - emitted} more {visible.size - emitted === 1 ? "line" : "lines"} of this {diff.status === "deleted" ? "deleted" : "new"} file
-            </button>
-          </td>
-        </tr>,
-      );
+      body.push(<PreviewMoreRow key="preview-more" path={path} at={row} remaining={visible.size - emitted} deleted={diff.status === "deleted"} onShowAll={showEverything} />);
       gapStart = null;
       break;
     }
@@ -497,21 +436,14 @@ export function StructuralPatch({
     if (startsHunk) body.push(hunkHeader(row.index));
     body.push(
       <Fragment key={row.index}>
-        <tr
-          className={cn("hover:bg-state-hover/40", unfolded && [enter.fade, FAST])}
-          data-row={row.index}
-          onPointerEnter={
-            drag === null
-              ? undefined
-              : () => {
-                  const line = drag.side === "LEFT" ? row.lhs : row.rhs;
-                  if (line !== null && line !== drag.current) setDrag({ ...drag, current: line });
-                }
-          }
-        >
-          {lineCell(row.lhs, "LEFT", row.changed, moved.get(row.index) ?? null)}
-          {lineCell(row.rhs, "RIGHT", row.changed, moved.get(row.index) ?? null)}
-        </tr>
+        <StructuralRowView
+          row={row}
+          context={rowContext}
+          selectedLeft={row.lhs !== null && selected("LEFT", row.lhs)}
+          selectedRight={row.rhs !== null && selected("RIGHT", row.rhs)}
+          unfolded={unfolded}
+          dragging={drag !== null}
+        />
         {row.lhs !== null ? annotationRow("LEFT", row.lhs) : null}
         {row.rhs !== null ? annotationRow("RIGHT", row.rhs) : null}
         {symbols.peek !== null && symbols.peek.rowIndex === row.index ? (
