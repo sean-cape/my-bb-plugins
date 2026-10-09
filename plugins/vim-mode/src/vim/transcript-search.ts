@@ -118,3 +118,21 @@ export function rowMatches(row: Element, pattern: RegExp): Range[] {
   }
   return ranges;
 }
+
+/**
+ * True when an ancestor inside the row clips the match out of sight, such as
+ * the tail of a one-line command that ends in an ellipsis.
+ */
+export function isClipped(range: Range, row: Element): boolean {
+  const rect = range.getBoundingClientRect();
+  const common = range.commonAncestorContainer;
+  let element = common instanceof Element ? common : common.parentElement;
+  for (; element && element !== row; element = element.parentElement) {
+    const style = getComputedStyle(element);
+    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+    const clip = element.getBoundingClientRect();
+    if (rect.left >= clip.right || rect.right <= clip.left) return true;
+    if (rect.top >= clip.bottom || rect.bottom <= clip.top) return true;
+  }
+  return false;
+}

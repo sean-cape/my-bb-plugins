@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import { compilePattern, realizedRows, rowMatches } from "../src/vim/transcript-search";
+import { compilePattern, isClipped, realizedRows, rowMatches } from "../src/vim/transcript-search";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -50,4 +50,15 @@ test("rows are keyed by their conversation index, including inside the virtualiz
   const rows = realizedRows(viewport);
   expect([...rows.keys()]).toEqual([7, 8]);
   expect(rows.get(8)!.getAttribute("data-timeline-row-id")).toBe("b");
+});
+
+test("a match cut off by an overflow-hidden ancestor counts as clipped", () => {
+  const element = row('<div style="overflow: hidden">visible <span>hidden</span></div>');
+  const clip = element.firstElementChild as HTMLElement;
+  clip.getBoundingClientRect = () => new DOMRect(0, 0, 100, 20);
+  const [shown, cut] = rowMatches(element, compilePattern("visible|hidden")!);
+  shown!.getBoundingClientRect = () => new DOMRect(0, 0, 50, 20);
+  cut!.getBoundingClientRect = () => new DOMRect(120, 0, 50, 20);
+  expect(isClipped(shown!, element)).toBe(false);
+  expect(isClipped(cut!, element)).toBe(true);
 });

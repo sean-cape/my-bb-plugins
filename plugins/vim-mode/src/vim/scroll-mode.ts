@@ -8,7 +8,14 @@ import {
   TIMELINE_ROW_LIST,
   UI_ATTRIBUTE,
 } from "./selectors";
-import { comparePositions, compilePattern, realizedRows, rowMatches, type MatchPosition } from "./transcript-search";
+import {
+  comparePositions,
+  compilePattern,
+  isClipped,
+  realizedRows,
+  rowMatches,
+  type MatchPosition,
+} from "./transcript-search";
 import { placeBar, placeIndicator, promptToolbarRow } from "./ui";
 
 const LINE_STEP = 60;
@@ -307,8 +314,9 @@ export class ScrollMode {
         if (direction > 0 ? row > start.row : row < start.row) break;
         continue;
       }
-      const ordinals = rowMatches(realized, search.pattern).map((_, ordinal) => ordinal);
-      const candidates = ordinals.filter((ordinal) => {
+      const ranges = rowMatches(realized, search.pattern);
+      const shown = ranges.flatMap((range, ordinal) => (isClipped(range, realized) ? [] : [ordinal]));
+      const candidates = shown.filter((ordinal) => {
         const order = comparePositions({ row, ordinal }, start);
         if (!wrapped) return direction > 0 ? order > 0 : order < 0;
         return direction > 0 ? order <= 0 : order >= 0;
@@ -317,7 +325,8 @@ export class ScrollMode {
         const ordinal = direction > 0 ? candidates[0]! : candidates[candidates.length - 1]!;
         this.current = { row, ordinal, rowId: realized.getAttribute(TIMELINE_ROW_ID_ATTRIBUTE) };
         if (!wrapped) this.showMessage(`${prefix}${search.source}`);
-        else this.showMessage(`search hit ${direction > 0 ? "BOTTOM, continuing at TOP" : "TOP, continuing at BOTTOM"}`, true);
+        else if (direction > 0) this.showMessage("search hit BOTTOM, continuing at TOP", true);
+        else this.showMessage("search hit TOP, continuing at BOTTOM", true);
         this.setHighlighting(true);
         await this.reveal(viewport, token);
         return;
@@ -446,7 +455,9 @@ export class ScrollMode {
       const isCurrentRow =
         this.current?.row === index &&
         (this.current.rowId === null || this.current.rowId === row.getAttribute(TIMELINE_ROW_ID_ATTRIBUTE));
-      ranges.forEach((range, ordinal) => (isCurrentRow && ordinal === this.current!.ordinal ? current : all).push(range));
+      ranges.forEach((range, ordinal) => {
+        (isCurrentRow && ordinal === this.current!.ordinal ? current : all).push(range);
+      });
     }
     CSS.highlights.set(SEARCH_HIGHLIGHT, new Highlight(...all));
     CSS.highlights.set(CURRENT_HIGHLIGHT, new Highlight(...current));
@@ -488,7 +499,8 @@ function scrollViewport(viewport: HTMLElement, top: number): void {
 function visibleBox(viewport: HTMLElement): Rect {
   const rect = viewport.getBoundingClientRect();
   const composer = viewport.querySelector(FOLLOW_UP_COMPOSER)?.getBoundingClientRect();
-  const bottom = composer && composer.height > 0 && composer.top > rect.top ? Math.min(rect.bottom, composer.top) : rect.bottom;
+  const covered = composer && composer.height > 0 && composer.top > rect.top;
+  const bottom = covered ? Math.min(rect.bottom, composer.top) : rect.bottom;
   return { left: rect.left, right: rect.right, top: rect.top, bottom };
 }
 
