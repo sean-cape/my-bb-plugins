@@ -39,10 +39,13 @@ function showsProjectMonograms(entry: LeftEntry | undefined): boolean {
   );
 }
 
-/** Running rows show their latest update; the rest, what they sort by. */
+/**
+ * The age agrees with the order: running threads sort by when they started,
+ * so they don't reshuffle on every update; the rest by latest attention.
+ */
 function rowAge(row: ThreadRowModel, now: number): string {
   return formatAge(
-    row.section === "running" ? row.thread.updatedAt : threadActivityAt(row.thread),
+    row.section === "running" ? row.thread.createdAt : threadActivityAt(row.thread),
     now,
   );
 }
