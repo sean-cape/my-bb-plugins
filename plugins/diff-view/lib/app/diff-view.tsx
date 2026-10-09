@@ -130,6 +130,24 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
   const changedRangesByPath = useMemo(() => new Map((delta?.files ?? []).map((file) => [file.path, file.ranges] as const)), [delta]);
   const forPath = (path: string) => comments.threads.filter((thread) => thread.path === path);
 
+  // Pierre mounts annotations into its slots after the render that adds them, too late for the box's autoFocus.
+  const composerOpened = useRef(false);
+  useEffect(() => {
+    if (!composerOpened.current || composer === null) return;
+    composerOpened.current = false;
+    let frames = 0;
+    let frame = 0;
+    const focus = () => {
+      const box = rootRef.current?.querySelector<HTMLTextAreaElement>('[data-comment-form="new"] textarea');
+      if (box !== null && box !== undefined) {
+        if (document.activeElement !== box) box.focus();
+        return;
+      }
+      if (++frames < 30) frame = requestAnimationFrame(focus);
+    };
+    frame = requestAnimationFrame(focus);
+    return () => cancelAnimationFrame(frame);
+  }, [composer]);
   const parkCursor = (path: string) => {
     const want = keys.get().cursor?.want ?? "RIGHT";
     keys.set({ cursor: { path, side: want, line: null, want }, visual: null, focusedThread: null });
@@ -142,6 +160,7 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
   };
   const startComment = (path: string, anchor: ComposerAnchor) => {
     setComposer({ path, ...anchor });
+    composerOpened.current = true;
     if (anchor.line === null) parkCursor(path);
     else keys.set({ cursor: { path, side: anchor.side, line: anchor.line, want: anchor.side }, visual: null });
   };
@@ -255,6 +274,12 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
         if (box.closest('[data-comment-form="new"]') !== null && box.value.trim() === "") return false;
         box.focus();
         box.scrollIntoView({ block: "nearest" });
+        return true;
+      },
+      closeEmptyComposer: () => {
+        const box = rootRef.current?.querySelector<HTMLTextAreaElement>('[data-comment-form="new"] textarea') ?? null;
+        if (composer === null || (box !== null && box.value.trim() !== "")) return false;
+        setComposer(null);
         return true;
       },
       setCollapsed: setCollapsedPaths,

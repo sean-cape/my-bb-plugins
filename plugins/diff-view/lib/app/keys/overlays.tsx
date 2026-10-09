@@ -32,11 +32,11 @@ export function KeyHelp({ onClose }: { onClose: () => void }) {
     >
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm font-medium">
         Keyboard shortcuts
-        <span className="ml-auto text-xs font-normal text-muted-foreground">Esc to close · work anywhere in the diff outside a text box</span>
+        <span className="ml-auto text-right text-xs font-normal text-muted-foreground">Esc to close · keys work anywhere in the diff outside a text box</span>
       </div>
-      <div className="grid gap-x-6 gap-y-4 overflow-y-auto p-3 text-xs @2xl:grid-cols-3">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-x-6 gap-y-4 overflow-y-auto p-3 text-xs">
         {KEY_HELP.map(({ group, keys }) => (
-          <section key={group} className="flex flex-col gap-1.5">
+          <section key={group} className="flex min-w-0 flex-col gap-1.5">
             <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{group}</h3>
             <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1">
               {keys.map(({ keys: combo, action }) => (

@@ -46,6 +46,8 @@ export interface ReviewEnv {
   startComment: (path: string, range: LineRange) => void;
   /** Focuses the open new-comment box; false when none is open. */
   focusComposer: () => boolean;
+  /** Closes the new-comment box when it holds no text; false when there is none or it has a draft. */
+  closeEmptyComposer: () => boolean;
   setCollapsed: (paths: readonly string[], collapsed: boolean) => void;
   markViewed: (path: string, viewed: boolean) => void;
   deleteComment: (id: string) => void;
@@ -318,6 +320,7 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       return;
     case "escape":
       if (state.visual !== null) env.keys.set({ visual: null });
+      else env.closeEmptyComposer();
       return;
   }
 }
