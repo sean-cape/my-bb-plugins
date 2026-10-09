@@ -571,7 +571,8 @@ export function MessageEditor({
   if (depth > 0) return <div>{rows}</div>;
   return (
     <EntranceScope>
-      <div>
+      {/* Form boxes are typed into, not edited: one Escape returns to the field cursor. */}
+      <div data-vim-ignore="">
         {cascade
           ? rows.map((row, index) => (
               <div key={row.key} className={cx(enter.rise, STAGGER)} style={stagger(index)}>

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
-import { type ClientCommand, CTRL_KEYMAP, KEYMAP, type NavRow, PREFIX_KEYMAP } from "./client-nav";
+import { type Caret, type ClientCommand, CTRL_KEYMAP, KEYMAP, type NavRow, PREFIX_KEYMAP } from "./client-nav";
 
 const NON_TEXT_INPUTS = new Set(["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image"]);
 // Radix menus and listboxes take letters for typeahead without always claiming them; the
@@ -171,8 +171,20 @@ export function readRows(container: Element): { elements: HTMLElement[]; rows: N
 
 const ROW_INPUTS = "input:not(:disabled), textarea:not(:disabled), select:not(:disabled)";
 
+/** Focuses a field for typing with the caret at one end. */
+export function editField(field: HTMLElement, caret: Caret): void {
+  field.focus({ preventScroll: true });
+  if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) || !isTextEntry(field)) return;
+  const at = caret === "start" ? 0 : field.value.length;
+  try {
+    field.setSelectionRange(at, at);
+  } catch {
+    // Some input types (email, number) have no caret to place.
+  }
+}
+
 /** Opens a row: clicks a button row, else starts editing its first field, else clicks its first button. */
-export function activateRow(row: HTMLElement): void {
+export function activateRow(row: HTMLElement, caret: Caret = "end"): void {
   if (row instanceof HTMLButtonElement) {
     row.click();
     return;
@@ -181,7 +193,7 @@ export function activateRow(row: HTMLElement): void {
   const inputs = row.dataset.navFixed !== undefined ? [...row.querySelectorAll<HTMLElement>(ROW_INPUTS)] : ownControls<HTMLElement>(row, ROW_INPUTS);
   const input = inputs.find(isTextEntry) ?? inputs[0];
   if (input !== undefined) {
-    input.focus({ preventScroll: true });
+    editField(input, caret);
     return;
   }
   // Removing and clearing are dd's; opening a row never does either.

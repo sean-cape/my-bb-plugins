@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { activateRow, deleteRow, FIELD_ROW, focusRow, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
-import { type ClientCommand, cycle, listAction, type ListMotion } from "./client-nav";
+import { activateRow, deleteRow, editField, FIELD_ROW, focusRow, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
+import { type Caret, type ClientCommand, cycle, listAction, type ListMotion } from "./client-nav";
 import { Centered, FOCUS_RING, MenuItem, Segmented, Tabs } from "./controls";
 import { EndpointSwitcher } from "./EndpointSwitcher";
 import { HistoryList } from "./HistoryList";
@@ -362,10 +362,10 @@ export function ClientView() {
   };
 
   /** Edits a field row, or presses its button; a "Set" button swaps the row for a section, which keeps the cursor. */
-  const activateFieldRow = (row: HTMLElement) => {
+  const activateFieldRow = (row: HTMLElement, caret: Caret = "end") => {
     const pane = requestPaneRef.current;
     const index = pane === null ? -1 : readRows(pane).elements.indexOf(row);
-    activateRow(row);
+    activateRow(row, caret);
     setTimeout(() => {
       if (row.isConnected || pane === null || index === -1) return;
       const replacement = readRows(pane).elements[index];
@@ -425,13 +425,13 @@ export function ClientView() {
       case "edit": {
         const row = focusedRow(requestPaneRef.current) ?? savedFieldRow();
         if (row !== null) {
-          activateFieldRow(row);
+          activateFieldRow(row, command.caret);
           return;
         }
         const fields = [...(requestPaneRef.current?.querySelectorAll<HTMLElement>(REQUEST_FIELDS) ?? [])];
         const field = fields.find(isTextEntry) ?? fields[0];
         if (field === undefined) return false;
-        field.focus({ preventScroll: true });
+        editField(field, command.caret);
         field.scrollIntoView({ block: "nearest" });
         return;
       }
@@ -628,7 +628,7 @@ export function ClientView() {
           ) : null}
           {requestTab === "metadata" ? <MetadataEditor rows={metadata} endpoint={endpoint.name} onChange={setMetadata} /> : null}
           {requestTab === "options" ? (
-            <div className={cx("max-w-xl space-y-5 text-sm", enter.rise)}>
+            <div className={cx("max-w-xl space-y-5 text-sm", enter.rise)} data-vim-ignore="">
               <label {...FIELD_ROW} className={cn("block space-y-1 rounded-md", FOCUS_RING)}>
                 <span className="font-medium text-foreground">Deadline</span>
                 <span className="flex items-center gap-2">

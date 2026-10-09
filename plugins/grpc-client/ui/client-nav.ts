@@ -1,3 +1,6 @@
+/** Where editing a field puts the caret: vim's i and a. */
+export type Caret = "start" | "end";
+
 export type ListMotion = "up" | "down" | "top" | "bottom" | "left" | "right" | "open";
 
 export type ClientCommand =
@@ -7,7 +10,7 @@ export type ClientCommand =
   | { kind: "endpoint" }
   | { kind: "history" }
   | { kind: "toggleList" }
-  | { kind: "edit" }
+  | { kind: "edit"; caret: Caret }
   | { kind: "requestTab"; step: 1 | -1 }
   | { kind: "responseTab"; step: 1 | -1 }
   | { kind: "mode" }
@@ -33,7 +36,10 @@ export const KEYMAP: Record<string, ClientCommand> = {
   e: { kind: "endpoint" },
   c: { kind: "history" },
   b: { kind: "toggleList" },
-  i: { kind: "edit" },
+  i: { kind: "edit", caret: "start" },
+  I: { kind: "edit", caret: "start" },
+  a: { kind: "edit", caret: "end" },
+  A: { kind: "edit", caret: "end" },
   "]": { kind: "requestTab", step: 1 },
   "[": { kind: "requestTab", step: -1 },
   "}": { kind: "responseTab", step: 1 },
@@ -63,7 +69,8 @@ export const KEY_HELP: readonly { keys: readonly string[]; action: string }[] = 
   { keys: ["l"], action: "Expand, open the method and go to its fields, or edit the field" },
   { keys: ["h"], action: "Collapse, go up a level, or go from the fields back to the list" },
   { keys: ["o", "Enter"], action: "Open the method or call, toggle the section, or edit the field" },
-  { keys: ["i"], action: "Edit the field under the cursor" },
+  { keys: ["i", "I"], action: "Edit the field, with the caret at the start" },
+  { keys: ["a", "A"], action: "Edit the field, with the caret at the end" },
   { keys: ["dd"], action: "Remove the list item or optional field, or empty the field" },
   { keys: ["/"], action: "Search methods (Enter opens the first match)" },
   { keys: ["f"], action: "Filter methods" },

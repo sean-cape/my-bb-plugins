@@ -17,7 +17,7 @@ export function MetadataEditor({ rows, endpoint, onChange }: { rows: MetadataRow
   const { rows: presence, onExited, forget } = usePresenceValues(rows);
   return (
     <EntranceScope>
-      <div className="space-y-3">
+      <div className="space-y-3" data-vim-ignore="">
         <p className="text-sm text-muted-foreground">
           Sent with every call to <span className="font-medium text-foreground">{endpoint}</span>. A row overrides an auth or endpoint header with the same name.
         </p>

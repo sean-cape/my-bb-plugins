@@ -13,8 +13,9 @@ move it, `gg`/`G` jump to the ends, and `l` goes deeper: it expands a service,
 opens a method and carries the cursor into its fields, steps into a section,
 or edits a field. `h` goes back out: it collapses a section or service, climbs
 to the enclosing one, and from a top-level field returns to the method list.
-`o` or Enter opens the row under the cursor, `i` edits the field under it, and
-Escape stops editing and puts the cursor back on that field. `dd` removes a
+`o` or Enter opens the row under the cursor; `i`/`I` edit the field under it
+with the caret at the start and `a`/`A` with it at the end, and Escape stops
+editing and puts the cursor back on that field. `dd` removes a
 list item, map entry, or header, unsets a field that is set (an optional field
 goes back to unset), and otherwise empties the field's box.
 
@@ -27,10 +28,10 @@ JSON, `y` copies the grpcurl command, Ctrl-d/Ctrl-u scroll the response, and
 actions panels. `?` (or More → Keyboard shortcuts) lists them all; arrows work
 as `hjkl`.
 
-The method search and the filter panel's API search opt out of the vim-mode
-plugin, so their Escape and arrows reach the list. In the request editor,
-Escape returns to the keys; with vim-mode it takes two (the first enters
-vim's normal mode).
+The method search, the filter panel's API search, and the request form's,
+metadata's and options' boxes opt out of the vim-mode plugin: you type, and
+one Escape returns to the cursor. The JSON editor keeps vim editing, so there
+the first Escape enters vim's normal mode and a second returns to the keys.
 
 ## Configuration
 
