@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   keyName,
-  PICKER_HINTS,
+  pickerHints,
   PICKER_KEYMAP,
   PREVIEW_KEYMAP,
   resolveFilterKey,
@@ -53,13 +53,32 @@ describe("picker keymap", () => {
     expect(command("j", "g")).toBe("down");
   });
 
-  it("hints p, r, d (as delete), u, and n in that order", () => {
-    expect(PICKER_HINTS).toEqual([
+  it("hints only the keys that act in the focused column", () => {
+    expect(pickerHints("left")).toEqual([
+      ["↵", "open"],
+      ["n", "new thread"],
+      ["/", "filter"],
+      ["esc", "close"],
+    ]);
+    expect(pickerHints("right")).toEqual([
+      ["l", "preview"],
+      ["↵", "open"],
       ["p", "pin"],
       ["r", "mark read"],
       ["d", "delete"],
       ["u", "undo"],
-      ["n", "new"],
+      ["n", "new thread"],
+    ]);
+    expect(pickerHints("preview")).toEqual([
+      ["⌃d", "scroll down"],
+      ["⌃u", "scroll up"],
+      ["h", "back"],
+      ["↵", "open"],
+      ["p", "pin"],
+      ["r", "mark read"],
+      ["d", "delete"],
+      ["u", "undo"],
+      ["n", "new thread"],
     ]);
     expect(command("d")).toBe("archive");
     expect(command("u")).toBe("undo-archive");

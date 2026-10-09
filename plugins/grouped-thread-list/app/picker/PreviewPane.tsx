@@ -1,8 +1,16 @@
 import { useEffect, useState, type RefObject } from "react";
-import { ThreadChat } from "@get-bb/plugin-sdk/app";
+import {
+  experimental_useSidebarThreadPullRequest,
+  ThreadChat,
+  type PluginSidebarPullRequest,
+} from "@get-bb/plugin-sdk/app";
 import { enter, speed } from "bb-motion";
 import { cn } from "@/lib/utils";
+import type { SidebarThread } from "../model/sidebar-thread.js";
+import type { SidebarProject } from "../model/use-sidebar-data.js";
+import { ProjectMonogram } from "../rows/ProjectMonogram.js";
 import type { PreviewScroll } from "./picker-keymap.js";
+import { formatAge } from "./picker-model.js";
 import { findTranscriptScroller } from "./use-pinned-to-bottom.js";
 
 // Long enough that holding j doesn't mount a transcript per row.
@@ -46,17 +54,102 @@ export function scrollPreview(root: HTMLElement | null, scroll: PreviewScroll) {
   );
 }
 
+const PR_ATTENTION_LABELS: Partial<
+  Record<PluginSidebarPullRequest["attention"], string>
+> = {
+  blocked: "blocked",
+  changes_requested: "changes requested",
+  checks_failed: "checks failing",
+  checks_pending: "checks running",
+  closed: "closed",
+  conflicts: "conflicts",
+  draft: "draft",
+  merged: "merged",
+  queued: "in merge queue",
+  ready_to_merge: "ready to merge",
+  review_requested: "review requested",
+};
+
+const PR_ATTENTION_ALERT = new Set<PluginSidebarPullRequest["attention"]>([
+  "blocked",
+  "changes_requested",
+  "checks_failed",
+  "conflicts",
+]);
+
+function PullRequestBadge({ threadId }: { threadId: string }) {
+  const { pullRequest } = experimental_useSidebarThreadPullRequest(threadId);
+  if (pullRequest === null) return null;
+  const attention = PR_ATTENTION_LABELS[pullRequest.attention];
+  return (
+    <span
+      className={cn(
+        "shrink-0",
+        PR_ATTENTION_ALERT.has(pullRequest.attention) && "text-destructive",
+      )}
+    >
+      #{pullRequest.number}
+      {attention ? ` ${attention}` : ""}
+    </span>
+  );
+}
+
+const SEPARATOR = <span aria-hidden="true">·</span>;
+
+/** The full title and where the thread lives; the list truncates both. */
+function PreviewHeader({
+  thread,
+  project,
+}: {
+  thread: SidebarThread;
+  project: SidebarProject | undefined;
+}) {
+  const branch = thread.environment?.branchName ?? null;
+  const age = formatAge(thread.createdAt, Date.now());
+  return (
+    <div className="shrink-0 border-b border-border px-4 py-2">
+      <div className="truncate text-sm font-medium" title={thread.displayTitle}>
+        {thread.displayTitle}
+      </div>
+      <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        {project ? (
+          <>
+            <ProjectMonogram projectId={project.id} name={project.name} />
+            <span className="shrink-0">{project.name}</span>
+            {SEPARATOR}
+          </>
+        ) : null}
+        {branch ? (
+          <>
+            <span className="min-w-0 truncate font-mono" title={branch}>
+              {branch}
+            </span>
+            {SEPARATOR}
+          </>
+        ) : null}
+        <PullRequestBadge threadId={thread.id} />
+        <span className="ml-auto shrink-0 tabular-nums">
+          {age === "now" ? "just started" : `started ${age} ago`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function PreviewPane({
   containerRef,
-  threadId,
+  thread,
+  project,
   focused,
   onFocus,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
-  threadId: string;
+  thread: SidebarThread;
+  project: SidebarProject | undefined;
   focused: boolean;
   onFocus: () => void;
 }) {
+  const threadId = thread.id;
   return (
     <div
       ref={containerRef}
@@ -70,6 +163,7 @@ export function PreviewPane({
         speed.fast,
       )}
     >
+      <PreviewHeader thread={thread} project={project} />
       <ThreadChat
         key={threadId}
         threadId={threadId}

@@ -592,9 +592,9 @@ describe("project picker", () => {
     fireEvent.change(input, { target: { value: "wb" } });
     expect(leftLabels()).toEqual(["Web"]);
     expect(selected("Projects")).toBe("Web");
-    fireEvent.change(input, { target: { value: "thread" } });
+    fireEvent.change(input, { target: { value: "zzz" } });
     expect(leftLabels()).toEqual([]);
-    expect(screen.getByText("No matching projects.")).not.toBeNull();
+    expect(screen.getByText("No matching projects or threads.")).not.toBeNull();
     fireEvent.change(input, { target: { value: "web" } });
     press(input, "Enter");
     expect(selected(/Web threads/)).toContain("Web running");
@@ -612,16 +612,83 @@ describe("project picker", () => {
     press(again, "Escape");
     expect(leftLabels()).toEqual(["App"]);
     press(reopened, "Escape");
+    // Opening the Web thread made Web the current project, so it leads.
     expect(leftLabels()).toEqual([
       "Open folder…",
       "Unassociated",
       "Pinned",
       "Unread",
-      "App",
       "Web",
+      "App",
     ]);
     press(reopened, "Escape");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("finds threads by title across projects while filtering", async () => {
+    setPreferencesMirrorStorageForTest(null);
+    const { inspection } = renderPicker();
+    const dialog = await openPicker();
+
+    press(dialog, "/");
+    const input = screen.getByRole("textbox", { name: "Filter projects" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "later" } });
+    expect(leftLabels()).toEqual(["Matching “later”"]);
+    press(input, "Enter");
+    expect(selected(/Matching/)).toContain("Later thread");
+    press(dialog, "Enter");
+    expect(inspection.sidebarActionCalls).toContainEqual({
+      method: "open",
+      threadId: "thr_later",
+    });
+  });
+
+  it("marks where you are: the routed thread's project leads and is labelled current", async () => {
+    setPreferencesMirrorStorageForTest(null);
+    renderPicker({ context: { threadId: "thr_later", projectId: "proj_web" } });
+    const dialog = await openPicker();
+    await waitFor(() =>
+      expect(leftLabels()).toEqual([
+        "Open folder…",
+        "Unassociated",
+        "Pinned",
+        "Unread",
+        "Web",
+        "App",
+      ]),
+    );
+    const projects = screen.getByRole("listbox", { name: "Projects" });
+    expect(
+      within(projects)
+        .getAllByRole("option")
+        .filter((option) => option.getAttribute("aria-current") === "location")
+        .map((option) => visibleText(option)),
+    ).toEqual(["Web"]);
+    expect(
+      screen.getByLabelText("Current location").textContent,
+    ).toBe("WWebLater thread");
+
+    press(dialog, "j");
+    expect(selected("Projects")).toBe("Web");
+    const routed = within(screen.getByRole("listbox", { name: "Web threads" }))
+      .getAllByRole("option")
+      .filter((option) => option.getAttribute("aria-current") === "page")
+      .map((option) => option.getAttribute("data-picker-thread-id"));
+    expect(routed).toEqual(["thr_later"]);
+  });
+
+  it("marks Unassociated as current for a personal thread", async () => {
+    setPreferencesMirrorStorageForTest(null);
+    renderPicker({ context: { threadId: "thr_personal" } });
+    await openPicker();
+    await waitFor(() => expect(leftLabels()).toContain("App"));
+    expect(
+      within(screen.getByRole("listbox", { name: "Projects" }))
+        .getAllByRole("option")
+        .filter((option) => option.getAttribute("aria-current") === "location")
+        .map((option) => visibleText(option)),
+    ).toEqual(["Unassociated"]);
   });
 
   it("pins and unpins the highlighted thread with p", async () => {
@@ -676,9 +743,10 @@ describe("project picker", () => {
       within(screen.getByRole("listbox", { name: "Unread threads" }))
         .getAllByRole("option")
         .map((option) => option.getAttribute("data-picker-thread-id")),
-    ).toEqual(["thr_read", "thr_unread"]);
-    press(dialog, "r");
+    ).toEqual(["thr_unread", "thr_read"]);
     press(dialog, "j");
+    press(dialog, "r");
+    press(dialog, "k");
     press(dialog, "r");
     expect(inspection.sidebarActionCalls).toEqual([
       { method: "setRead", threadId: "thr_unread", read: true },

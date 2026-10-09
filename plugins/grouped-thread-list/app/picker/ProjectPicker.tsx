@@ -22,15 +22,20 @@ import {
   buildLeftEntries,
   clampIndex,
   entryProjectId,
+  searchThreads,
   threadRowsForEntry,
   unreadThreads,
   type LeftEntry,
   type PickerColumn,
   type ThreadRowModel,
 } from "./picker-model.js";
+import { buildPinnedThreadTree } from "../model/pinned-sidebar-threads.js";
+import { isSidebarProjectThread } from "../model/project-thread-groups.js";
+import type { SidebarProject } from "../model/use-sidebar-data.js";
+import { ProjectMonogram } from "../rows/ProjectMonogram.js";
 import {
   keyName,
-  PICKER_HINTS,
+  pickerHints,
   resolveFilterKey,
   resolvePickerKey,
   resolvePreviewKey,
@@ -78,12 +83,12 @@ function consume(event: ReactKeyboardEvent) {
   event.stopPropagation();
 }
 
-function PickerHints() {
+function PickerHints({ column }: { column: PickerColumn }) {
   return (
     <div className="flex h-7 shrink-0 items-center gap-3 border-t border-border px-3 text-[11px] text-muted-foreground">
-      {PICKER_HINTS.map(([keys, label]) => (
+      {pickerHints(column).map(([keys, label]) => (
         <span key={label} className="flex items-center gap-1">
-          <kbd className="rounded border border-border px-1 font-sans">
+          <kbd className="min-w-4 rounded border border-border px-1 text-center font-sans">
             {keys}
           </kbd>
           {label}
@@ -91,6 +96,62 @@ function PickerHints() {
       ))}
     </div>
   );
+}
+
+/**
+ * Where you are, whichever entry the picker is showing: the routed thread's
+ * project and title, or just the project on a project's compose screen.
+ */
+function CurrentLocation({
+  project,
+  isPersonal,
+  thread,
+}: {
+  project: SidebarProject | undefined;
+  isPersonal: boolean;
+  thread: SidebarThread | undefined;
+}) {
+  if (project === undefined && !isPersonal) return null;
+  return (
+    <div
+      aria-label="Current location"
+      className="flex min-w-0 max-w-[45%] shrink items-center gap-1.5 text-xs text-muted-foreground"
+    >
+      {project ? (
+        <ProjectMonogram projectId={project.id} name={project.name} />
+      ) : (
+        <Icon name="UserRound" className="size-3.5" />
+      )}
+      <span className="shrink-0 font-medium text-foreground/80">
+        {project?.name ?? "Unassociated"}
+      </span>
+      {thread ? (
+        <>
+          <Icon name="ChevronRight" className="size-3 shrink-0" />
+          <span className="min-w-0 truncate">{thread.displayTitle}</span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The routed thread's project (by root ancestor), else the project whose
+ * screen is open, else the active project, so there is always a "here".
+ */
+function currentProjectIdFor({
+  routedThread,
+  routedProjectId,
+  activeProjectId,
+  resolveProjectId,
+}: {
+  routedThread: SidebarThread | undefined;
+  routedProjectId: string | null;
+  activeProjectId: string | null;
+  resolveProjectId: (thread: SidebarThread) => string;
+}): string | null {
+  if (routedThread !== undefined) return resolveProjectId(routedThread);
+  return routedProjectId ?? activeProjectId;
 }
 
 function ProjectPickerDialog({
@@ -102,10 +163,12 @@ function ProjectPickerDialog({
   onExitEnd: (event: AnimationEvent) => void;
 }) {
   const sidebarActions = experimental_useSidebarThreadActions();
-  const { threadId: routedThreadId } = useBbContext();
+  const { threadId: routedThreadId, projectId: routedProjectId } =
+    useBbContext();
   const draftIds = useSidebarThreadDraftIds();
   const {
     activeProjectId,
+    latestActivity,
     orderedProjects,
     personalProjectId,
     resolveProjectId,
@@ -135,11 +198,43 @@ function ProjectPickerDialog({
     index: 0,
   });
 
-  const leftEntries = useMemo(
-    () => buildLeftEntries({ orderedProjects, personalProjectId, query }),
-    [orderedProjects, personalProjectId, query],
+  const routedThread = useMemo(
+    () => threads.find((thread) => thread.id === routedThreadId),
+    [routedThreadId, threads],
   );
-  const unreadCount = useMemo(() => unreadThreads(threads).length, [threads]);
+  const currentProjectId = currentProjectIdFor({
+    routedThread,
+    routedProjectId,
+    activeProjectId,
+    resolveProjectId,
+  });
+  const currentProject = orderedProjects.find(
+    (project) => project.id === currentProjectId,
+  );
+  const threadMatchCount = useMemo(
+    () => searchThreads(threads, query).length,
+    [query, threads],
+  );
+  const leftEntries = useMemo(
+    () =>
+      buildLeftEntries({
+        orderedProjects,
+        personalProjectId,
+        currentProjectId,
+        query,
+        threadMatchCount,
+      }),
+    [currentProjectId, orderedProjects, personalProjectId, query, threadMatchCount],
+  );
+  const counts = useMemo(
+    () => ({
+      unread: unreadThreads(threads).length,
+      pinned: buildPinnedThreadTree(threads.filter(isSidebarProjectThread))
+        .length,
+      threadMatches: threadMatchCount,
+    }),
+    [threadMatchCount, threads],
+  );
   const leftIndex = clampIndex(
     Math.max(
       0,
@@ -168,6 +263,10 @@ function ProjectPickerDialog({
   const previewThreadId = usePreviewThreadId(
     column === "left" ? null : (highlightedRow?.thread.id ?? null),
   );
+  const previewThread =
+    previewThreadId === null
+      ? undefined
+      : threads.find((thread) => thread.id === previewThreadId);
   const releasePreviewPin = usePinnedToBottom(previewRef, previewThreadId);
   const behindHostDialog = useHostDialogOpen(rootRef);
   const scrollPreviewBy = (scroll: PreviewScroll) => {
@@ -400,7 +499,7 @@ function ProjectPickerDialog({
               setColumn("left");
             }}
             onKeyDown={onInputKeyDown}
-            placeholder="/ to filter projects, or type a folder path"
+            placeholder="/ to find a project or thread, or type a folder path"
             aria-label="Filter projects"
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             spellCheck={false}
@@ -411,7 +510,16 @@ function ProjectPickerDialog({
               name="Loading"
               className="size-4 animate-spin text-muted-foreground"
             />
-          ) : null}
+          ) : (
+            <CurrentLocation
+              project={currentProject}
+              isPersonal={
+                currentProjectId !== null &&
+                currentProjectId === personalProjectId
+              }
+              thread={routedThread}
+            />
+          )}
         </div>
         <div className="flex min-h-0 flex-1">
           <ProjectsColumn
@@ -419,9 +527,10 @@ function ProjectPickerDialog({
             intro={intro}
             selectedIndex={leftIndex}
             focused={column === "left"}
-            activeProjectId={activeProjectId}
+            currentProjectId={currentProjectId}
+            latestActivity={latestActivity}
             draftIds={draftIds}
-            unreadCount={unreadCount}
+            counts={counts}
             onEntryClick={(index, entry) => {
               selectLeft(index);
               setColumn("left");
@@ -439,8 +548,9 @@ function ProjectPickerDialog({
                 ? describePathLookup(pathLookup, pathQuery)
                 : null
             }
-            narrow={previewThreadId !== null}
+            narrow={previewThread !== undefined}
             routedThreadId={routedThreadId}
+            currentProjectId={currentProjectId}
             orderedProjects={orderedProjects}
             resolveProjectId={resolveProjectId}
             draftIds={draftIds}
@@ -450,16 +560,19 @@ function ProjectPickerDialog({
             }}
             onOpen={openThread}
           />
-          {previewThreadId === null ? null : (
+          {previewThread === undefined ? null : (
             <PreviewPane
               containerRef={previewRef}
-              threadId={previewThreadId}
+              thread={previewThread}
+              project={orderedProjects.find(
+                (project) => project.id === resolveProjectId(previewThread),
+              )}
               focused={column === "preview"}
               onFocus={() => setColumn("preview")}
             />
           )}
         </div>
-        <PickerHints />
+        <PickerHints column={column} />
       </div>
     </div>
   );

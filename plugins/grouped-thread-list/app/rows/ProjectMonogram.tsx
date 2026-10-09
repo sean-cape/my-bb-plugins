@@ -21,6 +21,10 @@ export function getProjectMonogramHue(projectId: string): number {
   return hash % 360;
 }
 
+export function getProjectColor(projectId: string): string {
+  return `oklch(0.58 0.11 ${getProjectMonogramHue(projectId)})`;
+}
+
 interface ProjectMonogramProps {
   projectId: string;
   name: string;
@@ -29,7 +33,7 @@ interface ProjectMonogramProps {
 export function ProjectMonogram({ projectId, name }: ProjectMonogramProps) {
   const text = getProjectMonogramText(name);
   const style: CSSProperties = {
-    backgroundColor: `oklch(0.58 0.11 ${getProjectMonogramHue(projectId)})`,
+    backgroundColor: getProjectColor(projectId),
   };
   return (
     <span

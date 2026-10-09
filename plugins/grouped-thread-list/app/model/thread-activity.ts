@@ -33,7 +33,7 @@ const DONE_THREAD_STATUSES: Record<PluginSidebarThread["status"], boolean> = {
   pending: false,
 };
 
-function isRuntimeBusyThread(thread: ThreadRuntimeShape): boolean {
+export function isRuntimeBusyThread(thread: ThreadRuntimeShape): boolean {
   return RUNNING_RUNTIME_STATUSES[thread.runtimeStatus] ?? false;
 }
 

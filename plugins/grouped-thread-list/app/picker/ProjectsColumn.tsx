@@ -10,7 +10,8 @@ import { isSidebarProjectThread } from "../model/project-thread-groups.js";
 import type { SidebarThread } from "../model/sidebar-thread.js";
 import { ThreadStatusGlyph } from "../rows/ThreadStatusGlyph.js";
 import { ProjectMonogram } from "../rows/ProjectMonogram.js";
-import type { LeftEntry } from "./picker-model.js";
+import { CurrentMarker, GroupLabel } from "./CurrentMarker.js";
+import { formatAge, LEFT_GROUP_LABELS, type LeftEntry } from "./picker-model.js";
 
 const ENTRY_ICONS: Record<Exclude<LeftEntry["kind"], "project">, IconName> = {
   browse: "FolderPlus",
@@ -18,6 +19,7 @@ const ENTRY_ICONS: Record<Exclude<LeftEntry["kind"], "project">, IconName> = {
   personal: "UserRound",
   pinned: "Pin",
   unread: "Mail",
+  search: "Search",
 };
 
 function activityState(
@@ -40,7 +42,7 @@ function activityState(
   };
 }
 
-function UnreadCount({ count }: { count: number }) {
+function EntryCount({ count }: { count: number }) {
   const changed = useChangedSinceMount(count);
   if (count === 0) return null;
   return (
@@ -57,48 +59,77 @@ function UnreadCount({ count }: { count: number }) {
   );
 }
 
+export interface EntryCounts {
+  unread: number;
+  pinned: number;
+  threadMatches: number;
+}
+
 function EntryTrailing({
   entry,
-  activeProjectId,
   draftIds,
-  unreadCount,
+  counts,
+  latestActivity,
+  now,
 }: {
   entry: LeftEntry;
-  activeProjectId: string | null;
   draftIds: ReadonlySet<string>;
-  unreadCount: number;
+  counts: EntryCounts;
+  latestActivity: ReadonlyMap<string, number>;
+  now: number;
 }) {
-  if (entry.kind === "project") {
-    return (
-      <span className="flex shrink-0 items-center gap-1">
-        <ThreadStatusGlyph
-          {...activityState(
-            entry.project.threads.filter(isSidebarProjectThread),
-            draftIds,
-          )}
-        />
-        {entry.project.id === activeProjectId ? (
-          <span
-            className="size-1.5 rounded-full bg-foreground/60"
-            aria-label="Active project"
+  switch (entry.kind) {
+    case "project": {
+      const activeAt = latestActivity.get(entry.project.id);
+      return (
+        <span className="flex shrink-0 items-center gap-1.5">
+          <ThreadStatusGlyph
+            {...activityState(
+              entry.project.threads.filter(isSidebarProjectThread),
+              draftIds,
+            )}
           />
-        ) : null}
-      </span>
-    );
+          {activeAt === undefined ? null : (
+            <span
+              aria-hidden="true"
+              className="w-6 text-right text-[11px] tabular-nums text-muted-foreground/70"
+            >
+              {formatAge(activeAt, now)}
+            </span>
+          )}
+        </span>
+      );
+    }
+    case "unread":
+      return <EntryCount count={counts.unread} />;
+    case "pinned":
+      return <EntryCount count={counts.pinned} />;
+    case "search":
+      return <EntryCount count={counts.threadMatches} />;
+    default:
+      return null;
   }
-  if (entry.kind === "unread") return <UnreadCount count={unreadCount} />;
+}
+
+function entryProjectIdForMarker(entry: LeftEntry): string | null {
+  if (entry.kind === "project") return entry.project.id;
+  if (entry.kind === "personal") return entry.projectId;
   return null;
 }
 
-/** The left column: the fixed entries, a divider, then the projects. */
+/**
+ * The left column: the fixed entries, then labelled groups: the current
+ * project, the other projects, and thread matches while filtering.
+ */
 export function ProjectsColumn({
   entries,
   intro,
   selectedIndex,
   focused,
-  activeProjectId,
+  currentProjectId,
+  latestActivity,
   draftIds,
-  unreadCount,
+  counts,
   onEntryClick,
 }: {
   entries: readonly LeftEntry[];
@@ -106,9 +137,11 @@ export function ProjectsColumn({
   intro: boolean;
   selectedIndex: number;
   focused: boolean;
-  activeProjectId: string | null;
+  /** Where you are: the routed thread's project, Unassociated included. */
+  currentProjectId: string | null;
+  latestActivity: ReadonlyMap<string, number>;
   draftIds: ReadonlySet<string>;
-  unreadCount: number;
+  counts: EntryCounts;
   onEntryClick: (index: number, entry: LeftEntry) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -118,6 +151,7 @@ export function ProjectsColumn({
       ?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
+  const now = Date.now();
   return (
     <div
       ref={listRef}
@@ -125,37 +159,38 @@ export function ProjectsColumn({
       aria-label="Projects"
       data-picker-column="left"
       className={cn(
-        "w-60 shrink-0 overflow-y-auto border-r border-border p-1",
+        "w-64 shrink-0 overflow-y-auto border-r border-border p-1",
         focused ? "bg-transparent" : "bg-muted/20",
       )}
     >
       {entries.map((entry, index) => {
         const selected = index === selectedIndex;
-        const startsProjects =
-          entry.kind === "project" &&
-          index > 0 &&
-          entries[index - 1]?.kind !== "project";
+        const markerProjectId = entryProjectIdForMarker(entry);
+        const current =
+          markerProjectId !== null && markerProjectId === currentProjectId;
         const introStyle = intro ? stagger(index) : undefined;
         return (
           <Fragment key={entry.key}>
-            {startsProjects ? (
-              <div
-                aria-hidden="true"
+            {entry.group !== "nav" &&
+            entries[index - 1]?.group !== entry.group ? (
+              <GroupLabel
+                label={LEFT_GROUP_LABELS[entry.group]}
                 className={cn(
-                  "mx-2 my-1 border-t border-border",
+                  index > 0 && "mt-2",
                   intro && [enter.fade, STAGGER],
                 )}
-                style={introStyle}
               />
             ) : null}
             <div
               role="option"
               aria-selected={selected}
+              aria-current={current ? "location" : undefined}
               data-picker-index={index}
               className={cn(
-                "flex h-8 cursor-pointer select-none items-center gap-2 rounded-md px-2 text-sm",
+                "relative flex h-8 cursor-pointer select-none items-center gap-2 rounded-md px-2 text-sm",
                 PRESS,
                 intro && [enter.rise, speed.fast, STAGGER],
+                current && "font-medium text-foreground",
                 selected &&
                   (focused
                     ? "bg-state-active text-foreground"
@@ -164,6 +199,11 @@ export function ProjectsColumn({
               style={introStyle}
               onClick={() => onEntryClick(index, entry)}
             >
+              {current ? (
+                <CurrentMarker
+                  projectId={entry.kind === "project" ? markerProjectId : null}
+                />
+              ) : null}
               <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
                 {entry.kind === "project" ? (
                   <ProjectMonogram
@@ -177,9 +217,10 @@ export function ProjectsColumn({
               <span className="min-w-0 flex-1 truncate">{entry.label}</span>
               <EntryTrailing
                 entry={entry}
-                activeProjectId={activeProjectId}
                 draftIds={draftIds}
-                unreadCount={unreadCount}
+                counts={counts}
+                latestActivity={latestActivity}
+                now={now}
               />
             </div>
           </Fragment>

@@ -14,6 +14,8 @@ import {
 
 export interface ActiveProjectState {
   activeProjectId: string | null;
+  /** Each project's latest thread activity, the order `orderedProjects` uses. */
+  latestActivity: ReadonlyMap<string, number>;
   personalProjectId: string | null;
   /** Standard projects, most recently active first. */
   orderedProjects: SidebarProject[];
@@ -69,6 +71,7 @@ export function useActiveProject(): ActiveProjectState {
   );
   return {
     activeProjectId,
+    latestActivity,
     personalProjectId: personalProject?.id ?? null,
     orderedProjects,
     resolveProjectId,
