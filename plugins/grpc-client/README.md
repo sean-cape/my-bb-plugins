@@ -22,8 +22,8 @@ panels. `?` (or More → Keyboard shortcuts) lists them all; arrows work as
 
 The method search and the filter panel's API search opt out of the vim-mode
 plugin, so their Escape and arrows reach the list. In the request editor,
-Escape returns to the keys only when vim-mode is off or its "Escape leaves
-the text box" setting is on.
+Escape returns to the keys; with vim-mode it takes two (the first enters
+vim's normal mode).
 
 ## Configuration
 
