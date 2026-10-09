@@ -23,6 +23,8 @@ const SEARCH_HIGHLIGHT = "bb-vim-search";
 const CURRENT_HIGHLIGHT = "bb-vim-search-current";
 /** Frames to wait for the virtualizer to render rows after a scroll. */
 const REALIZE_FRAMES = 4;
+/** A safety cap only; a search ends when scrolling stops making progress. */
+const MAX_SEARCH_STEPS = 1000;
 
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn"]);
 
@@ -299,7 +301,7 @@ export class ScrollMode {
     const prefix = direction < 0 ? "?" : "/";
     const originalTop = viewport.scrollTop;
     const start = this.current ?? screenStart(viewport, search.pattern, direction);
-    let budget = 2 * Math.ceil(viewport.scrollHeight / Math.max(1, viewport.clientHeight)) + 8;
+    let budget = MAX_SEARCH_STEPS;
     let wrapped = false;
     let row = start.row;
     for (;;) {
@@ -360,7 +362,9 @@ export class ScrollMode {
       if (spend() <= 0) return "end";
       const visible = visibleBox(viewport);
       const step = Math.max(LINE_STEP, visible.bottom - visible.top);
-      await this.scrollAndWait(viewport, viewport.scrollTop + (down ? step : -step), rows);
+      const before = viewport.scrollTop;
+      await this.scrollAndWait(viewport, before + (down ? step : -step), rows);
+      if (viewport.scrollTop === before) return "end";
     }
   }
 
@@ -433,7 +437,9 @@ export class ScrollMode {
       return;
     }
     this.renderHighlights(viewport);
-    this.keysNode.textContent = this.pendingG ? "g" : "";
+    // Rewriting even the same text is a mutation, which would schedule another render.
+    const keys = this.pendingG ? "g" : "";
+    if (this.keysNode.textContent !== keys) this.keysNode.textContent = keys;
     this.keysNode.hidden = !this.pendingG;
     const form = viewport.querySelector(PROMPTBOX);
     const toolbar = form ? promptToolbarRow(form) : null;
