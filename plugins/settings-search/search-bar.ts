@@ -124,7 +124,7 @@ export const SETTINGS_SEARCH_CSS = `
 }
 [${ROOT_ATTRIBUTE}] [data-keys] span:first-child {
   flex: 0 0 auto;
-  min-width: 64px;
+  min-width: 96px;
   color: var(--sidebar-foreground);
   white-space: pre;
 }
