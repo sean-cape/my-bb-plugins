@@ -1,4 +1,4 @@
-import { Fragment, useContext, useEffect, useRef, useState } from "react";
+import { Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { DiffSide, HunkExplanation, SemanticChange, StructuralDiff, SymbolLookup } from "../../types";
 import { checkedLineRange } from "../../line-range";
@@ -20,10 +20,12 @@ import { SymbolHoverCard } from "../symbols/symbol-hover-card";
 import { ExplanationStrip } from "../explanations/explanation-strip";
 import { SymbolPeek } from "../symbols/symbol-peek";
 import { useSymbolNavigation } from "../symbols/use-symbol-navigation";
+import { visualRange, type NavRow } from "../keys/nav";
+import { useFileCursor, usePublishNavModel, type FileNavModel } from "../keys/review-keys-context";
 import { enclosingDefinition } from "./enclosing-definition";
 import { detectMoves, type MovedRow } from "./moves";
 import { CONTEXT_LINES, hunkSpan, structuralRows, visibleRows } from "./rows";
-import { StructuralLine } from "./structural-line";
+import { IDENTIFIER, StructuralLine } from "./structural-line";
 import { shikiLangFor, useShikiTokens } from "./syntax";
 
 /** Folded runs up to this long expand in one click; longer ones expand this many lines per click. */
@@ -32,6 +34,8 @@ const EXPAND_STEP_LINES = 20;
 const LARGE_FILE_PREVIEW_ROWS = 60;
 /** How far past the preview a whole-file diff may run before it is cut to the preview. */
 const LARGE_FILE_PREVIEW_SLACK = 10;
+
+const NO_ROWS: FileNavModel = { rows: [], cutToHunk: false, element: () => null };
 
 /** A line-number drag in progress: one side's lines from `anchor` to `current`, in either direction. */
 interface LineDrag {
@@ -100,6 +104,66 @@ export function StructuralPatch({
     };
   }, [source, path]);
   const symbols = useSymbolNavigation(source);
+  const latestSymbols = useRef(symbols);
+  latestSymbols.current = symbols;
+  const reveal = (from: number, to: number) => {
+    setRevealed((current) => {
+      const next = new Set(current);
+      for (let i = from; i < to; i++) next.add(i);
+      return next;
+    });
+  };
+  // GitHub-style hunks: changed rows plus a few lines of context stay visible; everything else collapses behind expanders.
+  const shape = useMemo(() => {
+    if (diff === null || !diff.available) return null;
+    const rows = structuralRows(diff);
+    const visible = visibleRows(rows, { revealed, findingLines: findings.map((entry) => entry.line), threads });
+    const wholeFile = diff.status === "created" || diff.status === "deleted" || rows.every((row) => row.changed);
+    const previewLimit = wholeFile && !showAll && visible.size > LARGE_FILE_PREVIEW_ROWS + LARGE_FILE_PREVIEW_SLACK ? LARGE_FILE_PREVIEW_ROWS : null;
+    const displayed = rows.filter((row) => visible.has(row.index)).slice(0, previewLimit ?? undefined);
+    let hunk = -1;
+    const nav = displayed.map((row): NavRow => {
+      if (row.index === 0 || !visible.has(row.index - 1)) hunk += 1;
+      return { left: row.lhs, right: row.rhs, hunk, changed: row.changed };
+    });
+    return { rows, visible, previewLimit, displayed, nav };
+  }, [diff, revealed, findings, threads, showAll]);
+  const navModel = useMemo<FileNavModel | null>(() => {
+    if (error !== null || (diff !== null && !diff.available)) return NO_ROWS;
+    if (shape === null) return null;
+    const { displayed, nav, visible, previewLimit } = shape;
+    const sideLines = { LEFT: diff!.oldText.split("\n"), RIGHT: diff!.newText.split("\n") };
+    const rowElement = (row: number) => (displayed[row] === undefined ? null : (tableRef.current?.querySelector(`[data-row="${displayed[row].index}"]`) ?? null));
+    return {
+      rows: nav,
+      cutToHunk: false,
+      element: rowElement,
+      moreContext: (row) => {
+        if (previewLimit !== null) setShowAll(true);
+        const at = displayed[row]?.index;
+        if (at === undefined) return;
+        let start = at;
+        let end = at;
+        while (visible.has(start - 1)) start -= 1;
+        while (visible.has(end + 1)) end += 1;
+        reveal(Math.max(0, start - EXPAND_STEP_LINES), start);
+        reveal(end + 1, end + 1 + EXPAND_STEP_LINES);
+      },
+      symbols: {
+        at: (row, side) => {
+          const line = side === "LEFT" ? nav[row]?.left : nav[row]?.right;
+          const text = line == null ? "" : (sideLines[side][line - 1] ?? "");
+          return [...new Set([...text.matchAll(IDENTIFIER)].map((match) => match[0]))];
+        },
+        peek: (row, symbol) => {
+          const element = rowElement(row);
+          if (element instanceof HTMLElement) latestSymbols.current.lookupSymbol(symbol, element);
+        },
+      },
+    };
+  }, [error, diff, shape]);
+  usePublishNavModel(path, navModel);
+  const fileCursor = useFileCursor(path);
   useEffect(() => {
     if (drag === null) return;
     const finish = () => {
@@ -116,7 +180,7 @@ export function StructuralPatch({
     };
   }, [drag, onStartComment]);
   if (error !== null) return <p className="p-4 text-sm text-destructive">{error}</p>;
-  if (diff === null) return <p className={cn("relative overflow-hidden p-4 text-sm text-muted-foreground", SHIMMER)}>Running difftastic…</p>;
+  if (diff === null || shape === null) return <p className={cn("relative overflow-hidden p-4 text-sm text-muted-foreground", SHIMMER)}>Running difftastic…</p>;
   if (!diff.available) {
     return (
       <div className={cn("m-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground", enter.fade)}>
@@ -132,7 +196,7 @@ export function StructuralPatch({
   const newLines = diff.newText.split("\n");
   const oldChanges = new Map(diff.oldChanges.map((entry) => [entry.line, entry]));
   const newChanges = new Map(diff.newChanges.map((entry) => [entry.line, entry]));
-  const rows = structuralRows(diff);
+  const { rows, visible, previewLimit } = shape;
   const moved = detectMoves(rows, oldLines, newLines);
   const jumpToRow = (index: number) => {
     reveal(Math.max(0, index - CONTEXT_LINES), Math.min(rows.length, index + CONTEXT_LINES + 1));
@@ -140,22 +204,16 @@ export function StructuralPatch({
       tableRef.current?.querySelector(`[data-row="${index}"]`)?.scrollIntoView({ block: "center" });
     });
   };
-  // GitHub-style hunks: changed rows plus a few lines of context stay visible; everything else collapses behind expanders.
-  const visible = visibleRows(rows, { revealed, findingLines: findings.map((entry) => entry.line), threads });
-  const reveal = (from: number, to: number) => {
-    setRevealed((current) => {
-      const next = new Set(current);
-      for (let i = from; i < to; i++) next.add(i);
-      return next;
-    });
-  };
   const threadsAt = (side: DiffSide, line: number) => threads.filter((thread) => thread.line === line && thread.side === side);
+  const cursor = fileCursor?.cursor ?? null;
+  const visualSelection = fileCursor?.visual != null ? visualRange(shape.nav, fileCursor.visual, fileCursor.cursor, false) : null;
   const selected = (side: DiffSide, line: number): boolean => {
     if (drag !== null) return side === drag.side && line >= Math.min(drag.anchor, drag.current) && line <= Math.max(drag.anchor, drag.current);
-    if (composer === null || composer.line === null) return false;
-    if (composer.startLine === null || composer.startSide === null) return side === composer.side && line === composer.line;
-    if (composer.startSide === composer.side) return side === composer.side && line >= composer.startLine && line <= composer.line;
-    return side === composer.startSide ? line >= composer.startLine : line <= composer.line;
+    const range = composer !== null && composer.line !== null ? composer : visualSelection;
+    if (range === null || range.line === null) return false;
+    if (range.startLine === null || range.startSide === null) return side === range.side && line === range.line;
+    if (range.startSide === range.side) return side === range.side && line >= range.startLine && line <= range.line;
+    return side === range.startSide ? line >= range.startLine : line <= range.line;
   };
   /** A shift-click extends the open comment's range on the same side, from whichever end stays put. */
   const dragAnchor = (side: DiffSide, line: number, extend: boolean): number => {
@@ -180,6 +238,7 @@ export function StructuralPatch({
     const semantic = rowChanged && movedRow === null ? semanticAt(side, line) : null;
     const neutral = movedRow !== null || semantic !== null;
     const inSelection = selected(side, line);
+    const atCursor = cursor !== null && cursor.side === side && cursor.line === line;
     const tint = inSelection ? "bg-amber-400/20" : neutral ? "bg-violet-500/10" : rowChanged && (side === "LEFT" ? "bg-red-500/10" : "bg-emerald-500/10");
     const gutterTint = inSelection ? "bg-amber-400/35" : neutral ? "bg-violet-500/20" : rowChanged && (side === "LEFT" ? "bg-red-500/20" : "bg-emerald-500/20");
     const changedSince = side === "RIGHT" && rangesOverlap(line, line, changedRanges);
@@ -196,7 +255,10 @@ export function StructuralPatch({
       ) : null;
     return (
       <>
-        <td className={cn("group/ln select-none border-r border-border/60 pr-2 text-right align-top text-muted-foreground/70", gutterTint, changedSince && "shadow-[inset_2px_0_0_0_theme(colors.sky.500)]")} title={changedSince ? "Changed since you last looked" : undefined}>
+        <td
+          className={cn("group/ln select-none border-r border-border/60 pr-2 text-right align-top text-muted-foreground/70", gutterTint, changedSince && "shadow-[inset_2px_0_0_0_theme(colors.sky.500)]", atCursor && "bg-primary/25 font-medium text-foreground")}
+          title={changedSince ? "Changed since you last looked" : undefined}
+        >
           <button
             type="button"
             className="relative w-full touch-none text-right tabular-nums hover:text-foreground"
@@ -216,7 +278,7 @@ export function StructuralPatch({
             <span className="absolute inset-0 hidden items-center justify-end pr-0.5 text-primary group-hover/ln:flex">+</span>
           </button>
         </td>
-        <td className={cn(diffWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre", "pl-2 pr-3 align-top", tint)}>
+        <td className={cn(diffWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre", "pl-2 pr-3 align-top", tint, atCursor && "ring-1 ring-inset ring-primary/70")} data-cursor={atCursor ? "" : undefined}>
           {movedLabel}
           <StructuralLine text={text} changes={sideLine} tokens={lineTokens} side={side} onSymbol={symbols.lookupSymbol} onSymbolHover={symbols.hoverSymbol} />
         </td>
@@ -285,7 +347,7 @@ export function StructuralPatch({
     const explanation = explanations.find((entry) => entry.side === span.side && entry.startLine <= span.stop && entry.endLine >= span.start) ?? null;
     return (
       <Fragment key={`hunk-${index}`}>
-        <tr data-hunk="" className="bg-muted/30 text-[11px] text-muted-foreground">
+        <tr className="bg-muted/30 text-[11px] text-muted-foreground">
           <td colSpan={4} className="px-3 py-0.5">
             <div className="flex items-center gap-2">
               <code className="min-w-0 truncate text-muted-foreground/80" title={enclosing ?? undefined}>
@@ -333,8 +395,6 @@ export function StructuralPatch({
       </Fragment>
     );
   };
-  const wholeFile = diff.status === "created" || diff.status === "deleted" || rows.every((row) => row.changed);
-  const previewLimit = wholeFile && !showAll && visible.size > LARGE_FILE_PREVIEW_ROWS + LARGE_FILE_PREVIEW_SLACK ? LARGE_FILE_PREVIEW_ROWS : null;
   const body: ReactNode[] = [];
   let gapStart: number | null = null;
   let emitted = 0;

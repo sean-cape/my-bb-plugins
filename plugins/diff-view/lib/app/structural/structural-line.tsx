@@ -12,7 +12,7 @@ const HIGHLIGHT_CLASS: Record<string, string> = {
   treesittererror: "underline decoration-wavy decoration-destructive",
   normal: "",
 };
-const IDENTIFIER = /[A-Za-z_$][A-Za-z0-9_$]*/gu;
+export const IDENTIFIER = /[A-Za-z_$][A-Za-z0-9_$]*/gu;
 
 /** One side's line: Shiki colours per token, changed spans tinted by difftastic, identifiers made ⌘-clickable. */
 export function StructuralLine({

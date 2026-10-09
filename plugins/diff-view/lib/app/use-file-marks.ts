@@ -51,5 +51,7 @@ export function useFileMarks(source: DiffSource, diff: DiffResult | null) {
   };
   const toggleCollapsed = (path: string) => setCollapsed((current) => toggled(current, path, !current.has(path)));
   const expand = (path: string) => setCollapsed((current) => (current.has(path) ? toggled(current, path, false) : current));
-  return { viewed, collapsed, markViewed, toggleCollapsed, expand };
+  const setCollapsedPaths = (paths: readonly string[], isCollapsed: boolean) =>
+    setCollapsed((current) => (paths.every((path) => current.has(path) === isCollapsed) ? current : new Set(isCollapsed ? [...current, ...paths] : [...current].filter((path) => !paths.includes(path)))));
+  return { viewed, collapsed, markViewed, toggleCollapsed, expand, setCollapsedPaths };
 }

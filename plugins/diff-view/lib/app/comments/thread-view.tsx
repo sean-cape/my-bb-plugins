@@ -11,6 +11,7 @@ import { longLineLabel, shortLineLabel } from "../../line-range";
 import { DiffCommentForm } from "./comment-form";
 import { DiffCommentsContext } from "./context";
 import { isUnsent, localCommentState, threadIsOpen, type DiffThread, type LocalCommentState, type ThreadEntry } from "./threads";
+import { returnToDiff, useIsFocusedThread, useThreadControls } from "../keys/review-keys-context";
 
 function useNow(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
@@ -35,12 +36,33 @@ function entryKey(entry: ThreadEntry): string {
 }
 
 /** `arrived` marks a reply that came in while its thread was on screen; it is read once, at mount. */
-function ThreadEntryView({ entry, thread, isRoot, now, arrived = false }: { entry: ThreadEntry; thread: DiffThread; isRoot: boolean; now: number; arrived?: boolean }) {
+function ThreadEntryView({
+  entry,
+  thread,
+  isRoot,
+  now,
+  arrived = false,
+  editing,
+  setEditing,
+}: {
+  entry: ThreadEntry;
+  thread: DiffThread;
+  isRoot: boolean;
+  now: number;
+  arrived?: boolean;
+  editing: boolean;
+  setEditing: (editing: boolean) => void;
+}) {
   const actions = useContext(DiffCommentsContext);
   const { labels } = useDiffSource();
   const [entrance] = useState(() => (arrived ? cn(enter.rise, FAST) : undefined));
-  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  // Seeded when editing starts (from a click or the keyboard), not on every refetch, which would wipe the edit.
+  const body = useRef("");
+  body.current = entry.source === "local" ? entry.comment.body : "";
+  useEffect(() => {
+    if (editing) setDraft(body.current);
+  }, [editing]);
   const [saving, setSaving] = useState(false);
   if (entry.source === "github") {
     const { comment } = entry;
@@ -72,6 +94,7 @@ function ThreadEntryView({ entry, thread, isRoot, now, arrived = false }: { entr
     setSaving(true);
     try {
       await actions.onEdit(comment.id, draft.trim());
+      returnToDiff(document.activeElement);
       setEditing(false);
     } finally {
       setSaving(false);
@@ -109,10 +132,7 @@ function ThreadEntryView({ entry, thread, isRoot, now, arrived = false }: { entr
             <button
               type="button"
               className={cn("rounded px-1 hover:bg-state-hover hover:text-foreground", PRESS)}
-              onClick={() => {
-                setDraft(comment.body);
-                setEditing(true);
-              }}
+              onClick={() => setEditing(true)}
             >
               Edit
             </button>
@@ -127,13 +147,16 @@ function ThreadEntryView({ entry, thread, isRoot, now, arrived = false }: { entr
       {editing ? (
         <div className={cn("flex flex-col gap-1.5 pb-1", enter.fade, FAST)}>
           <textarea
+            autoFocus
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             rows={Math.min(12, Math.max(3, draft.split("\n").length + 1))}
             className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void save();
-              if (event.key === "Escape") setEditing(false);
+              if (event.key !== "Escape") return;
+              returnToDiff(event.currentTarget);
+              if (draft === comment.body) setEditing(false);
             }}
           />
           <div className="flex gap-2">
@@ -158,6 +181,24 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
   const now = useNow();
   const [open, setOpen] = useState(thread.resolved !== true);
   const [replying, setReplying] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const focused = useIsFocusedThread(thread.id);
+  useThreadControls(thread.id, {
+    toggle: () => setOpen((value) => !value),
+    reply: () => {
+      if (thread.orphaned) return;
+      setOpen(true);
+      setReplying(true);
+    },
+    edit: (commentId) => {
+      setOpen(true);
+      setEditingId(commentId);
+    },
+  });
+  const entryEditing = (entry: ThreadEntry) => ({
+    editing: entry.source === "local" && editingId === entry.comment.id,
+    setEditing: (editing: boolean) => setEditingId(editing ? entry.comment.id : null),
+  });
   const root = thread.entries[0]!;
   const replies = thread.entries.slice(1);
   const unsent = thread.entries.some(isUnsent);
@@ -174,7 +215,8 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
     <div
       data-comment-anchor=""
       data-comment-state={unsent ? "pending" : "done"}
-      className={cn("my-1 rounded-md border bg-card text-sm", enter.fade, FAST, OPACITY_TRANSITION, unsent ? "border-amber-500/60" : "border-border", !threadIsOpen(thread) && "opacity-75")}
+      data-thread-id={thread.id}
+      className={cn("my-1 rounded-md border bg-card text-sm", enter.fade, FAST, OPACITY_TRANSITION, unsent ? "border-amber-500/60" : "border-border", !threadIsOpen(thread) && "opacity-75", focused && "ring-1 ring-primary/70")}
     >
       <button type="button" className="flex w-full items-center gap-2 px-2 py-1 text-left text-xs" onClick={() => setOpen((value) => !value)} aria-expanded={open} data-bbm-open={open}>
         <Icon name="ChevronRight" className={cn("size-3 shrink-0 text-muted-foreground", CHEVRON)} />
@@ -187,11 +229,11 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
       </button>
       {open ? (
         <div className={cn("flex flex-col gap-2 px-2.5 pb-2", reveal)}>
-          <ThreadEntryView entry={root} thread={thread} isRoot now={now} />
+          <ThreadEntryView entry={root} thread={thread} isRoot now={now} {...entryEditing(root)} />
           {replies.length > 0 ? (
             <div className="flex flex-col gap-2 border-l-2 border-border pl-3">
               {replies.map((entry) => (
-                <ThreadEntryView key={entryKey(entry)} entry={entry} thread={thread} isRoot={false} now={now} arrived={!seen.has(entryKey(entry))} />
+                <ThreadEntryView key={entryKey(entry)} entry={entry} thread={thread} isRoot={false} now={now} arrived={!seen.has(entryKey(entry))} {...entryEditing(entry)} />
               ))}
             </div>
           ) : null}

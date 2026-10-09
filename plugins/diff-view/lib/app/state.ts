@@ -72,9 +72,11 @@ interface InstanceState {
   loading: boolean;
   /** Bumped by each refresh request; the view refetches when it changes. */
   reloadNonce: number;
+  /** When something last asked the view to take the keyboard (a command, say), so a view mounting for it can take it too. */
+  focusRequestedAt: number;
 }
 
-const IDLE: InstanceState = { loading: false, reloadNonce: 0 };
+const IDLE: InstanceState = { loading: false, reloadNonce: 0, focusRequestedAt: 0 };
 
 const instances = createStore<ReadonlyMap<string, InstanceState>>(new Map());
 
@@ -90,6 +92,10 @@ export function setInstanceLoading(key: string, loading: boolean): void {
 
 export function requestReload(key: string): void {
   patchInstance(key, (current) => ({ ...current, reloadNonce: current.reloadNonce + 1 }));
+}
+
+export function requestFocus(key: string): void {
+  patchInstance(key, (current) => ({ ...current, focusRequestedAt: Date.now() }));
 }
 
 export function useDiffInstance(key: string): InstanceState {

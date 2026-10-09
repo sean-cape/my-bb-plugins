@@ -22,6 +22,7 @@ import type { rpcContract } from "./server";
 import { DiffDisplayControls, DiffRefreshButton, DiffView, type DiffSource, type DiffViewLabels, type PendingComments } from "./lib/app/diff-view";
 import { registerDiffViewIcons } from "./lib/app/icons";
 import { errorMessage } from "./lib/app/format";
+import { requestFocus } from "./lib/app/state";
 import { Button, COMPACT } from "./lib/app/ui/button";
 import { cn } from "./lib/app/utils";
 
@@ -236,5 +237,19 @@ export default definePluginApp((app) => {
     id: "changes",
     title: "Changes",
     component: ChangesButton,
+  });
+  app.commands.register({
+    id: "review-with-keyboard",
+    title: "Changes: review with the keyboard",
+    defaultShortcut: { key: "d", mod: true, shift: true },
+    isAvailable: ({ threadId }) => threadId !== null,
+    run: ({ threadId, openPanel }) => {
+      if (threadId === null) return;
+      if (!openPanel({ actionId: PANEL_ACTION_ID, title: "Changes" })) {
+        toast.message("Open the side panel to see this thread's changes.");
+        return;
+      }
+      requestFocus(instanceKey(threadId));
+    },
   });
 });

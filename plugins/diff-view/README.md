@@ -12,8 +12,8 @@ plugins embed.
 - The view: every changed file in one scroll with sticky headers, a resizable
   file tree once the container is at least 48rem wide (hidden in a narrow side
   panel), structural (difftastic) or text (Pierre) diffs, unified or split,
-  wrap toggle, viewed marks, ⌘-hover and ⌘-click symbol peeks in the thread's
-  checkout, and `j`/`k`, `n`/`p`, `c`/`C`, `v` keys.
+  wrap toggle, viewed marks, and ⌘-hover and ⌘-click symbol peeks in the
+  thread's checkout.
 - **Comments**: "+" on a line or "Comment on file", with replies. Drag the "+"
   or the line numbers (or shift-click a second line number) to comment on a
   range of lines, as on GitHub. "Send N to the thread" sends every unsent
@@ -22,6 +22,25 @@ plugins embed.
   above the diff that applies to every new comment and reply.
 - **Viewed marks** remember the file's patch; a mark lapses once the file
   changes again.
+- **Keyboard**: the whole review runs on vim-style keys, sent to the view that
+  last had the pointer or focus, never while typing in a text box. "Changes:
+  review with the keyboard" (⌘⇧D by default, rebindable in bb's keyboard
+  settings) opens the side panel and gives it the keyboard. A cursor moves
+  over lines and file headers: `j`/`k` lines (with counts, `5j`), `h`/`l` old
+  or new side, `]c`/`[c` changes, `}`/`{` hunks, `]f`/`[f` files, `c`/`C`
+  comment threads, `]d`/`[d` review findings, `gg`/`G`, Ctrl-D/U/F/B, and
+  `zz`/`zt`/`zb`. `/` searches file names and `n`/`N` step through the files
+  it matched. `i` (or Enter) comments on the cursor's line, or on the file from
+  its header; `V` selects lines for a range comment; `O` comments on the file;
+  `r`, `e` and `dd` reply to, edit or delete your unsent comment in the thread
+  on the line; `t` switches where new comments go; `s` focuses the send bar.
+  In a comment box ⌘↩ adds it and Escape returns to the diff (closing the box
+  if it is empty; with the vim-mode plugin, Escape twice). `v` marks a file
+  viewed and moves on, `za`/`zo`/`zc`/`zR`/`zM` fold threads and files, `zr`
+  shows more unchanged lines, `x` selects a review finding, `K` asks for an
+  explanation of the hunk, `gd` peeks at a symbol on the line, `gm`/`gl`/`gw`
+  switch text or structural, unified or split, and wrap, `R` refreshes, and
+  `?` lists every key.
 
 Settings: hide vendored files (default on) and the `difft` path. Comments and
 viewed marks live in this plugin's database and are deleted with their thread.

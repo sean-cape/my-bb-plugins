@@ -1,64 +1,75 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 import { claimKeyboard, ownsKeyboard, releaseKeyboard } from "./state";
+import { keyToken, parseKeys, type ReviewCommand } from "./keys/keymap";
+import type { ReviewKeys } from "./keys/review-keys-context";
 
-export interface ReviewKeyHandlers {
-  /** j / k */
-  stepHunk: (direction: 1 | -1) => void;
-  /** n / p */
-  stepFile: (direction: 1 | -1) => void;
-  /** c / C */
-  stepComment: (direction: 1 | -1) => void;
-  /** v */
-  toggleViewed: () => void;
-}
-
-function isTextEntry(target: EventTarget | null): boolean {
-  const element = target as HTMLElement | null;
-  return element !== null && (element.tagName === "INPUT" || element.tagName === "TEXTAREA" || element.tagName === "SELECT" || element.isContentEditable);
-}
+const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+/** Enter on these presses them (the send bar's buttons after `s`, say) rather than starting a comment. */
+const PRESSABLE = 'button, a[href], [role="button"], [role="radio"], [role="checkbox"], [role="tab"]';
+/** As vim's `timeoutlen`: how long a half-typed command (`g`, `]`, a count) waits for its next key. */
+const PENDING_TIMEOUT_MS = 1000;
 
 /**
- * Single-key review shortcuts, sent only to the view that last saw a pointer or focus when several are mounted. Spread
- * the returned props on the view's root so it can claim the keyboard.
+ * Vim-style review keys, sent only to the view that last saw a pointer or focus when several are mounted, and only
+ * when the key comes from inside the view (or from nowhere in particular), so text boxes, the thread list and other
+ * panels keep theirs. Spread the returned props on the view's root so it can claim the keyboard.
  */
-export function useReviewKeys(handlers: ReviewKeyHandlers): { onPointerDownCapture: () => void; onFocusCapture: () => void } {
+export function useReviewKeys(
+  rootRef: RefObject<HTMLElement | null>,
+  keys: ReviewKeys,
+  enabled: boolean,
+  onCommand: (command: ReviewCommand, count: number) => void,
+): { onPointerDownCapture: () => void; onFocusCapture: () => void } {
   const [owner] = useState(() => Symbol("diff-view"));
+  const handler = useRef(onCommand);
+  handler.current = onCommand;
   useEffect(() => () => releaseKeyboard(owner), [owner]);
-  // Resubscribed every render so the handlers always see the current files and viewed marks.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (isTextEntry(event.target)) return;
-      if (!ownsKeyboard(owner)) return;
-      switch (event.key) {
-        case "j":
-          handlers.stepHunk(1);
-          break;
-        case "k":
-          handlers.stepHunk(-1);
-          break;
-        case "n":
-          handlers.stepFile(1);
-          break;
-        case "p":
-          handlers.stepFile(-1);
-          break;
-        case "c":
-          handlers.stepComment(1);
-          break;
-        case "C":
-          handlers.stepComment(-1);
-          break;
-        case "v":
-          handlers.toggleViewed();
-          break;
-        default:
-          return;
+    if (!enabled) return;
+    let typed: string[] = [];
+    let timer = 0;
+    const reset = () => {
+      typed = [];
+      window.clearTimeout(timer);
+      if (keys.get().pending !== "") keys.set({ pending: "" });
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      const root = rootRef.current;
+      if (root === null || root.getClientRects().length === 0 || !ownsKeyboard(owner)) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target !== null && target !== document.body && !root.contains(target)) return;
+      if (target?.closest(EDITABLE) != null) return;
+      const token = keyToken(event);
+      if (token === null || (token === "<CR>" && target?.closest(PRESSABLE) != null)) return;
+      let sequence = [...typed, token];
+      let result = parseKeys(sequence);
+      // A key that cannot finish the half-typed command starts a new one, as in vim.
+      if (result.status === "none" && typed.length > 0) {
+        sequence = [token];
+        result = parseKeys(sequence);
+      }
+      window.clearTimeout(timer);
+      if (result.status === "none") {
+        reset();
+        return;
       }
       event.preventDefault();
+      if (result.status === "pending") {
+        typed = sequence;
+        keys.set({ pending: typed.join("") });
+        timer = window.setTimeout(reset, PENDING_TIMEOUT_MS);
+        return;
+      }
+      reset();
+      handler.current(result.command, result.count);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.clearTimeout(timer);
+    };
+  }, [enabled, keys, owner, rootRef]);
   return { onPointerDownCapture: () => claimKeyboard(owner), onFocusCapture: () => claimKeyboard(owner) };
 }

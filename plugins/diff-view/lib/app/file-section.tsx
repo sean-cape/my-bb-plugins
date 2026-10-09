@@ -15,6 +15,15 @@ import { FindingAnnotation } from "./findings/finding-annotation";
 import { StructuralPatch } from "./structural/structural-patch";
 import { AnnotatedPatch } from "./text/annotated-patch";
 import { DiffErrorBoundary } from "./text/diff-error-boundary";
+import { useFileCursor, usePublishNavModel, type FileNavModel } from "./keys/review-keys-context";
+
+const NO_ROWS: FileNavModel = { rows: [], cutToHunk: false, element: () => null };
+
+/** A file with no diff to step through still tells the keyboard it has loaded, so the cursor moves past it. */
+function NoRows({ path }: { path: string }) {
+  usePublishNavModel(path, NO_ROWS);
+  return null;
+}
 
 /**
  * One changed file: a sticky header (collapse, name, stats, comment on file, viewed) over its whole-file findings and
@@ -55,13 +64,14 @@ export function FileSection({
   changedRanges: Array<[number, number]>;
 }) {
   const { layout, mode } = useDiffPreferences();
+  const onHeader = useFileCursor(file.path)?.cursor.line === null;
   const reveal = useOpenedSinceMount(!collapsed) ? cn(enter.rise, FAST) : undefined;
   // Sections past the cap are below the fold when the list mounts; animating hundreds of full diffs at once costs a
   // compositor layer each for nothing. Decided at mount, so a refresh that moves a shown file up the list leaves it be.
   const [entrance] = useState(() => (index <= STAGGER_CAP ? { className: cn(enter.fade, STAGGER), style: stagger(index) } : null));
   return (
     <section ref={sectionRef} className={cn("border-b border-border", entrance?.className)} style={entrance?.style}>
-      <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-border bg-background px-3 py-1.5">
+      <div className={cn("sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-border bg-background px-3 py-1.5", onHeader && "ring-1 ring-inset ring-primary/70")} data-cursor={onHeader ? "" : undefined}>
         <Button type="button" variant="ghost" className={cn(COMPACT, "px-1.5")} onClick={onToggleCollapsed} aria-label={collapsed ? "Expand file" : "Collapse file"} aria-expanded={!collapsed} data-bbm-open={!collapsed}>
           <Icon name="ChevronRight" className={cn("size-3.5", CHEVRON)} />
         </Button>
@@ -109,11 +119,17 @@ export function FileSection({
                 changedRanges={changedRanges}
               />
             ) : file.patch !== null ? (
-              <DiffErrorBoundary key={file.path} fallback={<Diff patch={file.patch} path={file.path} view={layout} className="text-xs" />}>
+              <DiffErrorBoundary key={file.path} fallback={
+                  <>
+                    <NoRows path={file.path} />
+                    <Diff patch={file.patch} path={file.path} view={layout} className="text-xs" />
+                  </>
+                }>
                 <AnnotatedPatch key={file.path} {...annotations} patch={file.patch} />
               </DiffErrorBoundary>
             ) : (
               <>
+                <NoRows path={file.path} />
                 <FileLevelComments
                   path={file.path}
                   threads={annotations.threads}

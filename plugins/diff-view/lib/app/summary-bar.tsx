@@ -51,6 +51,7 @@ export function SummaryBar({
   findingTotal,
   showFindings,
   onNextComment,
+  onShowKeys,
   commentTarget,
 }: {
   diff: DiffResult;
@@ -59,6 +60,7 @@ export function SummaryBar({
   findingTotal: number;
   showFindings: boolean;
   onNextComment: () => void;
+  onShowKeys: () => void;
   /** Null unless comments can go to GitHub. */
   commentTarget: { target: DiffCommentTarget; onChange: (target: DiffCommentTarget) => void } | null;
 }) {
@@ -73,9 +75,9 @@ export function SummaryBar({
           · {diff.hiddenVendored.files} vendored file{diff.hiddenVendored.files === 1 ? "" : "s"} hidden
         </span>
       ) : null}
-      <span className="cursor-help text-muted-foreground/60" title="Keyboard: j/k next/previous change · n/p next/previous file · c/C next/previous comment · v toggle viewed">
+      <button type="button" className={cn("rounded px-1 text-muted-foreground/70 hover:bg-state-hover hover:text-foreground", PRESS)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onShowKeys}>
         ⌨
-      </span>
+      </button>
       {commentTarget !== null ? <CommentTargetSwitch {...commentTarget} /> : null}
       {hasThreads ? (
         <button type="button" className={cn("rounded border border-border px-1.5 py-0.5 text-xs hover:bg-state-hover", PRESS)} title="Scroll to the next comment (c)" onClick={onNextComment}>

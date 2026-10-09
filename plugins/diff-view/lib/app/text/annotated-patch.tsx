@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { experimental_useCodeTheme as useCodeTheme } from "@get-bb/plugin-sdk/app";
 import { PatchDiff, useWorkerPool } from "@pierre/diffs/react";
 import { useDiffPreferences } from "../state";
@@ -8,14 +8,37 @@ import { DiffCommentForm } from "../comments/comment-form";
 import { FileLevelComments } from "../comments/file-level-comments";
 import { DiffThreadView } from "../comments/thread-view";
 import { FindingAnnotation } from "../findings/finding-annotation";
+import { visualRange, type NavRow } from "../keys/nav";
+import { useFileCursor, usePublishNavModel, type FileNavModel } from "../keys/review-keys-context";
+import type { DiffSide, LineRange } from "../../types";
 import { buildLineAnnotations, fromPierreSide, toPierreSide, type AnnotationMeta, type PierreSide } from "./line-annotations";
-import { patchRows, selectionRange } from "./patch-rows";
+import { navRows, patchRows, selectionRange } from "./patch-rows";
 
 interface PierreSelection {
   start: number;
   side?: PierreSide;
   end: number;
   endSide?: PierreSide;
+}
+
+function toSelection(range: LineRange): PierreSelection | null {
+  if (range.line === null) return null;
+  return { start: range.startLine ?? range.line, side: toPierreSide(range.startSide ?? range.side), end: range.line, endSide: toPierreSide(range.side) };
+}
+
+/**
+ * The element Pierre renders for one side of a row, inside its shadow root. A context line carries both numbers
+ * (`data-line` for the side it is drawn on, `data-alt-line` for the other), so it is matched on the pair.
+ */
+function pierreLine(host: HTMLElement | null, row: NavRow, side: DiffSide): Element | null {
+  const root = host?.querySelector("diffs-container")?.shadowRoot ?? null;
+  if (root === null) return null;
+  if (row.left === null || row.right === null) {
+    const line = row.left ?? row.right;
+    return root.querySelector(`[data-line="${line}"][data-line-type="${row.left === null ? "change-addition" : "change-deletion"}"]`);
+  }
+  const [mine, other] = side === "LEFT" ? [row.left, row.right] : [row.right, row.left];
+  return root.querySelector(`[data-line="${mine}"][data-alt-line="${other}"]`) ?? root.querySelector(`[data-line="${other}"][data-alt-line="${mine}"]`);
 }
 
 /**
@@ -49,6 +72,18 @@ export function AnnotatedPatch({
     [patch, path],
   );
   const rows = useMemo(() => patchRows(fullPatch), [fullPatch]);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const nav = useMemo(() => navRows(rows, layout), [rows, layout]);
+  const element = useCallback((row: number, side: DiffSide) => (nav[row] === undefined ? null : pierreLine(hostRef.current, nav[row], side)), [nav]);
+  const navModel = useMemo<FileNavModel>(() => ({ rows: nav, cutToHunk: true, element }), [nav, element]);
+  usePublishNavModel(path, navModel);
+  const fileCursor = useFileCursor(path);
+  const cursorSelection = useMemo<PierreSelection | null>(() => {
+    if (fileCursor === null) return null;
+    const { cursor, visual } = fileCursor;
+    const range = visual === null ? null : visualRange(nav, visual, cursor, true);
+    return toSelection(range ?? { line: cursor.line, side: cursor.side, startLine: null, startSide: null });
+  }, [fileCursor, nav]);
   const annotations = useMemo(() => buildLineAnnotations(threads, composer, findings), [threads, composer, findings]);
   // A key already on screen at the last commit that mounts again was shifted to another slot, not added.
   const committedKeys = useRef<ReadonlySet<string>>(new Set());
@@ -61,10 +96,7 @@ export function AnnotatedPatch({
   const composerStartLine = composer?.startLine ?? null;
   const composerStartSide = composer?.startSide ?? null;
   const composerSelection = useMemo<PierreSelection | null>(
-    () =>
-      composerLine === null
-        ? null
-        : { start: composerStartLine ?? composerLine, side: toPierreSide(composerStartSide ?? composerSide), end: composerLine, endSide: toPierreSide(composerSide) },
+    () => toSelection({ line: composerLine, side: composerSide, startLine: composerStartLine, startSide: composerStartSide }),
     [composerLine, composerSide, composerStartLine, composerStartSide],
   );
   const dragging = dragged !== null;
@@ -99,7 +131,7 @@ export function AnnotatedPatch({
     };
   }, [layout, themes, themeMode, wrap, onStartComment, rows]);
   return (
-    <>
+    <div ref={hostRef}>
       <FileLevelComments
         path={path}
         threads={threads.filter((thread) => thread.line === null)}
@@ -111,7 +143,7 @@ export function AnnotatedPatch({
         patch={fullPatch}
         options={options}
         lineAnnotations={annotations}
-        selectedLines={dragged ?? composerSelection}
+        selectedLines={dragged ?? composerSelection ?? cursorSelection}
         disableWorkerPool={workerPool === undefined}
         className="text-xs"
         renderAnnotation={({ metadata }) => {
@@ -125,6 +157,6 @@ export function AnnotatedPatch({
           return <DiffThreadView key={metadata.key} thread={metadata.thread} />;
         }}
       />
-    </>
+    </div>
   );
 }

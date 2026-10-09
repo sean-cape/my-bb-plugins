@@ -8,7 +8,10 @@ import { enclosingDefinition } from "./lib/app/structural/enclosing-definition";
 import { detectMoves } from "./lib/app/structural/moves";
 import { hunkSpan, structuralRows, visibleRows } from "./lib/app/structural/rows";
 import { buildLineAnnotations } from "./lib/app/text/line-annotations";
-import { patchRows, selectionRange } from "./lib/app/text/patch-rows";
+import { navRows, patchRows, selectionRange } from "./lib/app/text/patch-rows";
+import { keyToken, parseKeys } from "./lib/app/keys/keymap";
+import { anchorsAtCursor, hunkSpanAt, moveChange, moveFile, moveHunk, moveLines, nextAnchor, visualRange, type Cursor, type NavFile } from "./lib/app/keys/nav";
+import { rankFiles } from "./lib/app/keys/rank-files";
 import { checkedLineRange, locationLabel, longLineLabel, shortLineLabel } from "./lib/line-range";
 import { splitUnifiedDiff } from "./lib/server";
 import type { DiffComment, DiffFile, Finding, GithubComment, Review, StructuralDiff } from "./lib/types";
@@ -440,5 +443,97 @@ describe("selectionRange", () => {
 
   it("falls back to line order on one side for lines outside the patch", () => {
     expect(selectionRange(rows, { line: 40, side: "RIGHT" }, { line: 30, side: "RIGHT" })).toEqual({ line: 40, side: "RIGHT", startLine: 30, startSide: "RIGHT" });
+  });
+});
+
+describe("review keys", () => {
+  const patch = patchRows(["@@ -1,3 +1,3 @@", " a", "-b", "+B", " c", "@@ -10,2 +10,3 @@ fn", " j", "+k", ""].join("\n"));
+  const unified = navRows(patch, "unified");
+  const files: NavFile[] = [
+    { path: "a.ts", collapsed: false, rows: unified },
+    { path: "b.ts", collapsed: true, rows: null },
+    { path: "c.ts", collapsed: false, rows: null },
+    { path: "d.ts", collapsed: false, rows: [] },
+  ];
+  const at = (path: string, line: number | null, side: "LEFT" | "RIGHT" = "RIGHT"): Cursor => ({ path, side, line, want: "RIGHT" });
+
+  it("pairs a split layout's deletions with the additions after them", () => {
+    expect(unified.map((row) => [row.left, row.right])).toEqual([[1, 1], [2, null], [null, 2], [3, 3], [10, 10], [null, 11], [11, 12]]);
+    expect(navRows(patch, "split").map((row) => [row.left, row.right, row.hunk])).toEqual([[1, 1, 0], [2, 2, 0], [3, 3, 0], [10, 10, 1], [null, 11, 1], [11, 12, 1]]);
+  });
+
+  it("steps lines through headers, onto the side a row has, and back to the side the reader wants", () => {
+    expect(moveLines(files, at("a.ts", null), 1)).toEqual(at("a.ts", 1));
+    expect(moveLines(files, at("a.ts", 1), 1)).toEqual({ ...at("a.ts", 2), side: "LEFT" });
+    expect(moveLines(files, { ...at("a.ts", 2), side: "LEFT" }, 1)).toEqual(at("a.ts", 2));
+    expect(moveLines(files, at("a.ts", 1), -1)).toEqual(at("a.ts", null));
+    expect(moveLines(files, at("a.ts", null), -1)).toEqual(at("a.ts", null));
+  });
+
+  it("passes a collapsed file's header and waits at the header of one still loading", () => {
+    expect(moveLines(files, at("a.ts", 12), 1)).toEqual(at("b.ts", null));
+    expect(moveLines(files, at("b.ts", null), 1)).toEqual(at("c.ts", null));
+    expect(moveLines(files, at("c.ts", null), 1)).toEqual(at("c.ts", null));
+    expect(moveLines(files, at("a.ts", 12), 99)).toEqual(at("c.ts", null));
+  });
+
+  it("jumps by change, hunk and file", () => {
+    expect(moveChange(files, at("a.ts", null), 1, 1)).toEqual({ ...at("a.ts", 2), side: "LEFT" });
+    expect(moveChange(files, at("a.ts", 2), 1, 1)).toEqual(at("a.ts", 11));
+    expect(moveChange(files, at("a.ts", 11), -1, 1)).toEqual({ ...at("a.ts", 2), side: "LEFT" });
+    expect(moveHunk(files, at("a.ts", 1), 1, 1)).toEqual(at("a.ts", 10));
+    expect(moveFile(files, at("a.ts", 10), 1, 2)).toEqual(at("c.ts", null));
+    expect(moveFile(files, at("a.ts", 10), -1, 1)).toEqual(at("a.ts", null));
+    expect(moveFile(files, at("d.ts", null), 1, 1)).toEqual(at("d.ts", null));
+  });
+
+  it("finds anchors past the cursor and the ones on its row, from either side's number", () => {
+    const anchors = [
+      { id: "file", path: "a.ts", side: "RIGHT" as const, line: null },
+      { id: "old", path: "a.ts", side: "LEFT" as const, line: 3 },
+      { id: "later", path: "a.ts", side: "RIGHT" as const, line: 12 },
+    ];
+    expect(nextAnchor(files, at("a.ts", null), anchors, 1, 1)?.id).toBe("old");
+    expect(nextAnchor(files, at("a.ts", null), anchors, 1, 2)?.id).toBe("later");
+    expect(nextAnchor(files, at("a.ts", 3), anchors, -1, 1)?.id).toBe("file");
+    expect(anchorsAtCursor(files, at("a.ts", 3), anchors).map((anchor) => anchor.id)).toEqual(["old"]);
+    expect(anchorsAtCursor(files, at("a.ts", null), anchors).map((anchor) => anchor.id)).toEqual(["file"]);
+  });
+
+  it("turns a line selection into a comment range in display order, cut to one hunk where GitHub needs it", () => {
+    expect(visualRange(unified, at("a.ts", 3), { ...at("a.ts", 2), side: "LEFT" }, true)).toEqual({ line: 3, side: "RIGHT", startLine: 2, startSide: "LEFT" });
+    expect(visualRange(unified, at("a.ts", 1), at("a.ts", 12), true)).toEqual({ line: 12, side: "RIGHT", startLine: 10, startSide: "RIGHT" });
+    expect(visualRange(unified, at("a.ts", 1), at("a.ts", 12), false)).toEqual({ line: 12, side: "RIGHT", startLine: 1, startSide: "RIGHT" });
+    expect(visualRange(unified, at("a.ts", 2), at("a.ts", 2), true)).toEqual({ line: 2, side: "RIGHT", startLine: null, startSide: null });
+  });
+
+  it("spans a hunk on its new side unless it only deletes", () => {
+    expect(hunkSpanAt(unified, 1)).toEqual({ side: "new", start: 1, stop: 3 });
+    expect(hunkSpanAt([{ left: 4, right: null, hunk: 0, changed: true }], 0)).toEqual({ side: "old", start: 4, stop: 4 });
+  });
+
+  it("reads counts, prefixes and sequences, and drops keys that cannot make one", () => {
+    expect(parseKeys(["j"])).toEqual({ status: "command", command: { kind: "line", direction: 1 }, count: 1 });
+    expect(parseKeys(["1", "2", "k"])).toEqual({ status: "command", command: { kind: "line", direction: -1 }, count: 12 });
+    expect(parseKeys(["g"])).toEqual({ status: "pending" });
+    expect(parseKeys(["3"])).toEqual({ status: "pending" });
+    expect(parseKeys(["g", "g"])).toMatchObject({ status: "command", command: { kind: "top" } });
+    expect(parseKeys(["]", "c"])).toMatchObject({ status: "command", command: { kind: "change", direction: 1 } });
+    expect(parseKeys(["d", "d"])).toMatchObject({ status: "command", command: { kind: "delete" } });
+    expect(parseKeys(["g", "j"])).toEqual({ status: "none" });
+    expect(parseKeys(["0"])).toEqual({ status: "none" });
+    expect(parseKeys(["q"])).toEqual({ status: "none" });
+  });
+
+  it("names keys as vim does and leaves ⌘ and ⌥ to the app", () => {
+    const key = (init: Partial<KeyboardEventInit> & { key: string }) => keyToken({ ctrlKey: false, metaKey: false, altKey: false, ...init });
+    expect([key({ key: "j" }), key({ key: "G" }), key({ key: "d", ctrlKey: true }), key({ key: "Escape" }), key({ key: "ArrowDown" })]).toEqual(["j", "G", "<C-d>", "<Esc>", "<Down>"]);
+    expect([key({ key: "d", metaKey: true }), key({ key: "Shift" })]).toEqual([null, null]);
+  });
+
+  it("ranks file-name matches above path matches", () => {
+    const file = (path: string) => ({ path }) as DiffFile;
+    expect(rankFiles([file("src/view/a.ts"), file("lib/view.ts"), file("other.ts")], "view").map((entry) => entry.path)).toEqual(["lib/view.ts", "src/view/a.ts"]);
+    expect(rankFiles([file("src/view/a.ts")], "sva").map((entry) => entry.path)).toEqual(["src/view/a.ts"]);
   });
 });

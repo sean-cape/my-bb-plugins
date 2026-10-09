@@ -1,5 +1,6 @@
 import type { DiffSide, LineRange } from "../../types";
 import { checkedLineRange } from "../../line-range";
+import type { NavRow } from "../keys/nav";
 
 interface PatchRow {
   hunk: number;
@@ -89,4 +90,29 @@ export function selectionRange(patch: PatchRows, anchor: Point, current: Point):
     start = row.right !== null && (end.side === "RIGHT" || row.left === null) ? { line: row.right, side: "RIGHT" } : { line: row.left!, side: "LEFT" };
   }
   return checkedLineRange({ line: end.line, side: end.side, startLine: start.line, startSide: start.side });
+}
+
+/**
+ * The patch's rows as the keyboard steps through them: one per displayed line in unified layout; in split layout a
+ * run of deletions and the additions after it share rows pairwise, as they sit side by side.
+ */
+export function navRows(patch: PatchRows, layout: "unified" | "split"): NavRow[] {
+  const rows: NavRow[] = [];
+  const { rows: lines } = patch;
+  for (let index = 0; index < lines.length; ) {
+    const row = lines[index]!;
+    if (layout === "unified" || row.left === null || row.right !== null) {
+      rows.push({ left: row.left, right: row.right, hunk: row.hunk, changed: row.left === null || row.right === null });
+      index += 1;
+      continue;
+    }
+    const deletions: number[] = [];
+    while (index < lines.length && lines[index]!.right === null && lines[index]!.hunk === row.hunk) deletions.push(lines[index++]!.left!);
+    const additions: number[] = [];
+    while (index < lines.length && lines[index]!.left === null && lines[index]!.hunk === row.hunk) additions.push(lines[index++]!.right!);
+    for (let pair = 0; pair < Math.max(deletions.length, additions.length); pair++) {
+      rows.push({ left: deletions[pair] ?? null, right: additions[pair] ?? null, hunk: row.hunk, changed: true });
+    }
+  }
+  return rows;
 }

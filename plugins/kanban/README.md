@@ -176,8 +176,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
   it); lockfiles, vendored and generated files collapse by default; the file
   tree groups by directory with per-directory stats; a Wrap toggle switches
   long lines between wrapping and horizontal scroll; comment markers sit on a
-  track beside the scrollbar; and the keyboard moves through the review:
-  `j`/`k` changes, `n`/`p` files, `c`/`C` comments, `v` toggle viewed.
+  track beside the scrollbar; and the whole review runs from the keyboard with
+  vim-style keys (see the Diff view plugin's README, or press `?` in the
+  view).
 - **Vendored files**: files under `vendor/`, `node_modules/`, `third_party/`,
   `bower_components/`, `.yarn/`, `Pods/` and `Carthage/Checkouts/` are left
   out of the changes view (the stats line says how many were hidden). Turn off
