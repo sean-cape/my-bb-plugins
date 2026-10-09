@@ -11,11 +11,15 @@ Outside text boxes the view takes vim-style keys, with one cursor that moves
 through the method list (or call history) and the request's fields. `j`/`k`
 move it, `gg`/`G` jump to the ends, and `l` goes deeper: it expands a service,
 opens a method and carries the cursor into its fields, steps into a section,
-or edits a field. `h` goes back out: it collapses a section or service, climbs
-to the enclosing one, and from a top-level field returns to the method list.
+or steps across a field's buttons (a timestamp's Now, a list item's remove;
+Enter or Space presses them). `h` goes back out: it steps back from those
+buttons, collapses a section or service, climbs to the enclosing one, and from
+a top-level field returns to the method list.
 `o` or Enter opens the row under the cursor; `i`/`I` edit the field under it
 with the caret at the start and `a`/`A` with it at the end, and Escape stops
-editing and puts the cursor back on that field. `dd` removes a
+editing and puts the cursor back on that field. Editing an enum, bool, or
+oneof field opens its list: `j`/`k` move, `g`/`G` jump to the ends, Enter or
+Space picks, and Escape closes it unchanged. `dd` removes a
 list item, map entry, or header, unsets a field that is set (an optional field
 goes back to unset), and otherwise empties the field's box.
 

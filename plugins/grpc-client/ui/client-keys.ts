@@ -191,13 +191,35 @@ export function activateRow(row: HTMLElement, caret: Caret = "end"): void {
   }
   // A list's message item has no box of its own; editing it starts at its first field.
   const inputs = row.dataset.navFixed !== undefined ? [...row.querySelectorAll<HTMLElement>(ROW_INPUTS)] : ownControls<HTMLElement>(row, ROW_INPUTS);
-  const input = inputs.find(isTextEntry) ?? inputs[0];
-  if (input !== undefined) {
-    editField(input, caret);
+  const text = inputs.find(isTextEntry);
+  if (text !== undefined) {
+    editField(text, caret);
+    return;
+  }
+  // A choice opens its list, where j/k pick a value.
+  const choice = (row.dataset.navFixed !== undefined ? [...row.querySelectorAll<HTMLElement>("[data-choice]")] : ownControls<HTMLElement>(row, "[data-choice]"))[0];
+  if (choice !== undefined) {
+    choice.focus({ preventScroll: true });
+    choice.click();
+    return;
+  }
+  if (inputs[0] !== undefined) {
+    inputs[0].focus({ preventScroll: true });
     return;
   }
   // Removing and clearing are dd's; opening a row never does either.
   ownControls<HTMLElement>(row, 'button:not(:disabled):not([aria-label^="Remove "]):not([aria-label^="Clear "])')[0]?.click();
+}
+
+/**
+ * The buttons beside a row's box that l steps across (a timestamp's Now, a list item's remove,
+ * a header's checkbox). The box itself, a choice, hidden Clear buttons, and the button that
+ * opening the row presses are not among them.
+ */
+export function rowCells(row: HTMLElement): HTMLElement[] {
+  const cells = ownControls<HTMLElement>(row, 'button:not(:disabled):not([data-choice]):not([aria-label^="Clear "]), input[type="checkbox"]:not(:disabled)');
+  const hasBox = ownControls<HTMLElement>(row, `${ROW_INPUTS}, [data-choice]`).some((control) => control instanceof HTMLButtonElement || isTextEntry(control));
+  return hasBox ? cells : cells.slice(1);
 }
 
 /** Sets a controlled input's value the way typing would, so React sees the change. */

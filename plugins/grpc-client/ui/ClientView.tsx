@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { activateRow, deleteRow, editField, FIELD_ROW, focusRow, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
+import { activateRow, deleteRow, editField, FIELD_ROW, focusRow, rowCells, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
 import { type Caret, type ClientCommand, cycle, listAction, type ListMotion } from "./client-nav";
 import { Centered, FOCUS_RING, MenuItem, Segmented, Tabs } from "./controls";
 import { EndpointSwitcher } from "./EndpointSwitcher";
@@ -351,6 +351,20 @@ export function ClientView() {
     const { elements, rows } = readRows(pane);
     const cursor = focusedRow(pane) ?? savedFieldRow();
     const current = cursor === null ? -1 : elements.indexOf(cursor);
+    // On a field, l and h step across the buttons beside its box instead of editing it.
+    if (cursor !== null && rows[current]?.kind === "item" && !(cursor instanceof HTMLButtonElement) && (motion === "right" || motion === "left")) {
+      const cells = rowCells(cursor);
+      const at = cells.indexOf(document.activeElement as HTMLElement);
+      if (motion === "right") {
+        const next = cells[at + 1];
+        if (next !== undefined) next.focus({ preventScroll: true });
+        return;
+      }
+      if (at !== -1) {
+        focusRow(cells[at - 1] ?? cursor);
+        return;
+      }
+    }
     const action = listAction(rows, current === -1 ? null : current, motion, 0);
     if (action === null) {
       if (motion === "left") backToList();
@@ -466,6 +480,14 @@ export function ClientView() {
           if (row != null && requestPaneRef.current?.contains(row)) focusRow(row);
           else root?.focus({ preventScroll: true });
           return;
+        }
+        {
+          // From a button beside a field's box, Escape goes back to the field.
+          const row = focusedRow(requestPaneRef.current);
+          if (row !== null && row !== document.activeElement) {
+            focusRow(row);
+            return;
+          }
         }
         if (methodListRef.current?.clearSearch()) {
           // The result rows the cursor was on are gone; it goes back to the open method.

@@ -4,6 +4,7 @@ import { CHEVRON, cx, enter, PRESS, REVEAL, REVEAL_HOST, stagger, STAGGER, Entra
 import type { FieldInfo, ScalarName, TypeClosure } from "../shared/schema";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { ChoiceSelect } from "./ChoiceSelect";
 import { FIELD_ROW } from "./client-keys";
 import { FOCUS_RING } from "./controls";
 import { Appear, PresenceRow, usePresenceRemovals, usePresenceValues } from "./presence";
@@ -58,18 +59,20 @@ function TextInput({
   );
 }
 
+const BOOL_CHOICES = [
+  { value: "true", label: "true" },
+  { value: "false", label: "false" },
+];
+
 function ScalarInput({ scalar, value, onChange, keepEmpty }: EditorProps<Json> & { scalar: ScalarName; keepEmpty?: boolean }) {
   if (scalar === "bool") {
     return (
-      <select
-        className={cn(inputClass, "w-32")}
+      <ChoiceSelect
+        className="w-32"
         value={value === true ? "true" : value === false ? "false" : ""}
-        onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value === "true")}
-      >
-        <option value="">—</option>
-        <option value="true">true</option>
-        <option value="false">false</option>
-      </select>
+        choices={BOOL_CHOICES}
+        onChange={(next) => onChange(next === "" ? undefined : next === "true")}
+      />
     );
   }
   const text = value === undefined || value === null ? undefined : String(value);
@@ -105,17 +108,9 @@ function ScalarInput({ scalar, value, onChange, keepEmpty }: EditorProps<Json> &
 function EnumSelect({ typeName, closure, value, onChange }: EditorProps<Json> & { typeName: string; closure: TypeClosure }) {
   const values = closure.enums[typeName]?.values ?? [];
   const current = typeof value === "number" ? (values.find((candidate) => candidate.number === value)?.name ?? String(value)) : (value as string | undefined);
-  return (
-    <select className={inputClass} value={current ?? ""} onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}>
-      <option value="">—</option>
-      {values.map((option) => (
-        <option key={option.name} value={option.name} title={option.comment}>
-          {option.name}
-        </option>
-      ))}
-      {current !== undefined && !values.some((option) => option.name === current) ? <option value={current}>{current}</option> : null}
-    </select>
-  );
+  const choices = values.map((option) => ({ value: option.name, label: option.name, title: option.comment }));
+  if (current !== undefined && current !== "" && !values.some((option) => option.name === current)) choices.push({ value: current, label: current, title: undefined });
+  return <ChoiceSelect value={current ?? ""} choices={choices} onChange={(next) => onChange(next === "" ? undefined : next)} />;
 }
 
 function JsonInput({ value, onChange }: EditorProps<Json>) {
@@ -507,19 +502,17 @@ function OneofEditor({
   return (
     <div className="py-1">
       <div className="rounded-lg border border-dashed border-border px-3 py-2">
-        <div {...FIELD_ROW} className={cn("grid grid-cols-[minmax(8rem,15rem)_minmax(0,1fr)_1.5rem] items-center gap-x-3 rounded-md", FOCUS_RING)}>
+        <div {...FIELD_ROW} className={cn("grid grid-cols-[minmax(8rem,15rem)_minmax(0,1fr)_1.5rem] items-center gap-x-3 rounded-md", REVEAL_HOST, FOCUS_RING)}>
           <span className="flex items-baseline gap-2 text-sm">
             <span className="text-foreground/80">{name}</span>
             <span className="font-mono text-[11px] text-muted-foreground">one of</span>
           </span>
-          <select className={inputClass} value={chosen?.jsonName ?? ""} onChange={(event) => choose(event.target.value)}>
-            <option value="">—</option>
-            {members.map((member) => (
-              <option key={member.jsonName} value={member.jsonName}>
-                {member.jsonName} · {typeLabel(member)}
-              </option>
-            ))}
-          </select>
+          <ChoiceSelect
+            value={chosen?.jsonName ?? ""}
+            choices={members.map((member) => ({ value: member.jsonName, label: `${member.jsonName} · ${typeLabel(member)}`, title: member.comment }))}
+            onChange={choose}
+          />
+          <div>{chosen !== undefined ? <ClearButton label={`Clear ${name}`} onClick={() => choose("")} /> : null}</div>
         </div>
         {chosen !== undefined ? (
           <Appear key={chosen.jsonName} className="mt-1">
