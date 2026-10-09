@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cycle, KEY_HELP, KEYMAP, listAction, type NavRow } from "./client-nav.ts";
+import { cycle, KEY_HELP, KEYMAP, listAction, type NavRow, PREFIX_KEYMAP } from "./client-nav.ts";
 
 // Shop (expanded) with GetOrder and ListOrders, then Users (collapsed).
 const tree: NavRow[] = [
@@ -60,6 +60,17 @@ test("h climbs nested sections one level at a time and stops at the top level", 
   assert.equal(listAction(form, 0, "left", 0), null);
 });
 
+test("a list's message item is never toggled: h leaves it, l and o step into it", () => {
+  const list: NavRow[] = [
+    { kind: "group", expanded: true, parent: null },
+    { kind: "group", expanded: true, parent: 0, fixed: true },
+    { kind: "item", parent: 1 },
+  ];
+  assert.deepEqual(listAction(list, 1, "left", 0), { kind: "focus", index: 0 });
+  assert.deepEqual(listAction(list, 1, "right", 0), { kind: "focus", index: 2 });
+  assert.deepEqual(listAction(list, 1, "open", 0), { kind: "focus", index: 2 });
+});
+
 test("l on a field edits it, and steps into an expanded section", () => {
   assert.deepEqual(listAction(form, 0, "right", 0), { kind: "activate", index: 0 });
   assert.deepEqual(listAction(form, 1, "right", 0), { kind: "focus", index: 2 });
@@ -77,9 +88,13 @@ test("tabs cycle in both directions and wrap", () => {
   assert.equal(cycle(tabs, "body", -1), "options");
 });
 
-test("every single key in the help is mapped", () => {
-  const unmapped = new Set(["gg", "Enter", "Ctrl-d", "Ctrl-u", "⌘↵", "Esc"]);
+test("no prefix's first key is also a command of its own", () => {
+  for (const sequence of Object.keys(PREFIX_KEYMAP)) assert.equal(KEYMAP[sequence[0]!], undefined, sequence);
+});
+
+test("every key in the help is mapped", () => {
+  const unmapped = new Set(["Enter", "Ctrl-d", "Ctrl-u", "⌘↵", "Esc"]);
   for (const { keys } of KEY_HELP) {
-    for (const key of keys) if (!unmapped.has(key)) assert.ok(KEYMAP[key] !== undefined, `${key} is listed but not mapped`);
+    for (const key of keys) if (!unmapped.has(key)) assert.ok((KEYMAP[key] ?? PREFIX_KEYMAP[key]) !== undefined, `${key} is listed but not mapped`);
   }
 });

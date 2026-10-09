@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import { cx, EntranceScope, enter, exit, speed, stagger, STAGGER, useLateMount, useListKeys, usePresenceList, type PresenceEntry } from "bb-motion";
-import { FIELD_ROW } from "./client-keys";
+import { FIELD_ROW, FIXED_GROUP_ROW } from "./client-keys";
 
 const LATE_ENTRANCE = cx(enter.rise, speed.fast);
 
@@ -66,15 +66,15 @@ export function usePresenceValues<T>(values: readonly T[]): {
 export function PresenceRow({
   className,
   cascadeIndex,
-  fieldRow = false,
+  fieldRow,
   exiting,
   onExited,
   children,
 }: {
   className?: string;
   cascadeIndex?: number;
-  /** A stop for the request form's field cursor. */
-  fieldRow?: boolean;
+  /** A stop for the request form's field cursor; a fixed group holds rows of its own. */
+  fieldRow?: "item" | "fixedGroup";
   exiting: boolean;
   onExited: () => void;
   children: ReactNode;
@@ -83,7 +83,7 @@ export function PresenceRow({
   const cascades = !exiting && !late && cascadeIndex !== undefined;
   return (
     <div
-      {...(fieldRow ? FIELD_ROW : {})}
+      {...(fieldRow === "item" ? FIELD_ROW : fieldRow === "fixedGroup" ? FIXED_GROUP_ROW : {})}
       className={cx(className, exiting ? exit.sink : late ? LATE_ENTRANCE : cascades && cx(enter.rise, STAGGER))}
       style={cascades ? stagger(cascadeIndex) : undefined}
       inert={exiting || undefined}

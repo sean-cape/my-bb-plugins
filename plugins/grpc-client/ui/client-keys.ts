@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
-import { type ClientCommand, CTRL_KEYMAP, KEYMAP, type NavRow } from "./client-nav";
+import { type ClientCommand, CTRL_KEYMAP, KEYMAP, type NavRow, PREFIX_KEYMAP } from "./client-nav";
 
 const NON_TEXT_INPUTS = new Set(["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image"]);
 // Radix menus and listboxes take letters for typeahead without always claiming them; the
@@ -10,6 +10,7 @@ const OPEN_DIALOG = '[role="dialog"][data-state="open"], [role="alertdialog"][da
 /** Marks the client view: the place a keypress may come from. */
 const SCOPE = "[data-grpc-keys]";
 const PREFIX_TIMEOUT_MS = 500;
+const PREFIX_STARTS = new Set(Object.keys(PREFIX_KEYMAP).map((sequence) => sequence[0]!));
 
 /** Whether keys typed at `element` are text, so j or Escape mean something there. */
 export function isTextEntry(element: Element | null): boolean {
@@ -52,7 +53,7 @@ export function useClientKeys(root: HTMLElement | null, enabled: boolean, onComm
     claim();
     root.addEventListener("focusin", claim);
     root.addEventListener("pointerdown", claim);
-    let pendingG = 0;
+    let pending: { key: string; at: number } | null = null;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.altKey || event.isComposing) return;
       if (!isShown(root)) return;
@@ -74,17 +75,16 @@ export function useClientKeys(root: HTMLElement | null, enabled: boolean, onComm
         command = { kind: "list", motion: "open" };
       } else if (event.ctrlKey) {
         command = event.shiftKey ? undefined : CTRL_KEYMAP[event.key];
-      } else if (event.key === "g") {
-        if (event.timeStamp - pendingG > PREFIX_TIMEOUT_MS) {
-          pendingG = event.timeStamp;
+      } else {
+        const sequence = pending !== null && event.timeStamp - pending.at <= PREFIX_TIMEOUT_MS ? PREFIX_KEYMAP[pending.key + event.key] : undefined;
+        if (sequence === undefined && PREFIX_STARTS.has(event.key)) {
+          pending = { key: event.key, at: event.timeStamp };
           event.preventDefault();
           return;
         }
-        command = { kind: "list", motion: "top" };
-      } else {
-        command = KEYMAP[event.key];
+        command = sequence ?? KEYMAP[event.key];
       }
-      pendingG = 0;
+      pending = null;
       if (command === undefined) return;
       if (handler.current(command) !== false) event.preventDefault();
     };
@@ -138,9 +138,16 @@ const NAV_GROUP = "[data-nav-group]";
 
 /** Makes an element a stop for the request form's field cursor; pair it with FOCUS_RING. */
 export const FIELD_ROW = { "data-nav-row": "item", tabIndex: -1 } as const;
+/** A message in a list: a stop of its own (so dd can remove it) that holds its fields' rows. */
+export const FIXED_GROUP_ROW = { "data-nav-row": "group", "data-nav-fixed": "", "data-nav-group": "", tabIndex: -1 } as const;
 
 function isExpanded(element: Element): boolean {
   return (element.getAttribute("aria-expanded") ?? element.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")) === "true";
+}
+
+/** The row's own controls, not those of rows nested inside it. */
+export function ownControls<T extends Element>(row: HTMLElement, selector: string): T[] {
+  return [...row.querySelectorAll<T>(selector)].filter((control) => control.closest(NAV_ROW) === row);
 }
 
 export function readRows(container: Element): { elements: HTMLElement[]; rows: NavRow[] } {
@@ -155,7 +162,9 @@ export function readRows(container: Element): { elements: HTMLElement[]; rows: N
     // A group's own row sits inside its wrapper, so its parent is the next wrapper out.
     if (group !== null && headerOf.get(group) === index) group = group.parentElement?.closest(NAV_GROUP) ?? null;
     const parent = group === null || !container.contains(group) ? null : (headerOf.get(group) ?? null);
-    return element.dataset.navRow === "group" ? { kind: "group", expanded: isExpanded(element), parent } : { kind: "item", parent };
+    if (element.dataset.navRow !== "group") return { kind: "item", parent };
+    const fixed = element.dataset.navFixed !== undefined;
+    return { kind: "group", expanded: fixed || isExpanded(element), parent, ...(fixed ? { fixed } : {}) };
   });
   return { elements, rows };
 }
@@ -168,13 +177,42 @@ export function activateRow(row: HTMLElement): void {
     row.click();
     return;
   }
-  const inputs = [...row.querySelectorAll<HTMLElement>(ROW_INPUTS)];
+  // A list's message item has no box of its own; editing it starts at its first field.
+  const inputs = row.dataset.navFixed !== undefined ? [...row.querySelectorAll<HTMLElement>(ROW_INPUTS)] : ownControls<HTMLElement>(row, ROW_INPUTS);
   const input = inputs.find(isTextEntry) ?? inputs[0];
   if (input !== undefined) {
     input.focus({ preventScroll: true });
     return;
   }
-  row.querySelector<HTMLElement>("button:not(:disabled)")?.click();
+  // Removing and clearing are dd's; opening a row never does either.
+  ownControls<HTMLElement>(row, 'button:not(:disabled):not([aria-label^="Remove "]):not([aria-label^="Clear "])')[0]?.click();
+}
+
+/** Sets a controlled input's value the way typing would, so React sees the change. */
+function setNativeValue(control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string): void {
+  Object.getOwnPropertyDescriptor(Object.getPrototypeOf(control), "value")?.set?.call(control, value);
+  control.dispatchEvent(new Event(control instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+}
+
+/**
+ * Removes what a row holds: its Remove button (list item, map entry, header), else its Clear
+ * button (a set field, which unsets it), else empties its inputs. False when nothing changed.
+ */
+export function deleteRow(row: HTMLElement): boolean {
+  const button =
+    ownControls<HTMLButtonElement>(row, 'button[aria-label^="Remove "]')[0] ?? ownControls<HTMLButtonElement>(row, 'button[aria-label^="Clear "]')[0];
+  if (button !== undefined) {
+    button.click();
+    return true;
+  }
+  let changed = false;
+  for (const control of ownControls<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(row, ROW_INPUTS)) {
+    if (!isTextEntry(control) || control.value === "") continue;
+    if (control instanceof HTMLSelectElement && ![...control.options].some((option) => option.value === "")) continue;
+    setNativeValue(control, "");
+    changed = true;
+  }
+  return changed;
 }
 
 export function focusRow(element: HTMLElement): void {

@@ -14,8 +14,9 @@ opens a method and carries the cursor into its fields, steps into a section,
 or edits a field. `h` goes back out: it collapses a section or service, climbs
 to the enclosing one, and from a top-level field returns to the method list.
 `o` or Enter opens the row under the cursor, `i` edits the field under it, and
-Escape stops editing and puts the cursor back on that field. `x` clears the
-field (or removes a list item, map entry, or header).
+Escape stops editing and puts the cursor back on that field. `dd` removes a
+list item, map entry, or header, unsets a field that is set (an optional field
+goes back to unset), and otherwise empties the field's box.
 
 `/` searches (Enter opens the first match and leaves the cursor on it, Escape
 clears the search, then leaves it), `f` opens the filters, `e` the endpoint

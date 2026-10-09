@@ -322,8 +322,8 @@ function ListEditor({ field, closure, depth, value, onChange }: EditorProps<Json
       {rows.map(({ key, value: item, index, exiting }) => (
         <PresenceRow
           key={key}
-          className={cn("flex items-start gap-2 rounded-md", messages ? "bg-muted/30 p-2" : FOCUS_RING)}
-          fieldRow={!messages}
+          className={cn("flex items-start gap-2 rounded-md", FOCUS_RING, messages && "bg-muted/30 p-2")}
+          fieldRow={messages ? "fixedGroup" : "item"}
           exiting={exiting}
           onExited={() => onExited(key)}
         >
@@ -391,7 +391,7 @@ function MapEditor({ field, closure, depth, value, onChange }: EditorProps<Json>
       {entries.map(({ key, item: row, exiting }) => {
         const duplicate = !exiting && (counts.get(row.key) ?? 0) > 1;
         return (
-          <PresenceRow key={key} className={cn("flex items-start gap-2 rounded-md", FOCUS_RING)} fieldRow exiting={exiting} onExited={() => onExited(key)}>
+          <PresenceRow key={key} className={cn("flex items-start gap-2 rounded-md", FOCUS_RING)} fieldRow="item" exiting={exiting} onExited={() => onExited(key)}>
             <input
               className={cn(inputClass, "w-40 shrink-0 font-mono text-[13px]", duplicate && "border-destructive")}
               value={row.key}

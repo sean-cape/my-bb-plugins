@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { activateRow, FIELD_ROW, focusRow, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
+import { activateRow, deleteRow, FIELD_ROW, focusRow, isTextEntry, NAV_ROW, readRows, useClientKeys } from "./client-keys";
 import { type ClientCommand, cycle, listAction, type ListMotion } from "./client-nav";
 import { Centered, FOCUS_RING, MenuItem, Segmented, Tabs } from "./controls";
 import { EndpointSwitcher } from "./EndpointSwitcher";
@@ -373,22 +373,22 @@ export function ClientView() {
     }, 0);
   };
 
-  const clearField = (): boolean => {
+  const deleteField = (): boolean => {
     const pane = requestPaneRef.current;
     const row = focusedRow(pane) ?? savedFieldRow();
-    const button = row?.querySelector<HTMLElement>('button[aria-label^="Clear "], button[aria-label^="Remove "]');
-    if (pane === null || row == null || button == null) return false;
-    const { elements } = readRows(pane);
-    const index = elements.indexOf(row);
-    button.click();
-    // A removed item plays its exit as an inert ghost, so the cursor moves to a neighbour.
+    if (pane === null || row === null) return false;
+    const index = readRows(pane).elements.indexOf(row);
+    if (!deleteRow(row)) return false;
+    // A removed item plays its exit as an inert ghost and an unset section turns back into a
+    // plain row, so the cursor takes whatever row now sits in the same place.
     setTimeout(() => {
       if (row.isConnected && row.closest("[inert]") === null) {
         focusRow(row);
         return;
       }
-      const neighbour = elements.slice(index + 1).find((element) => element.isConnected && element.closest("[inert]") === null) ?? elements.slice(0, index).reverse().find((element) => element.isConnected);
-      if (neighbour !== undefined) focusRow(neighbour);
+      const { elements } = readRows(pane);
+      const next = elements[Math.min(index, elements.length - 1)];
+      if (next !== undefined) focusRow(next);
     }, 0);
     return true;
   };
@@ -458,8 +458,8 @@ export function ClientView() {
         pane.scrollBy({ top: (command.step * pane.clientHeight) / 2 });
         return;
       }
-      case "clear":
-        return clearField();
+      case "delete":
+        return currentPane() === "fields" && deleteField();
       case "escape":
         if (command.fromField) {
           const row = document.activeElement?.parentElement?.closest<HTMLElement>(NAV_ROW);

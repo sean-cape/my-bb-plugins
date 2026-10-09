@@ -24,7 +24,7 @@ export function MetadataEditor({ rows, endpoint, onChange }: { rows: MetadataRow
         {presence.length > 0 ? (
           <div className="space-y-2">
             {presence.map(({ key, value: row, index, exiting }) => (
-              <PresenceRow key={key} className={cn("flex items-center gap-2 rounded-md", FOCUS_RING)} fieldRow cascadeIndex={index} exiting={exiting} onExited={() => onExited(key)}>
+              <PresenceRow key={key} className={cn("flex items-center gap-2 rounded-md", FOCUS_RING)} fieldRow="item" cascadeIndex={index} exiting={exiting} onExited={() => onExited(key)}>
                 <input
                   type="checkbox"
                   className="size-4 accent-foreground"

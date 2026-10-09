@@ -12,7 +12,7 @@ export type ClientCommand =
   | { kind: "responseTab"; step: 1 | -1 }
   | { kind: "mode" }
   | { kind: "copyCommand" }
-  | { kind: "clear" }
+  | { kind: "delete" }
   | { kind: "scroll"; step: 1 | -1 }
   | { kind: "escape"; fromField: boolean }
   | { kind: "help" };
@@ -40,9 +40,14 @@ export const KEYMAP: Record<string, ClientCommand> = {
   "{": { kind: "responseTab", step: -1 },
   m: { kind: "mode" },
   y: { kind: "copyCommand" },
-  x: { kind: "clear" },
   Escape: { kind: "escape", fromField: false },
   "?": { kind: "help" },
+};
+
+/** Two-key commands; their first keys wait for the second instead of acting. */
+export const PREFIX_KEYMAP: Record<string, ClientCommand> = {
+  gg: { kind: "list", motion: "top" },
+  dd: { kind: "delete" },
 };
 
 /** Vim's scroll keys keep their Ctrl. */
@@ -59,7 +64,7 @@ export const KEY_HELP: readonly { keys: readonly string[]; action: string }[] = 
   { keys: ["h"], action: "Collapse, go up a level, or go from the fields back to the list" },
   { keys: ["o", "Enter"], action: "Open the method or call, toggle the section, or edit the field" },
   { keys: ["i"], action: "Edit the field under the cursor" },
-  { keys: ["x"], action: "Clear the field, or remove the item" },
+  { keys: ["dd"], action: "Remove the list item or optional field, or empty the field" },
   { keys: ["/"], action: "Search methods (Enter opens the first match)" },
   { keys: ["f"], action: "Filter methods" },
   { keys: ["e"], action: "Switch endpoint or protos" },
@@ -76,14 +81,15 @@ export const KEY_HELP: readonly { keys: readonly string[]; action: string }[] = 
 ];
 
 /** A row of a list or the request form, in display order; `parent` is the index of the group it sits in. */
-export type NavRow = { kind: "group"; expanded: boolean; parent: number | null } | { kind: "item"; parent: number | null };
+export type NavRow = { kind: "group"; expanded: boolean; parent: number | null; fixed?: boolean } | { kind: "item"; parent: number | null };
 
 export type ListAction = { kind: "focus"; index: number } | { kind: "activate"; index: number };
 
 /**
  * What a motion does from row `current`: move the cursor, or activate a row (open a method,
- * toggle a service). Left and right walk the tree the way file trees do. With no cursor yet,
- * any motion lands on `start`.
+ * toggle a service). Left and right walk the tree the way file trees do; a `fixed` group (a
+ * message in a list) is always open, so h leaves it instead of collapsing it. With no cursor
+ * yet, any motion lands on `start`.
  */
 export function listAction(rows: readonly NavRow[], current: number | null, motion: ListMotion, start: number): ListAction | null {
   if (rows.length === 0) return null;
@@ -99,13 +105,14 @@ export function listAction(rows: readonly NavRow[], current: number | null, moti
     case "bottom":
       return { kind: "focus", index: rows.length - 1 };
     case "open":
+      if (row.kind === "group" && row.fixed) return rows[current + 1]?.parent === current ? { kind: "focus", index: current + 1 } : null;
       return { kind: "activate", index: current };
     case "right": {
       if (row.kind === "item" || !row.expanded) return { kind: "activate", index: current };
       return rows[current + 1]?.parent === current ? { kind: "focus", index: current + 1 } : null;
     }
     case "left":
-      if (row.kind === "group" && row.expanded) return { kind: "activate", index: current };
+      if (row.kind === "group" && row.expanded && !row.fixed) return { kind: "activate", index: current };
       return row.parent === null ? null : { kind: "focus", index: row.parent };
   }
 }
