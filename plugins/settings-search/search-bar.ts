@@ -32,8 +32,9 @@ const SETTINGS_SIDEBAR = '[data-sidebar="sidebar"]:has(> [data-testid="settings-
 const BACK_ROW = ':scope > div:has(a[href="/"])';
 const NAV_LIST = ":scope > .overflow-auto";
 const SETTINGS_LINK = 'a[href^="/settings"]';
-// Lists of threads, not settings.
-const UNINDEXED_PAGES = new Set(["/settings/archived"]);
+// Lists of threads and plugin cards, not settings. Installed plugins also has
+// no page viewport, so indexing it only waits out the timeout.
+const UNINDEXED_PAGES = new Set(["/settings/archived", "/settings/plugins"]);
 // While one of these is open, the keys belong to it.
 const OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [data-radix-popper-content-wrapper]';
 const FOCUSABLE =
