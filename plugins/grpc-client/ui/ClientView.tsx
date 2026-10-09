@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { toast } from "sonner";
 import { cx, enter, exit, PRESS, speed, usePresence } from "bb-motion";
@@ -45,6 +45,7 @@ const NO_OVERRIDES: Record<string, string> = {};
 const REQUEST_TABS = ["body", "metadata", "options"] as const;
 /** A key's focus request that waits for its panel to mount; older ones are dropped. */
 const PENDING_FOCUS_MS = 1000;
+const PENDING_FOCUS_RETRY_MS = 50;
 const REQUEST_FIELDS = "input:not(:disabled), textarea:not(:disabled), select:not(:disabled), button:not(:disabled)";
 
 function EmptyConfig({ errors }: { errors: string[] }) {
@@ -247,6 +248,7 @@ export function ClientView() {
   /** The row the list cursor was last on, so keys resume there after focus leaves the list. */
   const lastRowKey = useRef<string | null>(null);
   const [pendingFocus, setPendingFocus] = useState<{ target: "cursor" | "search" | "filters"; at: number } | null>(null);
+  const [, retryPendingFocus] = useReducer((count: number) => count + 1, 0);
   const listShown = overlayList ? listOpen : !listCollapsed;
 
   const showList = () => {
@@ -273,14 +275,14 @@ export function ClientView() {
       setPendingFocus(null);
       return;
     }
-    if (pendingFocus.target === "cursor") {
-      if (listRef.current === null || !landCursor(listRef.current)) return;
-    } else {
-      const handle = methodListRef.current;
-      if (handle === null) return;
-      if (pendingFocus.target === "search") handle.focusSearch();
-      else handle.openFilters();
+    const handle = methodListRef.current;
+    if (pendingFocus.target === "cursor" ? listRef.current === null || !landCursor(listRef.current) : handle === null) {
+      // Rows can arrive in a child's own render (call history loads itself), which doesn't re-run this.
+      const timer = setTimeout(retryPendingFocus, PENDING_FOCUS_RETRY_MS);
+      return () => clearTimeout(timer);
     }
+    if (pendingFocus.target === "search") handle?.focusSearch();
+    if (pendingFocus.target === "filters") handle?.openFilters();
     setPendingFocus(null);
   });
 
@@ -366,7 +368,12 @@ export function ClientView() {
           root?.focus({ preventScroll: true });
           return;
         }
-        if (methodListRef.current?.clearSearch()) return;
+        if (methodListRef.current?.clearSearch()) {
+          // The result rows the cursor was on are gone; it goes back to the open method.
+          if (method !== null) lastRowKey.current = `method:${method.fullName}`;
+          revealList("cursor");
+          return;
+        }
         if (overlayList && listOpen) {
           setListOpen(false);
           return;

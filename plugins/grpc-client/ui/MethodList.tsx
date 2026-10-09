@@ -254,6 +254,8 @@ export function MethodList({
     clearSearch: () => {
       if (query === "") return false;
       setQuery("");
+      const service = selected === null ? undefined : services.find((entry) => entry.methods.some((method) => method.fullName === selected));
+      if (service !== undefined) setExpanded((current) => new Set(current).add(service.typeName));
       return true;
     },
   }));
