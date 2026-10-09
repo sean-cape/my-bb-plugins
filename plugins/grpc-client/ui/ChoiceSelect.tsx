@@ -1,10 +1,12 @@
-import { useEffect, useId, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { cx, enter, exit, speed, usePresence } from "bb-motion";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { usePortalScopeProps } from "@/lib/portal-scope";
 import { NAV_ROW } from "./client-keys";
-import { useDismiss, useInertWhileClosing } from "./hooks";
+import { useInertWhileClosing } from "./hooks";
 
 export interface Choice {
   value: string;
@@ -13,6 +15,26 @@ export interface Choice {
 }
 
 const EMPTY_LABEL = "—";
+/** Matches the list's max-h-64. */
+const LIST_MAX_HEIGHT = 256;
+const LIST_GAP = 4;
+
+/**
+ * Where the list goes: under the box, or above it when the box sits low. It is portaled so the
+ * request pane's scrolling and the split pane's clipping don't cut it off.
+ */
+function listPosition(trigger: HTMLElement): CSSProperties {
+  const rect = trigger.getBoundingClientRect();
+  const below = window.innerHeight - rect.bottom;
+  const up = below < LIST_MAX_HEIGHT + LIST_GAP && rect.top > below;
+  return {
+    position: "fixed",
+    left: rect.left,
+    minWidth: rect.width,
+    maxHeight: Math.min(LIST_MAX_HEIGHT, (up ? rect.top : below) - 2 * LIST_GAP),
+    ...(up ? { bottom: window.innerHeight - rect.top + LIST_GAP } : { top: rect.bottom + LIST_GAP }),
+  };
+}
 
 /**
  * A select whose open list takes vim keys, which a native select's popup never sees: j/k or the
@@ -38,10 +60,31 @@ export function ChoiceSelect({
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const presence = usePresence(open);
-  useDismiss(root, open, setOpen);
   useInertWhileClosing(root, panel, presence.exiting);
   const listId = useId();
+  const portalScope = usePortalScopeProps();
   const current = options.find((option) => option.value === value);
+  const [position, setPosition] = useState<CSSProperties>({});
+
+  useLayoutEffect(() => {
+    if (!open || trigger.current === null) return;
+    const place = () => {
+      if (trigger.current !== null) setPosition(listPosition(trigger.current));
+    };
+    place();
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!root.current?.contains(target) && !panel.current?.contains(target)) setOpen(false);
+    };
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (open) panel.current?.querySelector(`[data-index="${highlight}"]`)?.scrollIntoView({ block: "nearest" });
@@ -85,7 +128,7 @@ export function ChoiceSelect({
     const move = moves[event.key];
     if (move === undefined) return;
     event.preventDefault();
-    // Escape would also reach the view's keys and the panel dismissal; this list owns it while open.
+    // Escape and the motions would also reach the view's keys; this list owns them while open.
     event.stopPropagation();
     move();
   };
@@ -110,42 +153,48 @@ export function ChoiceSelect({
         </span>
         <Icon name="ChevronDown" className="size-3.5 shrink-0 text-muted-foreground" />
       </button>
-      {presence.mounted ? (
-        <div
-          ref={panel}
-          id={listId}
-          role="listbox"
-          aria-hidden={presence.exiting || undefined}
-          className={cx(
-            "absolute left-0 top-full z-30 mt-1 max-h-64 min-w-full overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-lg",
-            presence.exiting ? exit.fade : cx(enter.drop, speed.fast),
-          )}
-          onAnimationEnd={presence.onAnimationEnd}
-        >
-          {options.map((option, index) => (
-            <div
-              key={option.value}
-              id={`${listId}-${index}`}
-              data-index={index}
-              role="option"
-              aria-selected={option.value === value}
-              title={option.title}
-              className={cn(
-                "flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-2 py-1 text-sm",
-                index === highlight ? "bg-state-hover text-foreground" : "text-foreground/80",
-                option.value === "" && "text-muted-foreground",
-              )}
-              onPointerMove={() => setHighlight(index)}
-              // Picking with the pointer must not blur the trigger first.
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => pick(index, false)}
-            >
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              {option.value === value && option.value !== "" ? <Icon name="Check" className="size-3.5 shrink-0" /> : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {presence.mounted
+        ? createPortal(
+            <div {...portalScope}>
+              <div
+                ref={panel}
+                id={listId}
+                role="listbox"
+                aria-hidden={presence.exiting || undefined}
+                style={position}
+                className={cx(
+                  "z-50 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-lg",
+                  presence.exiting ? exit.fade : cx(enter.drop, speed.fast),
+                )}
+                onAnimationEnd={presence.onAnimationEnd}
+              >
+                {options.map((option, index) => (
+                  <div
+                    key={option.value}
+                    id={`${listId}-${index}`}
+                    data-index={index}
+                    role="option"
+                    aria-selected={option.value === value}
+                    title={option.title}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-2 py-1 text-sm",
+                      index === highlight ? "bg-state-hover text-foreground" : "text-foreground/80",
+                      option.value === "" && "text-muted-foreground",
+                    )}
+                    onPointerMove={() => setHighlight(index)}
+                    // Picking with the pointer must not blur the trigger first.
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => pick(index, false)}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                    {option.value === value && option.value !== "" ? <Icon name="Check" className="size-3.5 shrink-0" /> : null}
+                  </div>
+                ))}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
