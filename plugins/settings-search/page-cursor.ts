@@ -11,6 +11,8 @@ const SCROLLER = "[data-page-scroll-viewport], [data-radix-scroll-area-viewport]
 const CONTROLS =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [role="switch"]';
 const TEXT_CONTROLS = "input, textarea, select";
+// Radix menus and selects open from a key or pointer press on the trigger, never a click.
+const POPUP_TRIGGER = '[aria-haspopup]:not([aria-haspopup="false"]), [role="combobox"]';
 // dnd-kit drag handles, which do nothing on a click.
 const DRAG_HANDLE = '[aria-roledescription="sortable"], [aria-label^="Reorder "]';
 
@@ -169,7 +171,10 @@ export function createPageCursor(doc: Document, win: Window, options: PageCursor
     const control = at >= 0 ? primaryControl(list[at]!) : null;
     if (!control) return false;
     if (focusOnly || control.matches(TEXT_CONTROLS)) control.focus();
-    else control.click();
+    else if (control.matches(POPUP_TRIGGER)) {
+      control.focus();
+      control.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    } else control.click();
     return true;
   };
 

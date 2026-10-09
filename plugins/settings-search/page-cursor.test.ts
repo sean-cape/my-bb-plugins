@@ -120,6 +120,20 @@ describe("page cursor", () => {
     expect(document.activeElement).toBe(document.querySelector("input"));
   });
 
+  it("opens a menu from the keyboard, the way radix triggers expect", () => {
+    render(setting("Followup", '<button aria-haspopup="menu" aria-label="Followup">Steer</button>'));
+    const trigger = document.querySelector("main button")!;
+    const keys = vi.fn((event: KeyboardEvent) => event.key);
+    const clicked = vi.fn();
+    trigger.addEventListener("keydown", keys);
+    trigger.addEventListener("click", clicked);
+    press("j");
+    press("Enter");
+    expect(document.activeElement).toBe(trigger);
+    expect(keys).toHaveReturnedWith("Enter");
+    expect(clicked).not.toHaveBeenCalled();
+  });
+
   it("leaves a focused control on Escape, then hides the cursor", () => {
     render(GENERAL);
     press("j");
