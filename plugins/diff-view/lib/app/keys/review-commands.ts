@@ -58,6 +58,10 @@ export interface ReviewEnv {
   toggleFinding: (item: InlineFinding, selected: boolean) => void;
   explain: ((path: string, side: "old" | "new", startLine: number, endLine: number) => void) | null;
   toggleLayout: () => void;
+  /** Shows or hides the file list. */
+  toggleFileTree: () => void;
+  /** Moves the keyboard into the file list, on the cursor's file; false when the view is too narrow to show it. */
+  focusFileTree: () => boolean;
   /** Which findings the diff shows; null when there are none to filter. */
   findingFilter: { value: FindingFilter; set: (filter: FindingFilter) => void } | null;
   refresh: () => void;
@@ -169,6 +173,11 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       return;
     }
     case "side": {
+      // Past the old side, or from a file header, the next step left is the file list.
+      if (command.side === "LEFT" && (cursor.line === null || cursor.side === "LEFT" || cursor.want === "LEFT")) {
+        if (!env.focusFileTree()) env.notify("The file list needs a wider view");
+        return;
+      }
       const at = model?.rows[row];
       if (at === undefined || lineOn(at, command.side) === null) {
         env.keys.set({ cursor: { ...cursor, want: command.side } });
@@ -390,6 +399,9 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       return;
     case "layout":
       env.toggleLayout();
+      return;
+    case "fileTree":
+      env.toggleFileTree();
       return;
     case "findingFilter": {
       if (env.findingFilter === null) {

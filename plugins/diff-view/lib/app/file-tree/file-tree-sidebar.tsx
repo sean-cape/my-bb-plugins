@@ -5,7 +5,7 @@ import type { DiffResult } from "../../types";
 import { cn } from "../utils";
 import { PRESS } from "../ui/motion";
 import { SkeletonLines } from "../ui/skeleton";
-import { readPreference, writePreference } from "../state";
+import { readPreference, setDiffPreferences, useDiffPreferences, writePreference } from "../state";
 import { FileTree } from "./file-tree";
 
 const DEFAULT_WIDTH = 288;
@@ -14,7 +14,6 @@ const MAX_WIDTH = 720;
 
 const FILE_SKELETON = ["70%", "55%", "82%", "48%", "64%"];
 
-const OPEN_KEY = "fileTreeOpen";
 const WIDTH_KEY = "fileTreeWidth";
 
 function clampWidth(width: number): number {
@@ -30,12 +29,9 @@ function readWidth(): number {
  * The file tree beside the diff, from the `@3xl` container width up: hideable to a thin rail and resizable by its
  * edge, both remembered across views. Renders as siblings of the diff inside the view's flex row.
  */
-export function FileTreeSidebar({ diff, ...tree }: { diff: DiffResult | null } & Omit<ComponentProps<typeof FileTree>, "files">) {
-  const [open, setOpenState] = useState<boolean>(() => readPreference(OPEN_KEY) !== "false");
-  const setOpen = (value: boolean) => {
-    setOpenState(value);
-    writePreference(OPEN_KEY, String(value));
-  };
+export function FileTreeSidebar({ diff, ...tree }: { diff: DiffResult | null } & Omit<ComponentProps<typeof FileTree>, "files" | "onHide">) {
+  const { fileTreeOpen: open } = useDiffPreferences();
+  const setOpen = (value: boolean) => setDiffPreferences({ fileTreeOpen: value });
   const [width, setWidth] = useState<number>(readWidth);
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -62,21 +58,28 @@ export function FileTreeSidebar({ diff, ...tree }: { diff: DiffResult | null } &
     <>
       {!open ? (
         <div className="hidden w-7 shrink-0 flex-col items-center border-r border-border pt-1 @3xl:flex">
-          <button type="button" className={cn("rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground", PRESS)} aria-label="Show file list" title="Show file list" onClick={() => setOpen(true)}>
+          <button type="button" className={cn("rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground", PRESS)} aria-label="Show file list" title="Show file list (t)" onClick={() => setOpen(true)}>
             <Icon name="ChevronDown" className="size-3.5 -rotate-90" />
           </button>
           {diff !== null ? <span className="mt-1 text-[10px] tabular-nums text-muted-foreground">{diff.files.length}</span> : null}
         </div>
       ) : null}
-      <aside className={cn("relative hidden shrink-0 flex-col border-r border-border @3xl:flex", !open && "@3xl:hidden")} style={{ width }}>
+      <aside data-file-tree="" className={cn("relative hidden shrink-0 flex-col border-r border-border @3xl:flex", !open && "@3xl:hidden")} style={{ width }}>
         <div className="flex items-center gap-1 border-b border-border px-2 py-1 text-xs text-muted-foreground">
           <span className="min-w-0 flex-1 truncate">Files{diff !== null ? ` · ${diff.files.length}` : ""}</span>
-          <button type="button" className={cn("rounded p-0.5 hover:bg-state-hover hover:text-foreground", PRESS)} aria-label="Hide file list" title="Hide file list" onClick={() => setOpen(false)}>
+          <button type="button" className={cn("rounded p-0.5 hover:bg-state-hover hover:text-foreground", PRESS)} aria-label="Hide file list" title="Hide file list (t)" onClick={() => setOpen(false)}>
             <Icon name="ChevronDown" className="size-3.5 rotate-90" />
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto py-1">
-          {diff === null ? <SkeletonLines widths={FILE_SKELETON} label="Loading files" className="px-3 py-2" lineClassName="h-2.5" /> : <FileTree files={diff.files} {...tree} />}
+          {diff === null ? <SkeletonLines widths={FILE_SKELETON} label="Loading files" className="px-3 py-2" lineClassName="h-2.5" /> : <FileTree
+              files={diff.files}
+              {...tree}
+              onHide={() => {
+                setOpen(false);
+                tree.onLeave();
+              }}
+            />}
           {diff?.truncated ? <p className="px-3 py-2 text-xs text-muted-foreground">File list truncated.</p> : null}
         </div>
       </aside>

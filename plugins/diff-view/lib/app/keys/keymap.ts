@@ -26,6 +26,7 @@ export type ReviewCommand =
   | { kind: "explain" }
   | { kind: "viewed" }
   | { kind: "target" }
+  | { kind: "fileTree" }
   | { kind: "layout" }
   | { kind: "refresh" }
   | { kind: "send" }
@@ -107,7 +108,8 @@ const SEQUENCES: Record<string, ReviewCommand> = {
   F: { kind: "findingFilter" },
   K: { kind: "explain" },
   v: { kind: "viewed" },
-  t: { kind: "target" },
+  T: { kind: "target" },
+  t: { kind: "fileTree" },
   gl: { kind: "layout" },
   R: { kind: "refresh" },
   s: { kind: "send" },
@@ -149,7 +151,7 @@ export const KEY_HELP: ReadonlyArray<{ group: string; keys: ReadonlyArray<{ keys
     group: "Move",
     keys: [
       { keys: ["j", "k"], action: "Next / previous line, stopping at each comment when a line has several (a count repeats: 5j)" },
-      { keys: ["h", "l"], action: "Old / new side" },
+      { keys: ["h", "l"], action: "Old / new side; h past the old side (or on a file header) goes to the file list" },
       { keys: ["]c", "[c"], action: "Next / previous change" },
       { keys: ["}", "{"], action: "Next / previous hunk" },
       { keys: ["]f", "[f"], action: "Next / previous file" },
@@ -174,10 +176,22 @@ export const KEY_HELP: ReadonlyArray<{ group: string; keys: ReadonlyArray<{ keys
       { keys: ["dd"], action: "Delete your unsent comment in that thread" },
       { keys: ["M"], action: "Move that comment between local and the GitHub PR" },
       { keys: ["gx", "go"], action: "Open the thread on GitHub / the agent thread that replied" },
-      { keys: ["t"], action: "Switch where new comments go: local or the GitHub PR" },
+      { keys: ["T"], action: "Switch where new comments go: local or the GitHub PR" },
       { keys: ["s"], action: "Go to the send bar (↩ sends, Tab for the next action)" },
       { keys: ["⌘↩"], action: "In a comment box: add it; editing a finding: save" },
       { keys: ["Esc"], action: "In a comment box: back to the diff (an empty one closes); editing a comment or finding: cancel the edit" },
+    ],
+  },
+  {
+    group: "File list",
+    keys: [
+      { keys: ["t"], action: "Show or hide the file list" },
+      { keys: ["j", "k"], action: "Next / previous file or folder" },
+      { keys: ["h", "l"], action: "Close / open a folder (h on a file goes to its folder)" },
+      { keys: ["gg", "G"], action: "First / last row" },
+      { keys: ["⌃d", "⌃u"], action: "Half a list down / up" },
+      { keys: ["↩", "l"], action: "Jump to the file (↩ on a folder opens or closes it)" },
+      { keys: ["Esc"], action: "Back to the diff" },
     ],
   },
   {

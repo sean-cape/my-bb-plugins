@@ -73,6 +73,9 @@ const LINE_PX = 20;
 /** How long after a wheel or touch event a scroll still counts as the reader's. */
 const SCROLL_INTENT_MS = 250;
 
+/** The file list shows from the `@3xl` container width (48rem) up. */
+const FILE_TREE_MIN_REM = 48;
+
 /** The vim-style mode and half-typed keys, shown while the view has the keyboard. */
 function ModeLabel() {
   const { visual, pending } = useReviewKeysState();
@@ -308,6 +311,8 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
     [findingsByPath],
   );
   const notify = (message: string) => toast.message(message, { duration: 1800 });
+  const fileTreeFits = () => (rootRef.current?.clientWidth ?? 0) >= FILE_TREE_MIN_REM * Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const returnFromFileTree = () => rootRef.current?.focus({ preventScroll: true });
   const runCommand: Parameters<typeof useReviewKeys>[3] = (command, count) => {
     const env: ReviewEnv = {
       keys,
@@ -362,6 +367,29 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
       toggleFinding,
       explain: explainHunk,
       toggleLayout: () => setDiffPreferences({ layout: preferences.layout === "split" ? "unified" : "split" }),
+      toggleFileTree: () => {
+        const open = !preferences.fileTreeOpen;
+        setDiffPreferences({ fileTreeOpen: open });
+        if (open && !fileTreeFits()) notify("The file list needs a wider view");
+      },
+      focusFileTree: () => {
+        if (!fileTreeFits()) return false;
+        if (!preferences.fileTreeOpen) setDiffPreferences({ fileTreeOpen: true });
+        const path = keys.get().cursor?.path ?? null;
+        // A list that was hidden renders after this key; wait for its rows.
+        let frames = 0;
+        const focus = () => {
+          const tree = rootRef.current?.querySelector<HTMLElement>("[data-file-tree]") ?? null;
+          const visible = tree !== null && tree.getClientRects().length > 0;
+          const row = !visible ? null : ((path === null ? null : tree.querySelector<HTMLElement>(`[data-file-tree-path="${CSS.escape(path)}"]`)) ?? tree.querySelector<HTMLElement>("[data-tree-row]"));
+          if (row !== null) {
+            row.focus();
+            row.scrollIntoView({ block: "nearest" });
+          } else if (++frames < 10) requestAnimationFrame(focus);
+        };
+        focus();
+        return true;
+      },
       findingFilter: allFindings.length === 0 ? null : { value: findingFilter, set: (filter) => setDiffPreferences({ findingFilter: filter }) },
       refresh: () => requestReload(instanceKey),
       focusSendBar: () => {
@@ -487,7 +515,11 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
                 findingCount={(path) => findingsByPath.get(path)?.length ?? 0}
                 risk={(path) => risk.get(path) ?? null}
                 changedSince={(path) => changedRangesByPath.has(path)}
-                onSelect={jumpTo}
+                onSelect={(path) => {
+                  jumpTo(path);
+                  returnFromFileTree();
+                }}
+                onLeave={returnFromFileTree}
               />
               <div className="relative flex min-h-0 min-w-0 flex-1">
                 <main

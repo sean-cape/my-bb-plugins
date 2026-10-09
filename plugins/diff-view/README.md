@@ -40,7 +40,8 @@ plugins embed.
   first line): the diff scrolls under it as it moves (`zt`/`zb` aside, and short of either end of
   the diff), and scrolling by hand carries it along to the middle line. Keys: `j`/`k` lines (with counts, `5j`; a line with several comments or findings
   is stepped through one at a time), `h`/`l` old
-  or new side, `]c`/`[c` changes, `}`/`{` hunks, `]f`/`[f` files, `c`/`C`
+  or new side (`h` past the old side, or on a file header, moves into the file
+  list), `]c`/`[c` changes, `}`/`{` hunks, `]f`/`[f` files, `c`/`C`
   comment threads and review findings (one at a time when several share a
   line), `]d`/`[d` findings only, `gg`/`G`, Ctrl-D/U/F/B, and `zz`/`zt`/`zb`.
   `/` searches file names and `n`/`N` step through the files it matched.
@@ -51,7 +52,7 @@ plugins embed.
   comment or a finding's wording, `dd` deletes your unsent comment, `x`
   includes or excludes a finding in the apply round, `M` moves a comment
   between local and the GitHub PR, and `gx`/`go` open a thread on GitHub or
-  the agent thread that replied. `t` switches where new comments go; `s`
+  the agent thread that replied. `T` switches where new comments go; `s`
   focuses the send bar. In a comment box or an edit ⌘↩ saves; Escape returns
   to the diff, keeping a new comment's or reply's draft (an empty one closes)
   and cancelling an edit of a comment or finding (with the vim-mode plugin,
@@ -62,6 +63,10 @@ plugins embed.
   `gd` peeks at a symbol on the line, `gl` switches line-diff files between
   split and unified, `R` refreshes, and
   `?` lists every key.
+  `t` shows or hides the file list. In it, `j`/`k` move, `h`/`l` close and
+  open folders (`h` on a file goes to its folder), `gg`/`G` and Ctrl-D/U jump,
+  Enter or `l` jumps to the file with the cursor on its header, and Escape
+  returns to the diff.
 
 Settings: hide vendored files (default on) and the `difft` path. Comments and
 viewed marks live in this plugin's database and are deleted with their thread.

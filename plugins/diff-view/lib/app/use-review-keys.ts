@@ -7,6 +7,8 @@ import type { ReviewKeys } from "./keys/review-keys-context";
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 /** Enter on these presses them (the send bar's buttons after `s`, say) rather than starting a comment. */
 const PRESSABLE = 'button, a[href], [role="button"], [role="radio"], [role="checkbox"], [role="tab"]';
+/** The file list moves with its own keys; of the diff's, only these reach past it. */
+const FROM_FILE_TREE: ReadonlySet<ReviewCommand["kind"]> = new Set(["help", "findFile"]);
 /** As vim's `timeoutlen`: how long a half-typed command (`g`, `]`, a count) waits for its next key. */
 const PENDING_TIMEOUT_MS = 1000;
 
@@ -63,6 +65,7 @@ export function useReviewKeys(
         return;
       }
       reset();
+      if (target?.closest("[data-file-tree]") != null && !FROM_FILE_TREE.has(result.command.kind)) return;
       handler.current(result.command, result.count);
     };
     window.addEventListener("keydown", onKeyDown);
