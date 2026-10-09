@@ -245,7 +245,8 @@ export function MethodList({
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   useImperativeHandle(handle, () => ({
-    focusSearch: () => searchRef.current?.focus(),
+    // Like vim's /, a new search replaces the last one; Escape out of it still keeps the old query.
+    focusSearch: () => searchRef.current?.select(),
     openFilters: () => setFiltersOpen(true),
     clearSearch: () => {
       if (query === "") return false;
