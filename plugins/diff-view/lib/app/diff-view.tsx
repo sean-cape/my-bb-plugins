@@ -422,7 +422,7 @@ export function DiffView({ source, instanceKey, onOpenThread, refreshSignal, lab
       refresh: () => requestReload(instanceKey),
       focusSendBar: () => {
         // The bar's first action, past any checkbox or toggle that only sets an option for it.
-        const button = rootRef.current?.querySelector<HTMLElement>('[data-diff-submit-bar] button:not(:disabled):not([role="checkbox"]):not([role="switch"]):not([role="radio"]):not([aria-pressed])') ?? null;
+        const button = rootRef.current?.querySelector<HTMLElement>('[data-diff-submit-bar] button:not(:disabled):not([role="checkbox"]):not([role="switch"]):not([role="radio"]):not([role="tab"]):not([aria-pressed])') ?? null;
         button?.focus();
         return button !== null;
       },

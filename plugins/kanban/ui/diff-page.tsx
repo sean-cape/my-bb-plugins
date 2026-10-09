@@ -5,13 +5,14 @@ import { PRESS, enter, usePopOnChange } from "bb-motion";
 import { DiffView, type DiffSource, type DiffViewLabels, type PendingComments } from "bb-diff-view/app/diff-view";
 import type { rpcContract } from "../contract";
 import type { Board, Ticket } from "../shared/board";
+import type { ReviewEvent } from "../shared/comments";
 import { BOARD_CHANGED, THREAD_SUBJECT_PREFIX } from "../shared/events";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { useBoard, usePushPreference } from "./data";
-import { PushToggle, COMPACT } from "./primitives";
+import { PushToggle, COMPACT, SegmentedTabs } from "./primitives";
 import { toastError } from "./actions";
 
 /** Pairs a changes view with the title-bar controls that refresh it. */
@@ -84,11 +85,22 @@ function useKanbanDiffSource(subjectId: string, ticket: Ticket | null, refetch: 
   );
 }
 
-/** Sends local comments to an apply thread and GitHub drafts to the pull request. */
-function KanbanSubmitBar({ subjectId, pending, onOpenThread, onSubmitted }: { subjectId: string; pending: PendingComments; onOpenThread: (threadId: string) => void; onSubmitted: () => void }) {
+const REVIEW_EVENTS: ReadonlyArray<{ value: ReviewEvent; label: string }> = [
+  { value: "COMMENT", label: "Comment" },
+  { value: "APPROVE", label: "Approve" },
+  { value: "REQUEST_CHANGES", label: "Request changes" },
+];
+
+/**
+ * Sends local comments to an apply thread and GitHub drafts to the pull request, as a plain comment review or, on
+ * someone else's PR, an approval or change request.
+ */
+function KanbanSubmitBar({ subjectId, pending, canApprove, onOpenThread, onSubmitted }: { subjectId: string; pending: PendingComments; canApprove: boolean; onOpenThread: (threadId: string) => void; onSubmitted: () => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const [push, setPush] = usePushPreference();
   const [autoApprove, setAutoApprove] = useState(false);
+  const [chosenEvent, setReviewEvent] = useState<ReviewEvent>("COMMENT");
+  const reviewEvent = canApprove ? chosenEvent : "COMMENT";
   const [submitting, setSubmitting] = useState<"github" | "agent" | null>(null);
   const { local, githubDrafts } = pending;
   const localPop = usePopOnChange(local.length);
@@ -96,8 +108,9 @@ function KanbanSubmitBar({ subjectId, pending, onOpenThread, onSubmitted }: { su
   const submit = async (destination: "github" | "agent") => {
     setSubmitting(destination);
     try {
-      const result = await rpc.call("diff_comments_submit", { ticketId: subjectId, postToGithub: destination === "github", address: destination === "agent", autoApprove, push });
-      toast.success(destination === "github" ? `Posted ${result.posted} to GitHub` : "Address thread started");
+      const result = await rpc.call("diff_comments_submit", { ticketId: subjectId, postToGithub: destination === "github", reviewEvent, address: destination === "agent", autoApprove, push });
+      const posted = reviewEvent === "APPROVE" ? `Approved with ${result.posted} on GitHub` : reviewEvent === "REQUEST_CHANGES" ? `Requested changes with ${result.posted} on GitHub` : `Posted ${result.posted} to GitHub`;
+      toast.success(destination === "github" ? posted : "Address thread started");
       if (result.apply !== null) onOpenThread(result.apply.threadId);
     } catch (cause) {
       toastError(cause);
@@ -138,10 +151,11 @@ function KanbanSubmitBar({ subjectId, pending, onOpenThread, onSubmitted }: { su
             </span>{" "}
             GitHub draft{githubDrafts.length === 1 ? "" : "s"}
           </span>
+          {canApprove ? <SegmentedTabs label="Review as" value={reviewEvent} options={REVIEW_EVENTS} onChange={setReviewEvent} className="w-72" tabClassName="px-2 py-0.5" /> : null}
           <span title="New threads post as one review; replies post into their threads">
             <Button type="button" variant="secondary" className={COMPACT} disabled={submitting !== null} onClick={() => void submit("github")}>
-              <Icon name="GitPullRequest" className="size-3.5" />
-              Post {githubDrafts.length} to GitHub
+              <Icon name={reviewEvent === "APPROVE" ? "Check" : "GitPullRequest"} className="size-3.5" />
+              {reviewEvent === "APPROVE" ? `Approve with ${githubDrafts.length}` : reviewEvent === "REQUEST_CHANGES" ? `Request changes with ${githubDrafts.length}` : `Post ${githubDrafts.length} to GitHub`}
             </Button>
           </span>
         </span>
@@ -201,7 +215,7 @@ export function KanbanDiffView({ subjectId, onBack, onOpenThread }: { subjectId:
       onOpenThread={onOpenThread}
       refreshSignal={boardChanges}
       labels={KANBAN_DIFF_LABELS}
-      renderSubmitBar={(pending) => <KanbanSubmitBar subjectId={subjectId} pending={pending} onOpenThread={onOpenThread} onSubmitted={refetch} />}
+      renderSubmitBar={(pending) => <KanbanSubmitBar subjectId={subjectId} pending={pending} canApprove={ticket?.pr?.role === "other"} onOpenThread={onOpenThread} onSubmitted={refetch} />}
       deltaActions={ticket !== null && ticket.pr !== null ? <RereviewDeltaButton ticket={ticket} /> : null}
     />
   );

@@ -216,7 +216,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
   `apply-pr-comments` (with the same and-push and skip-triage options), and
   **Post N to GitHub** posts the drafts: new threads as one review (inline
   where a line is given, in the review body otherwise) and replies into their
-  GitHub threads.
+  GitHub threads. On someone else's PR a **Comment / Approve / Request
+  changes** picker beside it sets how that review concludes, as GitHub's
+  "Finish your review" does.
 - **Comment threads**: the changes view shows the PR's inline GitHub review
   comments under their lines, threaded with their replies, alongside the
   board's own comments. Resolved threads start collapsed; comments whose line

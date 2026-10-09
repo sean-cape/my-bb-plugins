@@ -1,7 +1,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { boardSchema, columnSchema, dueDateSchema, sourceSchema, syncStatusSchema, tagSchema, ticketSchema } from "./shared/board";
-import { commentApplySchema, diffCommentSchema, diffCommentTargetSchema, prCommentSchema } from "./shared/comments";
+import { commentApplySchema, diffCommentSchema, diffCommentTargetSchema, prCommentSchema, reviewEventSchema } from "./shared/comments";
 import { diffDeltaSchema, diffSideSchema, structuralDiffSchema, symbolLookupSchema, symbolUsagesSchema, ticketDiffSchema } from "./shared/diff";
 import { dumpSchema, proposedTicketSchema } from "./shared/dump";
 import { findingEditSchema, reviewSchema } from "./shared/review";
@@ -226,6 +226,8 @@ export const rpcContract = defineRpcContract({
         ticketId: z.string(),
         /** Post the GitHub drafts: new threads as one review, replies into their threads. */
         postToGithub: z.boolean().default(false),
+        /** The review the drafts post as, as on GitHub's "Finish your review". */
+        reviewEvent: reviewEventSchema.default("COMMENT"),
         /** Start a thread that addresses the pending local comments. */
         address: z.boolean().default(true),
         autoApprove: z.boolean().default(false),
