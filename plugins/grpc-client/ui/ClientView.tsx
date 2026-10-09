@@ -279,10 +279,17 @@ export function ClientView() {
     const row = lastFieldRow.current;
     return row !== null && row.isConnected && requestPaneRef.current?.contains(row) === true ? row : null;
   };
+  /** Lands on the last or first field; a request with none (or in JSON) puts the cursor on the pane itself. */
   const landFieldCursor = (): boolean => {
-    const row = savedFieldRow() ?? (requestPaneRef.current === null ? undefined : readRows(requestPaneRef.current).elements[0]);
-    if (row == null) return false;
-    focusRow(row);
+    const pane = requestPaneRef.current;
+    if (pane === null) return false;
+    const row = savedFieldRow() ?? readRows(pane).elements[0];
+    if (row !== undefined) {
+      focusRow(row);
+      return true;
+    }
+    if (pane.querySelector("[data-nav-loading]") !== null) return false;
+    pane.focus({ preventScroll: true });
     return true;
   };
   useEffect(() => {
@@ -709,7 +716,8 @@ export function ClientView() {
       <>
         <div
           ref={requestPaneRef}
-          className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3"
+          tabIndex={-1}
+          className={cn("flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3", FOCUS_RING)}
           onFocus={(event) => {
             lastPane.current = "fields";
             const row = (event.target as Element).closest<HTMLElement>(NAV_ROW);

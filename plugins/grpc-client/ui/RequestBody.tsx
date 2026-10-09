@@ -118,7 +118,13 @@ export function RequestBody({
       </>
     );
   }
-  if (closure === null) return <p className="text-sm text-muted-foreground">Loading the request type…</p>;
+  if (closure === null) {
+    return (
+      <p className="text-sm text-muted-foreground" data-nav-loading="">
+        Loading the request type…
+      </p>
+    );
+  }
 
   const write = (value: Json) => onText(JSON.stringify(value, null, 2));
   if (isClientStreaming(method.kind)) {
