@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useBbNavigate, experimental_usePluginId as usePluginId, experimental_useSidebarThreadActions as useSidebarThreadActions, experimental_useSidebarThreads as useSidebarThreads, useRealtime, useRpc, useSdk,  } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../contract";
@@ -33,8 +33,23 @@ export function useBoard() {
   return { rpc, board, setBoard, error, refetch };
 }
 
+const projectListeners = new Set<() => void>();
+let projectsVersion = 0;
+
+function subscribeProjects(listener: () => void): () => void {
+  projectListeners.add(listener);
+  return () => projectListeners.delete(listener);
+}
+
+/** Every `useProjects` refetches, so a project made from one picker shows up in the others. */
+function refreshProjects(): void {
+  projectsVersion += 1;
+  for (const listener of projectListeners) listener();
+}
+
 export function useProjects(): ProjectOption[] {
   const sdk = useSdk();
+  const version = useSyncExternalStore(subscribeProjects, () => projectsVersion);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -50,8 +65,28 @@ export function useProjects(): ProjectOption[] {
     return () => {
       cancelled = true;
     };
-  }, [sdk]);
+  }, [sdk, version]);
   return projects;
+}
+
+/**
+ * Opens the host's native folder picker and makes a project of the chosen directory, named after it as bb's own
+ * "Add project" does. Resolves null when the picker is cancelled.
+ */
+export function useCreateProjectFromFolder(): () => Promise<ProjectOption | null> {
+  const sdk = useSdk();
+  return useCallback(async () => {
+    const { primaryHostId } = await sdk.system.config();
+    if (primaryHostId === null) throw new Error("bb has no primary host to pick a folder on");
+    // The server only opens the picker when the asking client and the work host are the same machine.
+    const { path } = await sdk.hosts.pickFolder({ hostId: primaryHostId, clientHostId: primaryHostId });
+    if (path === null) return null;
+    const name = path.replace(/[\\/]+$/u, "").split(/[\\/]/u).pop()?.trim() ?? "";
+    if (name === "") throw new Error(`Cannot name a project after ${path}`);
+    const created = await sdk.projects.create({ name, source: { type: "local_path", hostId: primaryHostId, path } });
+    refreshProjects();
+    return { id: created.id, name: created.name };
+  }, [sdk]);
 }
 
 export function useThreadIndex(): ReadonlyMap<string, PluginSidebarThread> {

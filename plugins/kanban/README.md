@@ -167,6 +167,10 @@ its PR is reviewed and its review findings and comments are handed to agents.
   registered as a project, and every card for that repo adopts it. Turn this
   off with the "Create a project for each new repository" setting to fall
   back to the fallback project instead.
+- **New project from a folder**: every project dropdown ends with "New
+  project from folder…", which opens the native folder picker on bb's
+  primary host and makes the chosen directory a project (named after the
+  folder, as bb's own "Add project" does), then selects it.
 - **Tour**: "Generate tour" at the top of the changes view spawns one agent
   thread that reads the diff and ends with a ```json kanban-narrative block:
   a summary, every file in reading order tagged key / supporting /

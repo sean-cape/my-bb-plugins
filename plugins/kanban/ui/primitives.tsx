@@ -1,11 +1,13 @@
 import { useState } from "react";
 import type { AnimationEvent, KeyboardEvent, ReactNode } from "react";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import { toast } from "sonner";
 import { CHEVRON, PRESS, STAGGER, TRANSFORM_TRANSITION, enter, exit, speed, stagger, usePresence, type Arrival, useEntrance, usePopOnChange } from "bb-motion";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { type ProjectOption } from "./data";
+import { toastError } from "./actions";
+import { type ProjectOption, useCreateProjectFromFolder } from "./data";
 
 /** GitHub links open in the system browser: an explicit target bypasses bb's in-app routing. */
 export function ExternalLink({ href, className, children, title }: { href: string; className?: string; children: ReactNode; title?: string }) {
@@ -103,18 +105,21 @@ export function Select({
   onChange,
   children,
   "aria-label": ariaLabel,
+  disabled,
   className,
 }: {
   value: string;
   onChange: (value: string) => void;
   children: ReactNode;
   "aria-label": string;
+  disabled?: boolean;
   className?: string;
 }) {
   return (
     <select
       aria-label={ariaLabel}
       value={value}
+      disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
       className={cn(
         "h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
@@ -164,17 +169,41 @@ export function ProjectSelect({
   allowNone: boolean;
   className?: string;
 }) {
+  const createProject = useCreateProjectFromFolder();
+  const [creating, setCreating] = useState(false);
+  // Shown until the refetched project list catches up, so the select can display the new project at once.
+  const [created, setCreated] = useState<ProjectOption | null>(null);
+  const options = created === null || projects.some((project) => project.id === created.id) ? projects : [...projects, created];
+  const select = (next: string) => {
+    if (next !== NEW_PROJECT) {
+      onChange(next);
+      return;
+    }
+    setCreating(true);
+    createProject().then(
+      (project) => {
+        if (project === null) return;
+        setCreated(project);
+        onChange(project.id);
+        toast.success(`Created project ${project.name}`);
+      },
+      toastError,
+    ).finally(() => setCreating(false));
+  };
   return (
-    <Select aria-label="Project" value={value} onChange={onChange} className={className}>
+    <Select aria-label="Project" value={value} onChange={select} disabled={creating} className={className}>
       {allowNone ? <option value="">No project (no thread)</option> : null}
-      {projects.map((project) => (
+      {options.map((project) => (
         <option key={project.id} value={project.id}>
           {project.name}
         </option>
       ))}
+      <option value={NEW_PROJECT}>{creating ? "Choosing a folder…" : "New project from folder…"}</option>
     </Select>
   );
 }
+
+const NEW_PROJECT = "kanban:new-project";
 
 export const HEADER_ICON_BUTTON =
   `relative flex size-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground ${PRESS} hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`;

@@ -14,7 +14,8 @@ A kanban board where every card is a BB thread.
   when the PR merges or closes, the Jira issue is done, or (if the source says
   so) the item leaves its search.
 - Ad hoc cards from the page or from `bb kanban add`, with an optional thread
-  started in the project you pick.
+  started in the project you pick, or in a new one made from a folder you
+  choose.
 - **Brain dump**: type or dictate everything that needs doing; a planning
   thread proposes cards (with subtasks, dependencies and open questions) that
   you edit and accept on the board.
