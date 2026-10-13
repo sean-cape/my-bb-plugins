@@ -68,10 +68,14 @@ function TicketDetails({
   useEffect(() => {
     setTitle(ticket.title);
     setDescription(ticket.description);
-    setProjectId(ticket.projectId ?? projects[0]?.id ?? "");
+    setProjectId(ticket.projectId ?? "");
     setConfirmDelete(false);
     // Reset the form only when a different card is shown or its stored text changes.
-  }, [ticket.id, ticket.title, ticket.description, ticket.projectId, projects]);
+  }, [ticket.id, ticket.title, ticket.description, ticket.projectId]);
+  // Only an empty pick falls back: the list refetches after a project is made from a folder, and that pick must stay.
+  useEffect(() => {
+    if (projectId === "" && projects[0] !== undefined) setProjectId(projects[0].id);
+  }, [projectId, projects]);
 
   // Title and description save when the field loses focus, like the other controls apply immediately.
   const saveText = () => {
