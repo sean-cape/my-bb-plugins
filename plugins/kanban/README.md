@@ -167,7 +167,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
   registered as a project, and every card for that repo adopts it. Turn this
   off with the "Create a project for each new repository" setting to fall
   back to the fallback project instead.
-- **New project from a folder**: every project dropdown ends with "New
+- **New project from a folder**: every project dropdown starts with "New
   project from folder…", which opens the native folder picker on bb's
   primary host and makes the chosen directory a project (named after the
   folder, as bb's own "Add project" does), then selects it. The open list

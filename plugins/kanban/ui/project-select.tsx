@@ -21,7 +21,7 @@ function rowKey(row: Row): string {
 /**
  * A project picker whose open list takes vim keys, which a native select's popup never sees: j/k or the arrows move,
  * gg/G jump to the ends, Ctrl-D/Ctrl-U move half a list, Enter picks, / or i filters, and Escape closes (or leaves
- * the filter box). It ends with "New project from folder…", which makes a project of a directory picked in the native
+ * the filter box). It starts with "New project from folder…", which makes a project of a directory picked in the native
  * folder dialog and selects it.
  */
 export function ProjectSelect({
@@ -55,9 +55,9 @@ export function ProjectSelect({
   const current = options.find((project) => project.id === value);
   const query = filter?.trim().toLowerCase() ?? "";
   const rows: Row[] = [
+    { kind: "new" },
     ...(allowNone && query === "" ? [{ kind: "none" } as const] : []),
     ...options.filter((project) => project.name.toLowerCase().includes(query)).map((project) => ({ kind: "project", project }) as const),
-    { kind: "new" },
   ];
   const active = Math.min(highlight, rows.length - 1);
 
@@ -224,7 +224,8 @@ export function ProjectSelect({
                 data-vim-ignore=""
                 onChange={(event) => {
                   setFilter(event.target.value);
-                  setHighlight(0);
+                  // The first match, under the always-present "New project" row.
+                  setHighlight(1);
                 }}
                 onKeyDown={onFilterKeyDown}
               />
@@ -253,7 +254,7 @@ export function ProjectSelect({
                     "flex cursor-pointer select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm",
                     index === active && "bg-state-hover",
                     row.kind !== "project" && "text-muted-foreground",
-                    row.kind === "new" && "mt-1 border-t border-border",
+                    row.kind === "new" && "mb-1 border-b border-border",
                   )}
                   onPointerMove={() => setHighlight(index)}
                   onPointerDown={(event) => event.preventDefault()}
@@ -267,12 +268,6 @@ export function ProjectSelect({
                 </div>
               );
             })}
-          </div>
-          <div className="flex items-center gap-3 border-t border-border px-2.5 py-1.5 text-[11px] text-muted-foreground">
-            <span>j/k move</span>
-            <span>↵ pick</span>
-            <span>/ filter</span>
-            <span className="ml-auto">esc close</span>
           </div>
         </Popover.Content>
       </Popover.Portal>
