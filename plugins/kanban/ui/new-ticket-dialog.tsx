@@ -12,7 +12,8 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { errorMessage, parseQuickAdd, parseTagList } from "./format";
 import { type Rpc, type ProjectOption } from "./data";
-import { Select, Textarea, ProjectSelect, SegmentedTabs } from "./primitives";
+import { Select, Textarea, SegmentedTabs } from "./primitives";
+import { ProjectSelect } from "./project-select";
 import { toastError } from "./actions";
 
 /** Records microphone audio and transcribes it with bb's voice service. */
