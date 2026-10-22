@@ -20,9 +20,20 @@ Low-stakes personal plugin work: speed over ceremony.
 
 ## Making the worktree runnable
 
-A fresh worktree has no node_modules. Run `/tmp/claude/link-deps.sh <your worktree root>` once: it makes real
-`node_modules/` dirs of symlinks to the main checkout's, with the shared libs (`bb-diff-view`, `bb-motion`,
-`bb-nerd-font`, `bb-vim-keys`) linked relatively to your worktree. Don't run `pnpm install`. Then, sandboxed:
+A fresh worktree has no node_modules. Give each plugin a real `node_modules/` dir of symlinks to the main checkout's,
+keeping main's relative links (`../../diff-view/lib` and the like) relative so the shared libs (`bb-diff-view`,
+`bb-motion`, `bb-nerd-font`, `bb-vim-keys`) resolve to your worktree, and skipping `.vite`, `.vitest` and `.vite-temp`
+(from the worktree root; add the plugins you need):
+
+```sh
+M=/Users/sean/dev/my-bb-plugins/plugins
+for p in motion nerd-font vim-mode diff-view kanban; do mkdir -p plugins/$p/node_modules
+  for e in $(command ls -A $M/$p/node_modules); do case $e in .vite|.vitest|.vite-temp) continue;; esac
+    t=$(readlink "$M/$p/node_modules/$e"); case "$t" in ../../*) ln -sfn "$t" plugins/$p/node_modules/$e;; *) ln -sfn $M/$p/node_modules/$e plugins/$p/node_modules/$e;; esac
+  done; done
+```
+
+Don't run `pnpm install`. Then, sandboxed:
 
 - diff-view: `npx tsc -p tsconfig.json --noEmit` and `npx vitest run --configLoader runner` in `plugins/diff-view`
 - kanban (if you touch it or the lib's types/source): the same in `plugins/kanban`
