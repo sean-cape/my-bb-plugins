@@ -21,18 +21,11 @@ import { ChangeCounts, FileGlyph } from "./file-marks";
 import { useNerdFont } from "./ui/nerd-font";
 import { PatchPlaceholder } from "./large-diff";
 import { FileHeaderMenu } from "./file-actions";
+import type { ShownPatch } from "./patches";
+
+export type { ShownPatch } from "./patches";
 
 const NO_ROWS: FileNavModel = { rows: [], cutToHunk: false, element: () => null };
-
-/** A file's text diff as the view draws it, after the whitespace preference. */
-export interface ShownPatch {
-  /** Whitespace pairs made context while whitespace is hidden; null when nothing is left to draw. */
-  patch: string | null;
-  /** Every change is whitespace, and whitespace is hidden. */
-  onlyWhitespace: boolean;
-  /** The drawn patch adds or deletes lines. */
-  changed: boolean;
-}
 
 /** A file with no diff to step through still tells the keyboard it has loaded, so the cursor moves past it. */
 export function NoRows({ path }: { path: string }) {

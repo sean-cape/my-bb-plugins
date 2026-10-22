@@ -12,8 +12,8 @@ import { Badge } from "../ui/badge";
 import { SuggestionsContext } from "../suggestions/context";
 import { SuggestionDiff } from "../suggestions/suggestion-diff";
 import { findingSuggestionLabel } from "../suggestions/finding-suggestion";
-
-const SUGGESTION_BUTTON = cn("rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:opacity-50", PRESS);
+import { SUGGESTION_BUTTON, SuggestionBadge, SuggestionButtons } from "../suggestions/suggestion-actions";
+import { applicableItem, isInBatch, suggestionKeyHints } from "../suggestions/actions";
 
 /** The rule down the card's left, in the severity's hue. */
 const SEVERITY_RULE: Record<FindingSeverity, string> = { critical: "border-l-red-500/80", important: "border-l-amber-500/80", minor: "border-l-slate-400/70" };
@@ -48,8 +48,8 @@ export function FindingAnnotation({
   const [saving, setSaving] = useState(false);
   const suggestions = useContext(SuggestionsContext);
   const suggestion = suggestions.forFinding(item);
-  const applicable = suggestion?.item ?? null;
-  const inBatch = applicable !== null && suggestions.batch.some((entry) => entry.id === applicable.id);
+  const applicable = applicableItem(suggestions, suggestion?.item ?? null);
+  const inBatch = isInBatch(suggestions.batch, applicable);
   const posted = suggestion !== null && suggestions.posted.has(suggestion.id);
   const canPost = suggestions.post !== null && suggestion !== null && !suggestion.applied && !posted && suggestion.current !== null;
   const beginEdit = () => {
@@ -130,20 +130,11 @@ export function FindingAnnotation({
                 replacement={suggestion.replacement}
                 startLine={suggestion.suggestion.startLine}
                 label={`Suggested change · ${findingSuggestionLabel(suggestion.suggestion)}`}
-                badge={suggestion.applied ? <Badge tone="success">applied</Badge> : inBatch ? <Badge tone="accent">in batch</Badge> : posted ? <Badge tone="outline">draft on GitHub</Badge> : undefined}
+                badge={<SuggestionBadge applied={suggestion.applied} inBatch={inBatch} otherwise={posted ? <Badge tone="outline">draft on GitHub</Badge> : null} />}
               />
-              {(applicable !== null && suggestions.apply !== null) || canPost ? (
+              {applicable !== null || canPost ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {applicable !== null && suggestions.apply !== null ? (
-                    <>
-                      <button type="button" className={SUGGESTION_BUTTON} disabled={suggestions.busy} title="Apply this suggestion to the code now and mark the finding applied (A)" onClick={() => void suggestions.apply?.([applicable])}>
-                        Apply suggestion
-                      </button>
-                      <button type="button" aria-pressed={inBatch} className={cn(SUGGESTION_BUTTON, inBatch && "bg-state-active text-foreground")} title="Apply it with others in one go: Commit N suggestions above the diff, or gB (B)" onClick={() => suggestions.toggleBatch(applicable)}>
-                        {inBatch ? "Remove from batch" : "Add to batch"}
-                      </button>
-                    </>
-                  ) : null}
+                  <SuggestionButtons actions={suggestions} item={applicable} applyTitle="Apply this suggestion to the code now and mark the finding applied (A)" />
                   {canPost ? (
                     <button type="button" className={SUGGESTION_BUTTON} title="Post it to the pull request as a draft suggestion comment (gs)" onClick={() => void suggestions.post?.(item, suggestion)}>
                       Post to PR
@@ -178,8 +169,7 @@ export function FindingAnnotation({
       ) : null}
       <p className={cn(CARD_FOOTER, enter.fade, FAST, !focused && "hidden")}>
         {[
-          applicable !== null && suggestions.apply !== null ? "A apply suggestion" : null,
-          applicable !== null && suggestions.apply !== null ? (inBatch ? "B unbatch" : "B batch") : null,
+          ...suggestionKeyHints(suggestions, applicable),
           canPost ? "gs post to PR" : null,
           item.selected ? "x exclude" : "x include",
           editing ? null : "e edit",

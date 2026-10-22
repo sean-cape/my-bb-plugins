@@ -5,7 +5,7 @@ import type { BoardStore } from "../board";
 import type { DiffCommentRow, PendingReviewRow, TicketRow } from "../db/rows";
 import type { Changes } from "../diff/changes";
 import { GithubHttpError, github, githubGraphql, githubPages, githubPost, githubRequest, resolveToken, reviewThreads, type GithubReview, type GithubReviewComment } from "../github";
-import { errorMessage, shortId } from "../util";
+import { createKeyedQueue, errorMessage, shortId } from "../util";
 import { locationLabel } from "bb-diff-view/line-range";
 
 const REVIEW_COMMENT = "review-comment:";
@@ -49,18 +49,8 @@ export function createPendingReview(ctx: KanbanContext, { board, changes }: { bo
   const { bb, settings, stmts, db, sync, publish } = ctx;
   const { ticketDiff } = changes;
 
-  const queues = new Map<string, Promise<unknown>>();
-  /** Runs `work` after everything queued for the card; a failure is logged and never blocks the next item. */
-  function enqueue<T>(ticketId: string, work: () => Promise<T>): Promise<T> {
-    const previous = queues.get(ticketId) ?? Promise.resolve();
-    const run = previous.then(work, work);
-    queues.set(ticketId, run.catch(() => undefined));
-    return run;
-  }
-  /** Resolves once the card's queued mirroring is done, so a submit sees every draft that could be staged. */
-  function settled(ticketId: string): Promise<void> {
-    return (queues.get(ticketId) ?? Promise.resolve()).then(() => undefined);
-  }
+  // A submit waits until the card's queued mirroring is settled, so it sees every draft that could be staged.
+  const { enqueue, settled } = createKeyedQueue();
 
   async function enabled(): Promise<boolean> {
     return (await settings.get()).stageOnGithub && sync.login !== null;

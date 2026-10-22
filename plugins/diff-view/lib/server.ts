@@ -1,13 +1,14 @@
 // Server-side diff pieces shared by every plugin that shows the diff view: parsing unified diffs, reading an
 // environment's changes, running difftastic, and searching a checkout for symbols.
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, lstat, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { applySuggestionsToText, suggestionsByPath } from "./suggestions";
-import type { BlameLine, DiffFile, DiffResult, FileSlice, StructuralDiff, SuggestionItem, SuggestionsApplied, SymbolDefinition, SymbolUsages } from "./types";
+import { SuggestionConflictError, applySuggestionsToText, suggestionFileText, suggestionsByPath } from "./suggestions";
+import type { BlameLine, DiffFile, DiffResult, DiffSide, FileSlice, StructuralDiff, SuggestionItem, SuggestionsApplied, SymbolDefinition, SymbolUsages } from "./types";
 import { WORKTREE_SHA, type CommitRange, type DiffCommit, type DiffCommits } from "./types";
 
 const execFileAsync = promisify(execFile);
@@ -154,17 +155,45 @@ export function withUnlistedFiles(diff: DiffResult, nameStatus: string): DiffRes
 
 const NAME_STATUS: Record<string, string> = { A: "added", D: "removed", R: "renamed", C: "copied" };
 
+const C_ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+
+/** A path as git prints it: as is, or in double quotes with C escapes and each byte of a non-ASCII character in octal. */
+export function unquoteGitPath(path: string): string {
+  if (path.length < 2 || !path.startsWith('"') || !path.endsWith('"')) return path;
+  const body = path.slice(1, -1);
+  const bytes: number[] = [];
+  for (let index = 0; index < body.length; ) {
+    if (body[index] === "\\") {
+      const octal = /^[0-7]{3}/u.exec(body.slice(index + 1, index + 4));
+      if (octal !== null) {
+        bytes.push(Number.parseInt(octal[0], 8));
+        index += 4;
+        continue;
+      }
+      const escaped = C_ESCAPES[body[index + 1] ?? ""];
+      if (escaped !== undefined) {
+        bytes.push(escaped);
+        index += 2;
+        continue;
+      }
+    }
+    const char = String.fromCodePoint(body.codePointAt(index)!);
+    bytes.push(...Buffer.from(char, "utf8"));
+    index += char.length;
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
 /** `git diff --name-status` output (not `-z`) as patchless files. */
 function parseNameStatus(text: string): DiffFile[] {
-  const unquote = (path: string) => (path.startsWith('"') && path.endsWith('"') ? path.slice(1, -1) : path);
   return text
     .split("\n")
     .map((line) => line.split("\t"))
     .filter((fields) => fields.length >= 2 && /^[A-Z]/u.test(fields[0]!))
     .map((fields) => {
       const renamed = fields.length >= 3;
-      const path = unquote(renamed ? fields[2]! : fields[1]!);
-      return { path, previousPath: renamed ? unquote(fields[1]!) : null, status: NAME_STATUS[fields[0]![0]!] ?? "modified", additions: 0, deletions: 0, patch: null, vendored: isVendoredPath(path) };
+      const path = unquoteGitPath(renamed ? fields[2]! : fields[1]!);
+      return { path, previousPath: renamed ? unquoteGitPath(fields[1]!) : null, status: NAME_STATUS[fields[0]![0]!] ?? "modified", additions: 0, deletions: 0, patch: null, vendored: isVendoredPath(path) };
     });
 }
 
@@ -462,6 +491,17 @@ export function parseBlamePorcelain(output: string): BlameLine[] {
 }
 
 /**
+ * The revision one side of a diff is blamed at; null is the working tree. `base` and `head` are the old and new sides
+ * of the diff read for it: a range's compared commits, a PR's merge base and head, an environment's merge base and
+ * working tree.
+ */
+export function blameRev(side: DiffSide, range: CommitRange | null, base: string | null, head: string | null): string | null {
+  if (side === "RIGHT") return range === null ? head : range.to === WORKTREE_SHA ? null : range.to;
+  // A diff of uncommitted changes alone has no merge base; its old side is HEAD.
+  return base ?? range?.from ?? "HEAD";
+}
+
+/**
  * Who last changed lines `start`–`end` of `path` in a checkout: at `rev`, or in the working tree (uncommitted lines
  * included) when `rev` is null.
  */
@@ -480,25 +520,86 @@ export async function gitBlame(dir: string, rev: string | null, path: string, st
 }
 
 /**
+ * A file of a checkout by its relative path, as a real path inside the checkout's real root; throws for a path that
+ * leaves it, a symlink, or anything but a regular file, since a link could point a write anywhere.
+ */
+async function checkoutFile(root: string, path: string): Promise<string> {
+  const file = resolve(root, path);
+  if (!file.startsWith(root + sep)) throw new Error(`Invalid path ${path}`);
+  let stats;
+  try {
+    stats = await lstat(file);
+  } catch {
+    throw new Error(`Not applied: ${path} is not in the checkout`);
+  }
+  if (stats.isSymbolicLink()) throw new Error(`Not applied: ${path} is a symlink`);
+  if (!stats.isFile()) throw new Error(`Not applied: ${path} is not a file`);
+  const real = await realpath(file);
+  if (!real.startsWith(root + sep)) throw new Error(`Not applied: ${path} is outside the checkout`);
+  return real;
+}
+
+/** Replaces a file's contents in one step: a temp file beside it, given its mode, renamed over it. */
+async function replaceFile(file: string, bytes: Uint8Array, mode: number): Promise<void> {
+  const temp = join(dirname(file), `.${basename(file)}.${process.pid}.${randomUUID()}.suggestion`);
+  try {
+    await writeFile(temp, bytes, { mode, flag: "wx" });
+    await chmod(temp, mode);
+    await rename(temp, file);
+  } catch (error) {
+    await rm(temp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+const checkoutQueues = new Map<string, Promise<unknown>>();
+
+/** Runs `task` after every earlier one for the same checkout, so two applies never read the same original. */
+async function inCheckoutQueue<T>(root: string, task: () => Promise<T>): Promise<T> {
+  const run = (checkoutQueues.get(root) ?? Promise.resolve()).then(task);
+  const settled = run.catch(() => {});
+  checkoutQueues.set(root, settled);
+  try {
+    return await run;
+  } finally {
+    if (checkoutQueues.get(root) === settled) checkoutQueues.delete(root);
+  }
+}
+
+/**
  * Applies suggestions to the files of a checkout, uncommitted. Every file is read and checked before any is written,
- * so a batch with one stale item changes nothing.
+ * so a batch with one stale item changes nothing; each file is checked again just before it is replaced, and when a
+ * later one fails those already written are put back. Applies to the same checkout run one at a time.
  */
 export async function applySuggestionsInCheckout(dir: string, items: readonly SuggestionItem[]): Promise<SuggestionsApplied> {
-  const root = resolve(dir);
-  const writes: Array<{ file: string; text: string }> = [];
-  for (const [path, fileItems] of suggestionsByPath(items)) {
-    const file = resolve(root, path);
-    if (!file.startsWith(root + sep)) throw new Error(`Invalid path ${path}`);
-    let text: string;
-    try {
-      text = await readFile(file, "utf8");
-    } catch {
-      throw new Error(`Not applied: ${path} is not in the checkout`);
+  // Queued by the path as given, so applies run in the order they were asked for.
+  return inCheckoutQueue(resolve(dir), async () => {
+    const root = await realpath(resolve(dir));
+    const writes: Array<{ path: string; file: string; original: Buffer; mode: number; next: Uint8Array }> = [];
+    for (const [path, fileItems] of suggestionsByPath(items)) {
+      const file = await checkoutFile(root, path);
+      const [original, stats] = await Promise.all([readFile(file), stat(file)]);
+      const text = applySuggestionsToText(suggestionFileText(original, path), fileItems);
+      writes.push({ path, file, original, mode: stats.mode & 0o7777, next: new TextEncoder().encode(text) });
     }
-    writes.push({ file, text: applySuggestionsToText(text, fileItems) });
-  }
-  for (const { file, text } of writes) await writeFile(file, text, "utf8");
-  return { applied: items.length, commitUrl: null };
+    const written: typeof writes = [];
+    try {
+      for (const write of writes) {
+        const now = await readFile(write.file).catch(() => null);
+        if (now === null || !now.equals(write.original)) throw new SuggestionConflictError(`Not applied: ${write.path} changed while the suggestions were being applied. Refresh and try again.`);
+        await replaceFile(write.file, write.next, write.mode).catch((cause: unknown) => {
+          throw new Error(`Not applied: ${write.path} could not be written (${cause instanceof Error ? cause.message : String(cause)})`);
+        });
+        written.push(write);
+      }
+    } catch (error) {
+      const unrestored: string[] = [];
+      for (const write of written.reverse()) await replaceFile(write.file, write.original, write.mode).catch(() => unrestored.push(write.path));
+      if (unrestored.length > 0) throw new Error(`${error instanceof Error ? error.message : String(error)}; putting back ${unrestored.join(", ")} failed too, so the suggestions are in those`);
+      throw error;
+    }
+    return { applied: items.length, commitUrl: null };
+  });
 }
 
 /** A commit sha as a range end may name one: abbreviated or full, lowercase hex. */
@@ -537,17 +638,28 @@ export async function localCommits(dir: string, base: string): Promise<DiffCommi
   return commits;
 }
 
-/** An environment's commits since `base` (its diff's merge base; null for a diff of uncommitted changes alone); none without a local checkout. */
-export async function environmentCommits(sdk: Sdk, environmentId: string, base: string | null): Promise<DiffCommits> {
+/**
+ * An environment's commits since `base` (its diff's merge base; null for a diff of uncommitted changes alone); none
+ * without a local checkout. Left out, `base` is found the way bb's diff finds it, `git merge-base <mergeBaseBranch>
+ * HEAD` in the checkout, so the commits match the diff without reading it.
+ */
+export async function environmentCommits(sdk: Sdk, environmentId: string, base?: string | null): Promise<DiffCommits> {
   const dir = await localEnvironmentPath(sdk, environmentId);
   if (dir === null) return { commits: [], marks: [], base: null };
   try {
+    const known = base !== undefined ? base : await checkoutMergeBase(dir, (await sdk.environments.get({ environmentId })).mergeBaseBranch);
     // Resolved to a full sha, since a range's ends must be shas.
-    const from = (await execFileAsync("git", ["rev-parse", "--verify", "--end-of-options", `${base ?? "HEAD"}^{commit}`], { cwd: dir, timeout: 10_000 })).stdout.trim();
+    const from = (await execFileAsync("git", ["rev-parse", "--verify", "--end-of-options", `${known ?? "HEAD"}^{commit}`], { cwd: dir, timeout: 10_000 })).stdout.trim();
     return { commits: await localCommits(dir, from), marks: [], base: from };
   } catch {
     return { commits: [], marks: [], base: null };
   }
+}
+
+/** Where a checkout's HEAD left `branch`; null, a diff of uncommitted changes alone, without a branch. */
+async function checkoutMergeBase(dir: string, branch: string | null): Promise<string | null> {
+  if (branch === null) return null;
+  return (await execFileAsync("git", ["merge-base", branch, "HEAD"], { cwd: dir, timeout: 10_000 })).stdout.trim();
 }
 
 /** One file at a commit of a checkout; null when it is not there. */
@@ -565,7 +677,13 @@ export async function localRangeFileSides(dir: string, range: CommitRange, file:
   const readNew = async () => {
     if (to !== WORKTREE_SHA) return gitShow(dir, to, file.path);
     if (file.path.startsWith("/") || file.path.split("/").includes("..")) return null;
-    return readFile(join(dir, file.path), "utf8").catch(() => null);
+    try {
+      // Resolved first, so a symlink in the checkout can't read a file outside it.
+      const [root, real] = await Promise.all([realpath(dir), realpath(join(dir, file.path))]);
+      return real.startsWith(root + sep) ? await readFile(real, "utf8") : null;
+    } catch {
+      return null;
+    }
   };
   return {
     old: file.status === "added" ? null : await gitShow(dir, from, file.previousPath ?? file.path),

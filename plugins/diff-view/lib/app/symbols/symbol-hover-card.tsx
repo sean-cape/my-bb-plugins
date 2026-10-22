@@ -2,16 +2,16 @@ import { createPortal } from "react-dom";
 import { usePortalScopeProps } from "../portal-scope";
 import { cn } from "../utils";
 import { FAST, enter } from "../ui/motion";
+import { popoverPlace } from "../ui/popover-place";
 import type { SymbolData } from "./symbol-peek";
 
 /** Source lines previewed under the definition's location. */
 const PREVIEW_LINES = 10;
 /** Room the card needs below its anchor before it flips above; about its tallest. */
 const FLIP_ABOVE_PX = 320;
-/** Keeps the card's right edge on screen; a little over its 36rem width. */
-const RIGHT_EDGE_PX = 600;
+/** The card's 36rem, a little over, so its right edge stays on screen. */
+const CARD_WIDTH_PX = 592;
 const ANCHOR_GAP_PX = 6;
-const VIEWPORT_MARGIN_PX = 8;
 
 /**
  * The ⌘-hover card: where a symbol is defined and its first lines, before you commit to a peek. Portalled to the body
@@ -23,17 +23,13 @@ export function SymbolHoverCard({ symbol, data, anchor }: { symbol: string; data
   const definition = data?.lookup?.definitions[0] ?? null;
   const context = definition?.context ?? null;
   const lines = context === null ? [] : context.lines.slice(0, PREVIEW_LINES);
-  const below = anchor.bottom + FLIP_ABOVE_PX < window.innerHeight;
+  const place = popoverPlace(anchor, { width: CARD_WIDTH_PX, flipAbovePx: FLIP_ABOVE_PX, gapPx: ANCHOR_GAP_PX });
   return createPortal(
     <div
       {...portalScope}
       role="tooltip"
-      className={cn("pointer-events-none fixed z-50 w-[36rem] max-w-[90vw] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md", enter.scale, FAST, below ? "origin-top-left" : "origin-bottom-left")}
-      style={{
-        top: below ? anchor.bottom + ANCHOR_GAP_PX : undefined,
-        bottom: below ? undefined : window.innerHeight - anchor.top + ANCHOR_GAP_PX,
-        left: Math.max(VIEWPORT_MARGIN_PX, Math.min(anchor.left, window.innerWidth - RIGHT_EDGE_PX)),
-      }}
+      className={cn("pointer-events-none fixed z-50 w-[36rem] max-w-[90vw] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md", enter.scale, FAST, place.top !== undefined ? "origin-top-left" : "origin-bottom-left")}
+      style={place}
     >
       <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-2 py-1 text-xs">
         <code className="font-medium">{symbol}</code>

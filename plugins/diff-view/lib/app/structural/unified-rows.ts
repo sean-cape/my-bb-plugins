@@ -25,6 +25,12 @@ export function unifiedRows(rows: readonly StructuralRow[]): StructuralRow[] {
   return out;
 }
 
+/** Which half of a modified pair a unified row draws, the side it has a line on; null for a row drawn whole. */
+export function unifiedHalf(row: Pick<StructuralRow, "lhs" | "rhs">, unified: boolean): "LEFT" | "RIGHT" | null {
+  if (!unified || (row.lhs !== null && row.rhs !== null)) return null;
+  return row.rhs === null ? "LEFT" : "RIGHT";
+}
+
 /**
  * One entry of the table, in display order: a drawn row, or a fold of hidden aligned rows `from` up to `to`. A hunk's
  * first row carries the hunk's lowest aligned index (`hunkStart`), which its `@@` header is computed from: in unified

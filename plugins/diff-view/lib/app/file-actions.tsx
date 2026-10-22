@@ -13,16 +13,16 @@ import { usePortalScopeProps } from "./portal-scope";
 import { useDiffSource } from "./source";
 import { CommitRangeContext } from "./commits/commit-picker";
 import { FAST, PRESS, enter } from "./ui/motion";
-import { focusRow, runListMotion, useKeyHandler } from "./ui/vim-keys";
+import { popoverPlace } from "./ui/popover-place";
+import { usePopover } from "./ui/use-popover";
+import { runListMotion, useKeyHandler } from "./ui/vim-keys";
 import { cn } from "./utils";
 
 /** The all-zero sha git blame gives a line not committed yet. */
 const UNCOMMITTED = /^0+$/u;
-const ANCHOR_GAP_PX = 4;
-const VIEWPORT_MARGIN_PX = 8;
-/** Room a popover needs below its anchor before it opens above instead; about the blame popover's tallest. */
-const FLIP_ABOVE_PX = 300;
 const BLAME_WIDTH_PX = 480;
+/** The header menu's `w-44`. */
+const MENU_WIDTH_PX = 176;
 
 /** The file actions the keys and the header menus share, for one diff. */
 export function fileActionsFor({
@@ -92,13 +92,6 @@ export interface FileMenuActions {
 
 export const FileActionsContext = createContext<FileMenuActions | null>(null);
 
-/** Where a popover goes: under its anchor, or above it near the bottom of the screen, kept on screen sideways. */
-function popoverPlace(anchor: DOMRect, width: number): { top?: number; bottom?: number; left: number } {
-  const below = anchor.bottom + FLIP_ABOVE_PX < window.innerHeight;
-  const left = Math.max(VIEWPORT_MARGIN_PX, Math.min(anchor.left, window.innerWidth - width - VIEWPORT_MARGIN_PX));
-  return below ? { top: anchor.bottom + ANCHOR_GAP_PX, left } : { bottom: window.innerHeight - anchor.top + ANCHOR_GAP_PX, left };
-}
-
 /** Moves focus over a popover's rows and closes it; portalled, so the diff's own keys never see these. */
 function usePopoverKeys(list: RefObject<HTMLElement | null>, onClose: () => void) {
   return useKeyHandler<FilePopoverCommand>({
@@ -122,17 +115,12 @@ export function FileHeaderMenu({ file }: { file: DiffFile }) {
   const portalScope = usePortalScopeProps();
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const button = useRef<HTMLButtonElement | null>(null);
-  const list = useRef<HTMLDivElement | null>(null);
   const close = (refocus: boolean) => {
     setAnchor(null);
     if (refocus) button.current?.closest<HTMLElement>("[data-diff-root]")?.focus({ preventScroll: true });
   };
+  const { ref: list, onBlur } = usePopover<HTMLDivElement>({ open: anchor !== null, onDismiss: () => close(false) });
   const onKeyDown = usePopoverKeys(list, () => close(true));
-  useEffect(() => {
-    if (anchor === null) return;
-    const first = list.current?.querySelector<HTMLElement>("[data-nav-row]");
-    if (first) focusRow(first);
-  }, [anchor]);
   if (context === null) return null;
   const { actions, blameFrom } = context;
   const blameSpan = firstHunkSpan(file.patch);
@@ -163,11 +151,9 @@ export function FileHeaderMenu({ file }: { file: DiffFile }) {
               role="menu"
               aria-label={`Actions for ${file.path}`}
               className={cn("fixed z-50 flex w-44 flex-col rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md", enter.scale, FAST)}
-              style={popoverPlace(anchor, 176)}
+              style={popoverPlace(anchor, { width: MENU_WIDTH_PX })}
               onKeyDown={onKeyDown}
-              onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) close(false);
-              }}
+              onBlur={onBlur}
             >
               <button type="button" role="menuitem" data-nav-row="item" tabIndex={-1} className={MENU_ITEM} onClick={() => pick(() => actions.copyPath(file.path))}>
                 Copy path
@@ -210,13 +196,12 @@ export function BlamePopover({ path, span, anchor, repo, onClose }: { path: stri
   const range = useContext(CommitRangeContext);
   const portalScope = usePortalScopeProps();
   const [state, setState] = useState<{ commits: BlameCommit[] } | { error: string } | null>(null);
-  const root = useRef<HTMLDivElement | null>(null);
+  const { ref: root, onBlur } = usePopover<HTMLDivElement>({ ready: state, onDismiss: onClose });
   const list = useRef<HTMLUListElement | null>(null);
   const onKeyDown = usePopoverKeys(list, onClose);
   useEffect(() => {
     let cancelled = false;
     setState(null);
-    root.current?.focus({ preventScroll: true });
     if (source.blame === undefined) return;
     source.blame(path, span.side, span.start, span.end, range).then(
       (lines) => {
@@ -230,11 +215,6 @@ export function BlamePopover({ path, span, anchor, repo, onClose }: { path: stri
       cancelled = true;
     };
   }, [source, path, span.side, span.start, span.end, range]);
-  useEffect(() => {
-    if (state === null || !("commits" in state)) return;
-    const first = list.current?.querySelector<HTMLElement>("[data-nav-row]");
-    if (first) focusRow(first);
-  }, [state]);
   const now = Date.now();
   const box = anchor ?? new DOMRect(window.innerWidth / 2 - BLAME_WIDTH_PX / 2, window.innerHeight / 3, 0, 0);
   const open = (sha: string) => {
@@ -251,11 +231,9 @@ export function BlamePopover({ path, span, anchor, repo, onClose }: { path: stri
       role="dialog"
       aria-label={`Blame of ${path} ${lines}`}
       className={cn("fixed z-50 flex max-h-80 max-w-[90vw] flex-col overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md outline-none", enter.scale, FAST)}
-      style={{ ...popoverPlace(box, BLAME_WIDTH_PX), width: BLAME_WIDTH_PX }}
+      style={{ ...popoverPlace(box, { width: BLAME_WIDTH_PX }), width: BLAME_WIDTH_PX }}
       onKeyDown={onKeyDown}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) onClose();
-      }}
+      onBlur={onBlur}
     >
       <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-2 py-1 text-xs">
         <span className="font-medium">Blame</span>

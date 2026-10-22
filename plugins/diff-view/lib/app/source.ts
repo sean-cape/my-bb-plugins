@@ -72,8 +72,8 @@ export interface DiffSource {
   /** Who last changed lines `startLine`–`endLine` of one side of a file in the diff; lights up `gb`. */
   blame?(path: string, side: DiffSide, startLine: number, endLine: number, range?: CommitRange | null): Promise<BlameLine[]>;
   /**
-   * Applies suggested changes, one or a batch, refusing them all when any item's `expected` lines moved; a null
-   * message is the host's default. Lights up `A`, `B` and `gB`, for comments' and findings' suggestions.
+   * Applies suggested changes, one or a batch, refusing them all when any item's `expected` lines moved; `message` is
+   * for a host that commits them, null for its default. Lights up `A`, `B` and `gB`, for comments' and findings' suggestions.
    */
   suggestions?: { apply(items: SuggestionItem[], message: string | null): Promise<SuggestionsApplied> };
   /** The diff's commits and review marks, for reading one commit or a range of them; lights up `gr`. */

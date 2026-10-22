@@ -318,6 +318,11 @@ export interface SuggestionItem {
   endLine: number;
   expected: string[];
   replacement: string[];
+  /** The lines just before and after the range as the diff showed them, checked with `expected`; absent where it showed none. */
+  before?: string[];
+  after?: string[];
+  /** The pull request head the diff was read at; a commit to its branch is refused once the branch has moved on. */
+  headSha?: string | null;
 }
 
 /** What applying suggestions did: how many, and the commit they went into where the host commits them. */

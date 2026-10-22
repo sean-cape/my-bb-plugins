@@ -31,6 +31,26 @@ export function parseStringArray(raw: string | null): string[] {
   }
 }
 
+/** Work run one at a time per key (a card), in the order queued. */
+export function createKeyedQueue() {
+  const queues = new Map<string, Promise<unknown>>();
+  /** Runs `work` after everything queued for `key`; a failure is the caller's and never blocks the next item. */
+  function enqueue<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const run = (queues.get(key) ?? Promise.resolve()).then(work, work);
+    const tail = run.catch(() => undefined);
+    queues.set(key, tail);
+    void tail.then(() => {
+      if (queues.get(key) === tail) queues.delete(key);
+    });
+    return run;
+  }
+  /** Resolves once everything queued for `key` so far is done. */
+  function settled(key: string): Promise<void> {
+    return (queues.get(key) ?? Promise.resolve()).then(() => undefined);
+  }
+  return { enqueue, settled };
+}
+
 export function normalizeTags(tags: readonly string[]): string[] {
   return [...new Set(tags.map((tag) => tag.trim().toLowerCase()).filter((tag) => tag !== ""))].sort();
 }

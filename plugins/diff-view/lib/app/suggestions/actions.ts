@@ -24,6 +24,23 @@ export interface SuggestionActions {
   posted: ReadonlySet<string>;
 }
 
+/** Whether the item is in the batch `B` builds. */
+export function isInBatch(batch: readonly SuggestionItem[], item: SuggestionItem | null): boolean {
+  return item !== null && batch.some((entry) => entry.id === item.id);
+}
+
+/** The item `A` and `B` act on, when the view can apply it; null otherwise. */
+export function applicableItem(actions: SuggestionActions, item: SuggestionItem | null): SuggestionItem | null {
+  return actions.apply === null ? null : item;
+}
+
+/** The key hints for `A` and `B`, when they would act. */
+export function suggestionKeyHints(actions: SuggestionActions, item: SuggestionItem | null): string[] {
+  const applicable = applicableItem(actions, item);
+  if (applicable === null) return [];
+  return ["A apply suggestion", isInBatch(actions.batch, applicable) ? "B unbatch" : "B batch"];
+}
+
 export const NO_SUGGESTIONS: SuggestionActions = {
   linesAt: () => null,
   forThread: () => null,

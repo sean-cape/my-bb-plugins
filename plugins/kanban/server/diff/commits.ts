@@ -1,16 +1,11 @@
 // A card's commits for the diff view's commit picker, and the review marks it offers to read on from.
 import type { DiffCommits } from "../../shared/diff";
-import type { GithubPullCommit } from "../github";
+import type { GithubPullCommit, GithubReview } from "../github";
 
 type DiffCommit = DiffCommits["commits"][number];
 
-/** A submitted (or pending) review as `/pulls/{n}/reviews` lists it, with the commit it was left on. */
-export interface GithubReviewAtCommit {
-  user: { login: string } | null;
-  state: string;
-  commit_id?: string | null;
-  submitted_at?: string | null;
-}
+/** What a mark reads of a review `/pulls/{n}/reviews` lists. */
+export type GithubReviewAtCommit = Pick<GithubReview, "user" | "state" | "commit_id" | "submitted_at">;
 
 /** GitHub lists a pull request's commits oldest first. */
 export function commitsFromGithub(list: readonly GithubPullCommit[]): DiffCommit[] {
@@ -30,7 +25,8 @@ function inList(commits: readonly DiffCommit[], sha: string | null | undefined):
 
 /**
  * "Since last review": the commit the card's latest completed review read up to. "Since your last GitHub review": the
- * commit the signed-in user's latest submitted review on the PR was left on. Each only when that commit is in the diff.
+ * commit the signed-in user's latest submitted review on the PR was left on. Each only when that commit is in the diff
+ * and is not its head, which would leave nothing to read since.
  */
 export function reviewMarks(
   commits: readonly DiffCommit[],
@@ -38,15 +34,16 @@ export function reviewMarks(
   githubReviews: readonly GithubReviewAtCommit[] | null,
   login: string | null,
 ): DiffCommits["marks"] {
+  const before = commits.slice(0, -1);
   const marks: DiffCommits["marks"] = [];
-  const reviewed = inList(commits, lastReviewSha);
+  const reviewed = inList(before, lastReviewSha);
   if (reviewed !== undefined) marks.push({ sha: reviewed.sha, label: "Since last review" });
   if (githubReviews !== null && login !== null) {
     const mine = githubReviews
       .filter((review) => review.user?.login.toLowerCase() === login.toLowerCase() && review.state !== "PENDING" && review.submitted_at != null)
       .sort((a, b) => Date.parse(a.submitted_at!) - Date.parse(b.submitted_at!))
       .at(-1);
-    const commit = inList(commits, mine?.commit_id);
+    const commit = inList(before, mine?.commit_id);
     if (commit !== undefined) marks.push({ sha: commit.sha, label: "Since your last GitHub review" });
   }
   return marks;

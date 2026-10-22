@@ -100,9 +100,13 @@ function refsFor(path: string, thread: Pick<DiffThread, "line" | "side" | "start
   ];
 }
 
+/** How many rows of a run of only added (or only deleted) lines show either side of a thread's lines. */
+const ONE_SIDED_WINDOW = 3;
+
 /**
  * The refs widened to every change block they touch, so a thread on an added line shows the lines it replaced too
- * (an excerpt otherwise leaves unreferenced changes out).
+ * (an excerpt otherwise leaves unreferenced changes out). A block of only added or only deleted lines replaced
+ * nothing, and can be a whole new file, so it widens by a few rows either side of the thread's lines instead.
  */
 function withChangeBlocks(patch: string, refs: readonly NarrativeRef[]): NarrativeRef[] {
   const { rows } = patchRows(patch);
@@ -120,6 +124,14 @@ function withChangeBlocks(patch: string, refs: readonly NarrativeRef[]): Narrati
     let stop = index;
     while (changed(start - 1) && rows[start - 1]!.hunk === rows[index]!.hunk) start -= 1;
     while (changed(stop + 1) && rows[stop + 1]!.hunk === rows[index]!.hunk) stop += 1;
+    const block = rows.slice(start, stop + 1);
+    if (block.every((row) => row.left === null) || block.every((row) => row.right === null)) {
+      // Each run of the thread's lines gets its own window, so threads far apart in a new file don't show all between.
+      let last = index;
+      while (last < stop && hits(last + 1)) last += 1;
+      start = Math.max(start, index - ONE_SIDED_WINDOW);
+      stop = Math.min(stop, last + ONE_SIDED_WINDOW);
+    }
     for (let at = start; at <= stop; at++) {
       const row = rows[at]!;
       const [side, line] = row.left !== null ? (["old", row.left] as const) : (["new", row.right!] as const);

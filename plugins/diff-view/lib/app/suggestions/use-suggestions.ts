@@ -18,6 +18,7 @@ import { findingSuggestion, findingSuggestionBody, findingSuggestionRange, parse
 export function useSuggestions({
   source,
   diff,
+  patches,
   threadById,
   instanceKey,
   onApplied,
@@ -27,6 +28,8 @@ export function useSuggestions({
 }: {
   source: DiffSource;
   diff: DiffResult | null;
+  /** Each file's patch as the diff has it, or as Load diff fetched it; whitespace changes not hidden. */
+  patches: ReadonlyMap<string, string>;
   /** Threads as they are, for views that draw a copy placed elsewhere (the comments view's sections). */
   threadById: ReadonlyMap<string, DiffThread>;
   instanceKey: string;
@@ -43,22 +46,38 @@ export function useSuggestions({
   const [busy, setBusy] = useState(false);
   const [posted, setPosted] = useState<ReadonlySet<string>>(() => new Set());
   // Parsed once per file per diff, the first time a suggestion asks for its lines.
-  const linesAt = useMemo<LinesAt>(() => {
-    const patches = new Map((diff?.files ?? []).map((file) => [file.path, file.patch] as const));
+  const lineMapOf = useMemo(() => {
     const parsed = new Map<string, Map<number, string>>();
-    return (path, startLine, endLine) => {
+    return (path: string): Map<number, string> | null => {
       const patch = patches.get(path);
-      if (patch === undefined || patch === null) return null;
+      if (patch === undefined) return null;
       let map = parsed.get(path);
       if (map === undefined) {
         map = newSideLineMap(patch);
         parsed.set(path, map);
       }
-      return linesFromMap(map, startLine, endLine);
+      return map;
     };
-  }, [diff]);
-  const forThread = useCallback((thread: DiffThread) => threadSuggestion(threadById.get(thread.id) ?? thread, linesAt, applied), [threadById, linesAt, applied]);
-  const forFinding = useCallback((item: InlineFinding) => findingSuggestion(item, linesAt, applied), [linesAt, applied]);
+  }, [patches]);
+  const linesAt = useCallback<LinesAt>((path, startLine, endLine) => {
+    const map = lineMapOf(path);
+    return map === null ? null : linesFromMap(map, startLine, endLine);
+  }, [lineMapOf]);
+  // What the host checks besides `expected` before writing: the lines just around the range as the diff shows them,
+  // and the pull request head it was read at, so an item made against an older text is refused instead of misplaced.
+  const headSha = diff?.source === "pr" ? diff.headSha : null;
+  const guarded = useCallback(
+    <T extends { item: SuggestionItem | null }>(state: T | null): T | null => {
+      if (state === null || state.item === null) return state;
+      const map = lineMapOf(state.item.path);
+      const before = map?.get(state.item.startLine - 1);
+      const after = map?.get(state.item.endLine + 1);
+      return { ...state, item: { ...state.item, before: before === undefined ? [] : [before], after: after === undefined ? [] : [after], headSha } };
+    },
+    [lineMapOf, headSha],
+  );
+  const forThread = useCallback((thread: DiffThread) => guarded(threadSuggestion(threadById.get(thread.id) ?? thread, linesAt, applied)), [threadById, linesAt, applied, guarded]);
+  const forFinding = useCallback((item: InlineFinding) => guarded(findingSuggestion(item, linesAt, applied)), [linesAt, applied, guarded]);
   const toggleBatch = (item: SuggestionItem): boolean => {
     const has = batch.some((entry) => entry.id === item.id);
     setBatch((current) => (has ? current.filter((entry) => entry.id !== item.id) : [...current.filter((entry) => entry.id !== item.id), item]));

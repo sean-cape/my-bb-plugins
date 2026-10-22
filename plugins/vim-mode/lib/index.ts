@@ -34,6 +34,6 @@ export { focusWhenShown } from "./focus.ts";
 export { mapKeymap, type Motion, MOTION_KEYS, type PaneScrollOptions, scrollPane, type StepOptions, stepIndex, TEXT_BOX_MOTION_KEYS, visibleRowCount } from "./motion.ts";
 export { createPickerKeys, type PickerKeys, type PickerKeysOptions } from "./picker.ts";
 export { bindKeyScope, type KeyScopeOptions } from "./scope.ts";
-export { compileSearch, createSearchBoxKeys, createSearchHighlights, filterKeyHelp, matchOffsets, revealRange, type SearchBoxKeysOptions, type SearchHighlights, textRanges } from "./search.ts";
+export { compileSearch, createSearchBoxKeys, createSearchHighlights, filterKeyHelp, matchOffsets, revealRange, type SearchBoxKeysOptions, type SearchHighlightOptions, type SearchHighlights, textRanges } from "./search.ts";
 export { type Box, type Direction, spatialStep } from "./spatial.ts";
 export { ANY_OVERLAY, inWidgetWithin, isShown, isTextEntry, OPEN_DIALOG, overlayOver, OWN_KEYS, PRESSABLE, scrollParent } from "./targets.ts";

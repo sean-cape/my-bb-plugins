@@ -78,6 +78,8 @@ export interface GithubPullFile {
   additions: number;
   deletions: number;
   patch?: string;
+  /** The file's blob. */
+  sha?: string;
 }
 
 export interface GithubPull {
@@ -498,4 +500,11 @@ export const COMPARE_FILE_LIMIT = 300;
 export async function compareCommits(repo: string, from: string, to: string, token: string, signal?: AbortSignal): Promise<{ mergeBase: string | null; files: GithubPullFile[] }> {
   const result = await github<{ merge_base_commit?: { sha?: string } | null; files?: GithubPullFile[] }>(`/repos/${repo}/compare/${from}...${to}`, token, signal);
   return { mergeBase: result.merge_base_commit?.sha ?? null, files: result.files ?? [] };
+}
+
+/** Where `head` branched from `base`: the old side of a pull request's diff, which GitHub takes three-dot. */
+export async function mergeBaseOf(repo: string, base: string, head: string, token: string, signal?: AbortSignal): Promise<string | null> {
+  // One commit and file a page: only the merge base is wanted.
+  const result = await github<{ merge_base_commit?: { sha?: string } | null }>(`/repos/${repo}/compare/${base}...${head}?per_page=1`, token, signal);
+  return result.merge_base_commit?.sha ?? null;
 }

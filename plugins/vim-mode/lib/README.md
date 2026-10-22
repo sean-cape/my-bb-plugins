@@ -165,7 +165,9 @@ overlay (default: open dialogs) over the root.
 - `createSearchBoxKeys({ commit, cancel, step, cancelOnEmptyBackspace })` (React: `useSearchBoxKeys`) for the box `/`
   opens.
 - `compileSearch` (smartcase, `\<` `\>`, regex with a literal fallback), `matchOffsets`, `textRanges` (matches across
-  element boundaries), `createSearchHighlights` (CSS highlights named per instance) and `revealRange` are the pieces;
+  element boundaries), `createSearchHighlights` (CSS highlights named per instance; `show` takes the current match as
+  an index or a Range, and `css` is its rules for roots the head's sheet doesn't reach, with `{ sheet: false }` to add
+  none) and `revealRange` are the pieces;
   `useTextSearch(scroller, content)` puts them together for a pane.
 
 ## Help

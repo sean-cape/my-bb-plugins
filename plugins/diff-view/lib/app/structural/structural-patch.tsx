@@ -28,8 +28,12 @@ import { CONTEXT_LINES, hunkSpan, structuralRows, visibleRows } from "./rows";
 import { IDENTIFIER } from "./structural-line";
 import { EXPAND_STEP_LINES, GapRow, StructuralRowView, UnifiedRowView, type RowContext } from "./structural-row";
 import { shikiLangFor, useShikiTokens } from "./syntax";
-import { tableEntries, unifiedRows } from "./unified-rows";
+import { tableEntries, unifiedHalf, unifiedRows } from "./unified-rows";
 import { CommitRangeContext } from "../commits/commit-picker";
+
+/** Column widths: the gutters pinned, the code columns sharing the rest (one column in unified, under both gutters). */
+const SPLIT_COLUMNS = ["w-12", "", "w-12", ""];
+const UNIFIED_COLUMNS = ["w-12", "w-12", ""];
 
 /** The hidden row whose lines a fold's cursor takes: the one next to the code the fold opens toward. */
 function foldCursorIndex(entry: { from: number; to: number }): number {
@@ -161,8 +165,8 @@ export function StructuralPatch({
     const rowElement = (row: number) => {
       const entry = entries[row];
       if (entry === undefined) return null;
-      const half = layout === "unified" && entry.kind === "row" && (entry.row.lhs === null || entry.row.rhs === null) ? `[data-side="${entry.row.rhs === null ? "LEFT" : "RIGHT"}"]` : "";
-      const selector = entry.kind === "row" ? `[data-row="${entry.row.index}"]${half}` : `[data-gap="${entry.from}"]`;
+      const half = entry.kind === "row" ? unifiedHalf(entry.row, layout === "unified") : null;
+      const selector = entry.kind === "row" ? `[data-row="${entry.row.index}"]${half === null ? "" : `[data-side="${half}"]`}` : `[data-gap="${entry.from}"]`;
       return tableRef.current?.querySelector(selector) ?? null;
     };
     const linesOf = (index: number) => ({ left: rows[index]!.lhs, right: rows[index]!.rhs });
@@ -420,7 +424,7 @@ export function StructuralPatch({
     if (entry.hunkStart !== null) body.push(hunkHeader(entry.hunkStart));
     const RowView = unified ? UnifiedRowView : StructuralRowView;
     // Both halves of a modified pair in unified share the aligned row; the peek opens under one, the new half where there is one.
-    const half = unified && (row.lhs === null || row.rhs === null) ? (row.rhs === null ? "LEFT" : "RIGHT") : null;
+    const half = unifiedHalf(row, unified);
     const peekHere = half !== "LEFT" || rows[row.index]!.rhs === null;
     body.push(
       <Fragment key={half === null ? row.index : `${row.index}:${half}`}>
@@ -467,20 +471,11 @@ export function StructuralPatch({
       <div>
         <table ref={tableRef} className="w-full table-fixed border-collapse font-mono text-[12px] leading-5 [tab-size:4]">
           {/* table-fixed sizes columns from the first row, where an empty side is one colSpan=2 cell; pin the gutters here instead. */}
-          {unified ? (
-            <colgroup>
-              <col className="w-12" />
-              <col className="w-12" />
-              <col />
-            </colgroup>
-          ) : (
-            <colgroup>
-              <col className="w-12" />
-              <col />
-              <col className="w-12" />
-              <col />
-            </colgroup>
-          )}
+          <colgroup>
+            {(unified ? UNIFIED_COLUMNS : SPLIT_COLUMNS).map((width, index) => (
+              <col key={index} className={width === "" ? undefined : width} />
+            ))}
+          </colgroup>
           <tbody>{body}</tbody>
         </table>
       </div>

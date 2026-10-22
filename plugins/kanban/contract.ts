@@ -399,10 +399,11 @@ export const rpcContract = defineRpcContract({
   },
   /**
    * Applies suggested changes: one commit on a PR card's head branch (then its applied GitHub threads resolve), else
-   * the card thread's checkout, uncommitted. Refused whole when any item's lines moved.
+   * the card thread's checkout, uncommitted. Refused whole when any item's lines moved, or the branch moved past the
+   * head the items were read at. A null or blank message commits with GitHub's default.
    */
   suggestions_apply: {
-    input: z.object({ ticketId: z.string(), items: z.array(suggestionItemSchema).min(1).max(200), message: z.string().trim().min(1).max(2_000).nullable().default(null) }).strict(),
+    input: z.object({ ticketId: z.string(), items: z.array(suggestionItemSchema).min(1).max(200), message: z.string().max(2_000).nullable().default(null) }).strict(),
     output: z.object({ applied: z.number().int(), commitUrl: z.string().nullable() }),
   },
   /** The diff's commits (the PR's, or the local checkout's with uncommitted changes last) and review marks, for `gr`. */

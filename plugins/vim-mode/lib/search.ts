@@ -92,9 +92,19 @@ export function revealRange(scroller: HTMLElement, range: Range, at = 1 / 3): vo
 }
 
 export interface SearchHighlights {
-  /** Paints every match, and `current` brighter; -1 for none current. */
-  show(ranges: readonly Range[], current: number): void;
+  /**
+   * Paints every match, and the current one brighter: an index into `ranges` (-1 or null for none current), or a Range
+   * of its own, for a caller that finds the current match apart from the list.
+   */
+  show(ranges: readonly Range[], current: number | Range | null): void;
   clear(): void;
+  /** The `::highlight()` rules, for roots the document's own sheet doesn't reach (a shadow root) or a caller that renders its own. */
+  readonly css: string;
+}
+
+export interface SearchHighlightOptions {
+  /** Adds the rules to the document's head on the first `show`; false leaves them to the caller, through `css`. Default true. */
+  sheet?: boolean;
 }
 
 let highlightCount = 0;
@@ -108,10 +118,12 @@ export function createSearchHighlights(
   doc: Document,
   prefix: string,
   style: { match: string; current: string } = { match: "background-color: rgb(245 158 11 / 0.3);", current: "background-color: rgb(245 158 11 / 0.8); color: black;" },
+  options: SearchHighlightOptions = {},
 ): SearchHighlights {
   const id = `${prefix}-${++highlightCount}`;
   const matchName = `${id}-match`;
   const currentName = `${id}-current`;
+  const css = `::highlight(${matchName}) { ${style.match} } ::highlight(${currentName}) { ${style.current} }`;
   // Typed by hand: the registry's map methods come from DOM.Iterable, which some plugins' tsconfigs leave out.
   const registry = doc.defaultView?.CSS?.highlights as { set(name: string, highlight: Highlight): unknown; delete(name: string): unknown } | undefined;
   const Highlight = (doc.defaultView as (Window & { Highlight?: typeof globalThis.Highlight }) | null)?.Highlight;
@@ -121,11 +133,12 @@ export function createSearchHighlights(
     registry?.delete(currentName);
   };
   return {
+    css,
     show(ranges, current) {
       if (registry === undefined || Highlight === undefined) return;
-      if (sheet === null || !sheet.isConnected) {
+      if (options.sheet !== false && (sheet === null || !sheet.isConnected)) {
         sheet = doc.createElement("style");
-        sheet.textContent = `::highlight(${matchName}) { ${style.match} } ::highlight(${currentName}) { ${style.current} }`;
+        sheet.textContent = css;
         doc.head.append(sheet);
       }
       if (ranges.length === 0) {
@@ -133,7 +146,7 @@ export function createSearchHighlights(
         return;
       }
       registry.set(matchName, new Highlight(...ranges));
-      const now = ranges[current];
+      const now = current === null ? undefined : typeof current === "number" ? ranges[current] : current;
       if (now === undefined) registry.delete(currentName);
       else registry.set(currentName, new Highlight(now));
     },

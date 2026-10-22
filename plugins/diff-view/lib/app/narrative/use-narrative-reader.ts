@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { NarrativeStory } from "../../types";
+import { withMembers } from "../sets";
 import { readPreference, useDiffPreferences, writePreference } from "../state";
 import { affectedAddress, buildChapters, initialAddress, moveChapter, movePage, narratedFiles, pages, searchSteps, type NarrativeChapter, type StepAddress } from "./chapters";
 import { stepExcerpts, type StepExcerpt } from "./excerpts";
@@ -88,8 +89,7 @@ export function useNarrativeReader({ story, instanceKey, currentPaths, viewed }:
     setOutlineState(open);
     writePreference("narrativeOutline", String(open));
   };
-  const setCollapsed = (paths: readonly string[], isCollapsed: boolean) =>
-    setCollapsedState((current) => (paths.every((path) => current.has(path) === isCollapsed) ? current : new Set(isCollapsed ? [...current, ...paths] : [...current].filter((path) => !paths.includes(path)))));
+  const setCollapsed = (paths: readonly string[], isCollapsed: boolean) => setCollapsedState((current) => withMembers(current, paths, isCollapsed));
 
   const all = pages(chapters);
   const position = address === null ? 0 : all.findIndex((page) => page.chapter === address.chapter && page.step === address.step) + 1;

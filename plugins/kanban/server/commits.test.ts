@@ -33,4 +33,10 @@ describe("reviewMarks", () => {
     expect(reviewMarks(commits, sha(9), [review("me", sha(8), "APPROVED", "2026-10-02T00:00:00Z")], "me")).toEqual([]);
     expect(reviewMarks(commits, null, [review("me", sha(2), "APPROVED", "2026-10-02T00:00:00Z")], null)).toEqual([]);
   });
+
+  it("leaves out a mark at the head, which has nothing after it, but not one before uncommitted changes", () => {
+    expect(reviewMarks(commits, sha(3), [review("me", sha(3), "APPROVED", "2026-10-02T00:00:00Z")], "me")).toEqual([]);
+    const withWorktree = [...commits, { sha: "WORKTREE", summary: "Uncommitted changes", author: "", date: "" }];
+    expect(reviewMarks(withWorktree, sha(3), null, null)).toEqual([{ sha: sha(3), label: "Since last review" }]);
+  });
 });

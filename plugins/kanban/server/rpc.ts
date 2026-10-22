@@ -150,7 +150,10 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
     diff_comment_update: (input) => diffComments.updateDiffComment(input),
     diff_comment_delete: ({ id }) => diffComments.deleteDiffComment(id),
     diff_comments_submit: (input) => diffComments.submitDiffComments(input),
-    comments_list: ({ ticketId }) => prComments.listComments(ticketId),
+    comments_list: async ({ ticketId }) => {
+      await prComments.syncIfUnsynced(ticketId);
+      return prComments.listComments(ticketId);
+    },
     comment_set_selected: ({ id, selected }) => prComments.setSelected(id, selected),
     comment_set_addressed: ({ id, addressed }) => prComments.setAddressed(id, addressed),
     comment_set_resolved: ({ id, resolved }) => prComments.setResolved(id, resolved),

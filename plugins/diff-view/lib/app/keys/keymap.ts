@@ -252,7 +252,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
   {
     title: "Suggested changes",
     keys: [
-      { keys: ["I"], action: "Suggest a change to the line (or the selected new-side lines): a comment holding their text in a suggestion block to edit (⌘⇧S in any comment box inserts one)" },
+      { keys: ["I"], action: "Suggest a change to the line (or the selected new-side lines): a comment holding their text in a suggestion block to edit (a comment box's Suggest button inserts one)" },
       { keys: ["A"], action: "Apply the suggestion under the cursor now: a comment thread's, or a review finding's (which marks the finding applied)" },
       { keys: ["B"], action: "Add that suggestion to the batch, or take it out" },
       { keys: ["gB"], action: "Apply the batch: every suggestion in it at once (one commit on a pull request)" },

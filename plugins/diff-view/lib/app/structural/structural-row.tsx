@@ -8,6 +8,7 @@ import type { MovedRow } from "./moves";
 import type { StructuralRow } from "./rows";
 import { StructuralLine } from "./structural-line";
 import type { LineTokens } from "./syntax";
+import { hangingIndent } from "../text/hanging-indent";
 
 type LineChanges = StructuralDiff["oldChanges"][number];
 
@@ -90,8 +91,6 @@ function CodeCell({ context, line, side, movedRow, tint, atCursor, bothSides = f
   const sideLine = movedRow !== null ? null : ((side === "LEFT" ? context.oldChanges : context.newChanges).get(line) ?? null);
   const text = lines[line - 1] ?? "";
   const lineTokens = (side === "LEFT" ? context.oldTokens : context.newTokens)?.[line - 1] ?? null;
-  // A wrapped line continues under its own first character, not at the margin, as an editor wraps; tabs count four.
-  const indent = (/^[ \t]*/u.exec(text)?.[0] ?? "").replace(/\t/gu, "    ").length;
   const movedLabel =
     movedRow !== null && movedRow.first ? (
       <button
@@ -106,7 +105,7 @@ function CodeCell({ context, line, side, movedRow, tint, atCursor, bothSides = f
   return (
     <td className={cn("whitespace-pre-wrap pl-2 pr-3 align-top", tint, atCursor && CURSOR_RING)} data-cursor={atCursor ? "" : undefined}>
       {movedLabel}
-      <span className="block" data-line-text={bothSides ? "LEFT RIGHT" : side} style={indent > 0 ? { paddingLeft: `${indent}ch`, textIndent: `-${indent}ch` } : undefined}>
+      <span className="block" data-line-text={bothSides ? "LEFT RIGHT" : side} style={hangingIndent(text)}>
         <StructuralLine text={text} changes={sideLine} tokens={lineTokens} side={side} onSymbol={context.onSymbol} onSymbolHover={context.onSymbolHover} />
       </span>
     </td>

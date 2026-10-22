@@ -56,7 +56,8 @@ function useThreadDiffSource(threadId: string): DiffSource {
       },
       loadPatch: async (path, range) => (await rpc.call("diff_load_patch", { threadId, path, range: range ?? null })).patch,
       blame: async (path, side, startLine, endLine, range) => (await rpc.call("diff_blame", { threadId, path, side, startLine, endLine, range: range ?? null })).lines,
-      suggestions: { apply: (items, message) => rpc.call("diff_suggestions_apply", { threadId, items, message }) },
+      // The checkout's changes stay uncommitted, so a commit message has nowhere to go.
+      suggestions: { apply: (items) => rpc.call("diff_suggestions_apply", { threadId, items }) },
       commits: () => rpc.call("diff_commits", { threadId }),
     }),
     [rpc, threadId],

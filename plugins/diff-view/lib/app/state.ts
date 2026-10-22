@@ -36,6 +36,11 @@ export interface DiffPreferences {
   hideThreads: boolean;
 }
 
+/** Split for unified and unified for split, for the layout toggles. */
+export function otherLayout(layout: DiffPreferences["layout"]): DiffPreferences["layout"] {
+  return layout === "split" ? "unified" : "split";
+}
+
 function createStore<T>(initial: T) {
   let state = initial;
   const listeners = new Set<() => void>();

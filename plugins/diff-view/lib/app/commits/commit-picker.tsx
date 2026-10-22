@@ -1,14 +1,15 @@
 // The commit picker (`gr`) and the summary bar's control naming what it picked.
-import { createContext, useEffect, useId, useRef, useState } from "react";
+import { createContext, useEffect, useId, useMemo, useState } from "react";
 import type { CommitRange, DiffCommits } from "../../types";
 import { WORKTREE_SHA } from "../../types";
 import { relativeTime } from "../format";
 import type { DiffSource } from "../source";
 import { useDiffInstance } from "../state";
 import { FAST, PRESS, enter } from "../ui/motion";
+import { usePopover } from "../ui/use-popover";
 import { usePickerKeys } from "../ui/vim-keys";
 import { cn } from "../utils";
-import { COMMIT_PICKER_KEYMAP, commitsRange, markRange, pickerRows, rangeKey, rangeSpan, shortCommit, type CommitRow } from "./commit-range";
+import { COMMIT_PICKER_KEYMAP, collapsedRangeNote, pickedRange, pickerRows, rangeEndsAtHead, rangeGate, rangeKey, rangeSpan, shortCommit, toggledRangeStart, type CommitRow } from "./commit-range";
 
 /** The part of the history the view shows, for the renderers that fetch a file's diff themselves. */
 export const CommitRangeContext = createContext<CommitRange | null>(null);
@@ -36,6 +37,15 @@ export function useDiffCommits(source: DiffSource, instanceKey: string): DiffCom
     };
   }, [source, reloadNonce]);
   return commits;
+}
+
+/** The part of the history the view shows (null is all the changes), its commits, and what the range lets the view do. */
+export function useCommitRange(source: DiffSource, instanceKey: string) {
+  const [range, setRange] = useState<CommitRange | null>(null);
+  const commits = useDiffCommits(source, instanceKey);
+  const atHead = rangeEndsAtHead(range, commits);
+  const gate = useMemo(() => rangeGate(range, atHead), [range, atHead]);
+  return { range, setRange, commits, atHead, gate };
 }
 
 /** The summary bar's "Commits" control: what the diff covers, opening the picker on press (as `gr` does). */
@@ -68,7 +78,8 @@ export function CommitPicker({
 }: {
   commits: DiffCommits;
   current: CommitRange | null;
-  onPick: (range: CommitRange | null) => void;
+  /** `note` says why a started range came out as one commit or all of them. */
+  onPick: (range: CommitRange | null, note: string | null) => void;
   onClose: () => void;
   notify: (message: string) => void;
 }) {
@@ -80,10 +91,9 @@ export function CommitPicker({
     return at === -1 ? 0 : at;
   });
   const [start, setStart] = useState<number | null>(null);
-  const listRef = useRef<HTMLUListElement | null>(null);
+  const { ref: listRef, onBlur } = usePopover<HTMLUListElement>({ onDismiss: onClose });
   const optionId = useId();
   const now = Date.now();
-  useEffect(() => listRef.current?.focus({ preventScroll: true }), []);
   useEffect(() => {
     listRef.current?.children[highlight]?.scrollIntoView({ block: "nearest" });
   }, [highlight]);
@@ -91,18 +101,14 @@ export function CommitPicker({
   const pickRow = (index: number) => {
     const row = rows[index];
     if (row === undefined) return;
-    if (row.kind === "all") return onPick(null);
-    const range = row.kind === "mark" ? markRange(commits, row.sha) : commitsRange(commits, start ?? row.index, row.index);
+    const range = pickedRange(commits, row, start);
     if (range === undefined) notify("Where the first commit starts from is unknown; pick a later commit");
-    else onPick(range);
+    else onPick(range, collapsedRangeNote(commits, row, start));
   };
   const markStart = (index: number) => {
-    const row = rows[index];
-    if (row?.kind !== "commit") {
-      notify("Ranges run between commits; move onto one first");
-      return;
-    }
-    setStart((at) => (at === row.index ? null : row.index));
+    const next = toggledRangeStart(rows[index], start);
+    if (next === undefined) notify("Ranges run between commits; move onto one first");
+    else setStart(next);
   };
   const { onListKeyDown } = usePickerKeys<"mark">({
     length: () => rows.length,
@@ -115,7 +121,10 @@ export function CommitPicker({
       return true;
     },
     keymap: COMMIT_PICKER_KEYMAP,
-    onCommand: () => markStart(highlight),
+    // A held Space would toggle the start straight back off.
+    onCommand: (_, { event }) => {
+      if (!event.repeat) markStart(highlight);
+    },
   });
   const highlighted = rows[highlight];
   const pending = start !== null && highlighted?.kind === "commit" ? [Math.min(start, highlighted.index), Math.max(start, highlighted.index)] : null;
@@ -136,9 +145,7 @@ export function CommitPicker({
         aria-activedescendant={`${optionId}-${highlight}`}
         className="overflow-y-auto py-1 text-xs outline-none"
         onKeyDown={onListKeyDown}
-        onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget)) onClose();
-        }}
+        onBlur={onBlur}
       >
         {rows.map((row, index) => {
           const covered = row.kind === "commit" && (pending !== null ? row.index >= pending[0]! && row.index <= pending[1]! : span !== null && row.index >= span[0] && row.index <= span[1]);
@@ -197,8 +204,7 @@ function CommitRowLabel({ row, commits, now }: { row: CommitRow; commits: DiffCo
 
 /** The range a row picks on its own, to tick the current one. */
 function rowRangeKey(row: CommitRow, commits: DiffCommits): string | null {
-  if (row.kind === "all") return rangeKey(null);
-  const range = row.kind === "mark" ? markRange(commits, row.sha) : commitsRange(commits, row.index, row.index);
+  const range = pickedRange(commits, row, null);
   return range === undefined ? null : rangeKey(range);
 }
 

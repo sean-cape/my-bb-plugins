@@ -3,7 +3,7 @@ import type { DiffSide } from "../../types";
 import type { Cursor } from "../keys/nav";
 import type { ReviewKeys } from "../keys/review-keys-context";
 import { compileSearch } from "../ui/vim-keys-core";
-import { textRanges } from "../ui/vim-keys";
+import { createSearchHighlights, textRanges } from "../ui/vim-keys";
 import { cursorOnMatch, searchDiff, stepMatch, type DiffMatch, type SearchedFile } from "./diff-search";
 
 /**
@@ -11,8 +11,6 @@ import { cursorOnMatch, searchDiff, stepMatch, type DiffMatch, type SearchedFile
  * page's rules don't reach.
  */
 export const SearchHighlightCss = createContext("");
-
-let instances = 0;
 
 /** What the review keys see of the search: `n`/`N` step it, Escape clears its highlights. */
 export interface TextSearchEnv {
@@ -44,11 +42,9 @@ export function useDiffSearch({ keys, files, scroller, painting }: { keys: Revie
   const preview = typing !== null && search !== null ? (stepMatch(search, typing.from, null, 1, 1, true)?.index ?? null) : null;
   const shownIndex = typing !== null ? preview : current !== null && current < total ? current : null;
 
-  const [names] = useState(() => {
-    const id = `diff-search-${++instances}`;
-    return { match: `${id}-match`, current: `${id}-current` };
-  });
-  const css = `::highlight(${names.match}) { background-color: rgb(245 158 11 / 0.3); } ::highlight(${names.current}) { background-color: rgb(245 158 11 / 0.8); color: black; }`;
+  // The view renders the rules itself, in its root and in each Pierre shadow root, so the library adds no sheet.
+  const [highlights] = useState(() => createSearchHighlights(document, "diff-search", undefined, { sheet: false }));
+  const css = highlights.css;
 
   const latest = useRef({ search, pattern, shownIndex, active: painting && (highlighted || typing !== null) });
   latest.current = { search, pattern, shownIndex, active: painting && (highlighted || typing !== null) };
@@ -57,12 +53,9 @@ export function useDiffSearch({ keys, files, scroller, painting }: { keys: Revie
   const observer = useRef<MutationObserver | null>(null);
 
   const paint = () => {
-    const registry = (CSS as unknown as { highlights?: { set(name: string, highlight: Highlight): unknown; delete(name: string): unknown } }).highlights;
-    if (registry === undefined || typeof Highlight === "undefined") return;
     const { search: now, pattern: regex, shownIndex: at, active } = latest.current;
     if (!active || now === null || regex === null) {
-      registry.delete(names.match);
-      registry.delete(names.current);
+      highlights.clear();
       return;
     }
     const want: DiffSide = keys.get().cursor?.want ?? "RIGHT";
@@ -104,9 +97,7 @@ export function useDiffSearch({ keys, files, scroller, painting }: { keys: Revie
         if (reached === side || (reached !== null && currentRange === null)) currentRange = range;
       }
     });
-    registry.set(names.match, new Highlight(...all));
-    if (currentRange === null) registry.delete(names.current);
-    else registry.set(names.current, new Highlight(currentRange));
+    highlights.show(all, currentRange);
     // Pierre and the syntax highlighter replace text nodes after they first draw, which leaves ranges pointing nowhere.
     const root = scroller();
     if (root !== null && observer.current !== null) {
@@ -148,11 +139,9 @@ export function useDiffSearch({ keys, files, scroller, painting }: { keys: Revie
   useEffect(
     () => () => {
       cancelAnimationFrame(frame.current);
-      const registry = (CSS as unknown as { highlights?: { delete(name: string): unknown } }).highlights;
-      registry?.delete(names.match);
-      registry?.delete(names.current);
+      highlights.clear();
     },
-    [names],
+    [highlights],
   );
 
   const env: TextSearchEnv | null =

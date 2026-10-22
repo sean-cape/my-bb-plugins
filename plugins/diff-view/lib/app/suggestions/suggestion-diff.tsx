@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import { parseCommentBody } from "../../suggestions";
 import { cn } from "../utils";
+import { hangingIndent } from "../text/hanging-indent";
 
 /**
  * A suggested change as a small diff: the lines it replaces (`expected`, null when they are not known here) as
@@ -12,12 +13,16 @@ export function SuggestionDiff({ expected, replacement, startLine, label = "Sugg
     <div key={key} className={cn("flex min-w-0", mark === "-" ? "bg-red-500/10" : "bg-emerald-500/10")}>
       <span className={cn("w-10 shrink-0 select-none pr-1.5 text-right tabular-nums text-muted-foreground", mark === "-" ? "bg-red-500/15" : "bg-emerald-500/15")}>{line ?? ""}</span>
       <span className="w-4 shrink-0 select-none text-center text-muted-foreground">{mark}</span>
-      <span className="min-w-0 whitespace-pre-wrap break-words pr-2">{text === "" ? " " : text}</span>
+      {/* break-normal: a thread's card breaks words, and that inherits. */}
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-normal pr-2" style={hangingIndent(text)}>
+        {text === "" ? " " : text}
+      </span>
     </div>
   );
   const at = (offset: number) => (startLine === null ? null : startLine + offset);
   return (
-    <div data-suggestion="" className="my-1 overflow-hidden rounded-md border border-border font-mono text-xs leading-5">
+    // Lines wrap only at spaces, so a long identifier scrolls the block sideways instead of breaking.
+    <div data-suggestion="" className="my-1 overflow-x-auto rounded-md border border-border font-mono text-xs leading-5">
       <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-2 py-0.5 font-sans text-[11px] text-muted-foreground">
         <span>{label}</span>
         {expected === null ? <span className="italic">the lines it replaces aren't in this diff</span> : null}

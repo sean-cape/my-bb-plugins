@@ -1,10 +1,11 @@
 // The "Filter files" menu, opened by `gf` or the funnel on the file list: j / k move, Space or Enter ticks, Escape closes.
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { DiffFile } from "../../types";
 import {
   CHANGE_TYPE_LABEL,
+  FILE_FILTER_MENU_KEYMAP,
   NO_EXTENSION,
   NO_FILE_FILTER,
   fileFilterActive,
@@ -12,16 +13,18 @@ import {
   toggleChangeType,
   toggleExtension,
   type FileFilter,
+  type FileFilterMenuCommand,
   type FileMarks,
 } from "../file-filter";
 import { usePortalScopeProps } from "../portal-scope";
 import { FAST, PRESS, enter } from "../ui/motion";
-import { useMenuKeys } from "../ui/vim-keys";
+import { popoverPlace } from "../ui/popover-place";
+import { usePopover } from "../ui/use-popover";
+import { useKeyHandler, useMenuKeys } from "../ui/vim-keys";
 import { cn } from "../utils";
 
 const MENU_WIDTH_PX = 248;
-const ANCHOR_GAP_PX = 4;
-const VIEWPORT_MARGIN_PX = 8;
+const MENU_ITEM = '[role^="menuitem"]';
 
 /** Marks the funnel buttons, so focus moving onto one keeps the menu open for the button's own toggle. */
 export const FILE_FILTER_BUTTON = "data-file-filter-button";
@@ -65,10 +68,6 @@ export function FileFilterButton({ active, onClick }: { active: boolean; onClick
   );
 }
 
-function place(anchor: DOMRect): { top: number; left: number } {
-  return { top: anchor.bottom + ANCHOR_GAP_PX, left: Math.max(VIEWPORT_MARGIN_PX, Math.min(anchor.left, window.innerWidth - MENU_WIDTH_PX - VIEWPORT_MARGIN_PX)) };
-}
-
 /**
  * Extensions and change types, ticked when shown, with every file of the diff counted; then hide viewed, only files with
  * comments, only files with findings (where the view has findings), and Clear. Ticking keeps the menu open.
@@ -93,13 +92,23 @@ export function FileFilterMenu({
   onClose: (refocus: boolean) => void;
 }) {
   const portalScope = usePortalScopeProps();
-  const menu = useRef<HTMLDivElement | null>(null);
+  const { ref: menu, onBlur } = usePopover<HTMLDivElement>({ firstRow: MENU_ITEM, onDismiss: () => onClose(false), keepOpenFor: `[${FILE_FILTER_BUTTON}]` });
   const menuKeys = useMenuKeys();
+  const ownKeys = useKeyHandler<FileFilterMenuCommand>({
+    keymap: FILE_FILTER_MENU_KEYMAP,
+    // The items are buttons; ticking here rather than by their own Space (on key up) and Enter ticks once and scrolls nothing.
+    leaveToPressables: false,
+    onCommand: (command, { target }) => {
+      if (command === "close") {
+        onClose(true);
+        return;
+      }
+      if (!(target instanceof HTMLElement) || !target.matches(MENU_ITEM)) return false;
+      if (target.getAttribute("aria-disabled") !== "true") target.click();
+    },
+  });
   const options = useMemo(() => filterOptions(files), [files]);
   const count = (paths: ReadonlySet<string>) => files.filter((file) => paths.has(file.path)).length;
-  useEffect(() => {
-    menu.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus({ preventScroll: true });
-  }, []);
   const active = fileFilterActive(filter);
   return createPortal(
     <div
@@ -108,29 +117,11 @@ export function FileFilterMenu({
       role="menu"
       aria-label="Filter files"
       className={cn("fixed z-50 flex max-h-[70vh] flex-col overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md", enter.scale, FAST)}
-      style={{ ...place(anchor), width: MENU_WIDTH_PX }}
+      style={{ ...popoverPlace(anchor, { width: MENU_WIDTH_PX }), width: MENU_WIDTH_PX }}
       onKeyDown={(event) => {
-        if (menuKeys(event)) return;
-        if (event.metaKey || event.altKey || event.ctrlKey) return;
-        if (event.key === "Escape" || event.key === "q") {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose(true);
-          return;
-        }
-        // Handled here rather than by the button's own Space (on key up) and Enter, so each ticks once and nothing scrolls.
-        if ((event.key === " " || event.key === "Enter") && event.target instanceof HTMLElement && event.target.matches('[role^="menuitem"]')) {
-          event.preventDefault();
-          event.stopPropagation();
-          if (event.target.getAttribute("aria-disabled") !== "true") event.target.click();
-        }
+        if (!menuKeys(event)) ownKeys(event);
       }}
-      onBlur={(event) => {
-        const next = event.relatedTarget;
-        if (next instanceof Node && event.currentTarget.contains(next)) return;
-        if (next instanceof Element && next.closest(`[${FILE_FILTER_BUTTON}]`) !== null) return;
-        onClose(false);
-      }}
+      onBlur={onBlur}
     >
       <Heading>File extensions</Heading>
       {options.extensions.map(({ value, count: files }) => (

@@ -3,14 +3,8 @@ import { toast } from "sonner";
 import type { DiffFile, DiffResult } from "../types";
 import { errorMessage } from "./format";
 import { startsCollapsed } from "./generated";
+import { flipped, withMembers } from "./sets";
 import type { DiffSource } from "./source";
-
-function toggled(set: ReadonlySet<string>, path: string, present: boolean): ReadonlySet<string> {
-  const next = new Set(set);
-  if (present) next.add(path);
-  else next.delete(path);
-  return next;
-}
 
 /**
  * Which files are marked viewed and which are collapsed. Viewed, generated and very large files start collapsed; marking
@@ -43,16 +37,15 @@ export function useFileMarks(source: DiffSource, diff: DiffResult | null, alsoCo
     );
   }, [source, viewedKey]);
   const markViewed = (path: string, isViewed: boolean) => {
-    setViewed((current) => toggled(current, path, isViewed));
-    setCollapsed((current) => toggled(current, path, isViewed));
+    setViewed((current) => withMembers(current, [path], isViewed));
+    setCollapsed((current) => withMembers(current, [path], isViewed));
     source.setViewed(path, isViewed).then(
       (paths) => setViewed(new Set(paths)),
       (cause: unknown) => toast.error(errorMessage(cause)),
     );
   };
-  const toggleCollapsed = (path: string) => setCollapsed((current) => toggled(current, path, !current.has(path)));
-  const expand = (path: string) => setCollapsed((current) => (current.has(path) ? toggled(current, path, false) : current));
-  const setCollapsedPaths = (paths: readonly string[], isCollapsed: boolean) =>
-    setCollapsed((current) => (paths.every((path) => current.has(path) === isCollapsed) ? current : new Set(isCollapsed ? [...current, ...paths] : [...current].filter((path) => !paths.includes(path)))));
+  const toggleCollapsed = (path: string) => setCollapsed((current) => flipped(current, path));
+  const expand = (path: string) => setCollapsed((current) => withMembers(current, [path], false));
+  const setCollapsedPaths = (paths: readonly string[], isCollapsed: boolean) => setCollapsed((current) => withMembers(current, paths, isCollapsed));
   return { viewed, collapsed, markViewed, toggleCollapsed, expand, setCollapsedPaths };
 }

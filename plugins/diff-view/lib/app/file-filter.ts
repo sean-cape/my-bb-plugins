@@ -1,6 +1,8 @@
 // The files view's file filter, as GitHub's "Filter" menu on Files changed: which extensions and change types show,
 // and whether viewed files, files without comments and files without findings are left out.
 import type { DiffFile } from "../types";
+import { flipped } from "./sets";
+import type { Keymap } from "./ui/vim-keys-core";
 
 export type ChangeType = "added" | "modified" | "renamed" | "deleted";
 
@@ -95,19 +97,12 @@ export function filterOptions(files: readonly Pick<DiffFile, "path" | "status">[
   };
 }
 
-function toggled<Value>(set: ReadonlySet<Value>, value: Value): ReadonlySet<Value> {
-  const next = new Set(set);
-  if (next.has(value)) next.delete(value);
-  else next.add(value);
-  return next;
-}
-
 export function toggleExtension(filter: FileFilter, extension: string): FileFilter {
-  return { ...filter, hiddenExtensions: toggled(filter.hiddenExtensions, extension) };
+  return { ...filter, hiddenExtensions: flipped(filter.hiddenExtensions, extension) };
 }
 
 export function toggleChangeType(filter: FileFilter, type: ChangeType): FileFilter {
-  return { ...filter, hiddenChangeTypes: toggled(filter.hiddenChangeTypes, type) };
+  return { ...filter, hiddenChangeTypes: flipped(filter.hiddenChangeTypes, type) };
 }
 
 /**
@@ -146,3 +141,8 @@ export function subscribeFileFilters(listener: () => void): () => void {
     listeners.delete(listener);
   };
 }
+
+export type FileFilterMenuCommand = "tick" | "close";
+
+/** The filter menu's own keys, beside the menu's j / k / gg / G: Space or Enter ticks the focused item, Escape or q closes. */
+export const FILE_FILTER_MENU_KEYMAP: Keymap<FileFilterMenuCommand> = { "<Space>": "tick", "<CR>": "tick", "<Esc>": "close", q: "close" };

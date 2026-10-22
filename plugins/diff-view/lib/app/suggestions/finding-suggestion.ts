@@ -1,7 +1,7 @@
 import type { Finding, FindingSuggestion, LineRange, SuggestionItem } from "../../types";
-import { alreadyApplied, suggestionBlock } from "../../suggestions";
+import { suggestionBlock } from "../../suggestions";
 import type { InlineFinding } from "../findings/findings";
-import type { LinesAt } from "./thread-suggestion";
+import { suggestionLandedAt, type LinesAt, type SuggestionState } from "./thread-suggestion";
 
 const PREFIX = "finding:";
 
@@ -24,16 +24,9 @@ export function replacementLines(replacement: string): string[] {
 }
 
 /** What `A`, `B` and `gs` act on in a finding: its suggestion, and whether it can be applied or posted now. */
-export interface FindingSuggestionState {
+export interface FindingSuggestionState extends SuggestionState {
   id: string;
   suggestion: FindingSuggestion;
-  replacement: string[];
-  /** What applying it sends; null when it cannot be applied, `reason` saying why. */
-  item: SuggestionItem | null;
-  reason: string | null;
-  applied: boolean;
-  /** The lines it replaces as the diff shows them today; null when the diff leaves any out. */
-  current: string[] | null;
 }
 
 export function findingSuggestion(item: InlineFinding, linesAt: LinesAt, appliedIds: ReadonlySet<string> = new Set()): FindingSuggestionState | null {
@@ -43,9 +36,8 @@ export function findingSuggestion(item: InlineFinding, linesAt: LinesAt, applied
   const replacement = replacementLines(suggestion.replacement);
   const current = linesAt(suggestion.file, suggestion.startLine, suggestion.endLine);
   const found = { id, suggestion, replacement, current };
-  const applied =
-    appliedIds.has(id) ||
-    (replacement.length > 0 && alreadyApplied(linesAt(suggestion.file, suggestion.startLine, suggestion.startLine + replacement.length - 1), replacement));
+  // A review records only the replacement, not the lines it read, so a shrinking one is known applied by this session's record alone.
+  const applied = appliedIds.has(id) || suggestionLandedAt(linesAt, { path: suggestion.file, startLine: suggestion.startLine, endLine: suggestion.endLine, replacement });
   if (applied) return { ...found, item: null, reason: "Already applied", applied: true };
   if (current === null) return { ...found, item: null, reason: "The diff doesn't show all of the suggestion's lines", applied: false };
   return {

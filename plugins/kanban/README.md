@@ -332,7 +332,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   one continuous scroll with sticky, collapsible headers (as on GitHub), and a
   file list with per-file stats that jumps to a file and tracks the one in
   view. PR cards diff the pull request from GitHub (up to GitHub's 3,000-file
-  maximum; past it, a banner above the diff says how many files are missing);
+  maximum; past it, a banner above the diff says how many files are missing),
+  whose old side is the PR's merge base with its base branch, as on GitHub;
   thread-backed cards diff their environment against its merge base. A file
   GitHub sent without a patch (too large) shows "Load diff", which builds it
   from the file's two sides. The button, hover icon and `D` are
@@ -357,10 +358,11 @@ its PR is reviewed and its review findings and comments are handed to agents.
   the peek to drill into another symbol with a back trail, and "Open file"
   for bb's file preview. Without a checkout it falls back to GitHub code
   search.
-- **Links and blame**: `yl` copies GitHub permalinks at the PR's head (base
-  for old lines); `gO` opens a PR card's file on GitHub and a thread card's in
-  bb's file preview. `gb` blames from the card's local checkout when it has
-  the PR's commits (or a thread card's working tree and merge base), else
+- **Links and blame**: `yl` copies GitHub permalinks at the PR's head (its
+  merge base for old lines); `gO` opens a PR card's file on GitHub and a thread
+  card's in bb's file preview. `gb` blames the same two commits (a range's
+  merge base and end when commits are picked) from the card's local checkout
+  when it has them (or a thread card's working tree and merge base), else
   from GitHub's GraphQL blame.
 - **Suggested changes**: a ```` ```suggestion ```` block in any comment (a
   synced GitHub one or the board's own) shows as a small diff of the commented
@@ -370,16 +372,19 @@ its PR is reviewed and its review findings and comments are handed to agents.
   suggestions from code review", made through GitHub's git data API from the
   branch's tip and never forced, after which each applied GitHub thread is
   resolved; on a thread card it writes the thread's checkout, uncommitted.
-  Either way, if any suggestion's lines changed since it was made, nothing is
-  applied and the error names them. Comments with a suggestion reach the agent
-  with a line saying the block is the exact replacement.
+  Either way, if any suggestion's lines (or the line just above or below
+  them) changed since it was made, nothing is applied and the error names
+  them; a PR card also refuses once its branch has moved past the head the
+  diff was read at. Files that aren't UTF-8 text and symlinks are refused.
+  Comments with a suggestion reach the agent with a line saying the block is
+  the exact replacement.
 - **Commits** (`gr`, or the summary bar's Commits control): a PR card lists
   the pull request's commits (GitHub's `/pulls/{n}/commits`, up to 250) and
   reads a range through GitHub's compare (up to 300 files, with a banner past
   that); file sides come from the range's merge base and end. Its marks are
   "Since last review" (the card's latest completed review's commit) and "Since
   your last GitHub review" (your latest submitted review's commit), each when
-  that commit is in the PR. Thread cards list their local checkout's commits,
+  that commit is in the PR and is not its head. Thread cards list their local checkout's commits,
   uncommitted changes last, and read ranges with local git. Diffs are cached
   per card and range.
 - **Projects for every repository**: a PR card whose repository matches no
@@ -550,6 +555,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
   its synced GitHub copy.
 - **PR comments**: every sync pulls the PR's conversation comments, inline
   review comments (with replies threaded), and review summaries into the card.
+  The sync revisits open PRs; a closed or merged card whose comments were never
+  synced (or must be again after an upgrade) syncs once when its comments are
+  next listed. A card's syncs run one at a time.
   Each comment has a checkbox for the apply round (suggested: everything others
   wrote that is not yet addressed; approvals, drafts, and your own comments are
   left out) and an "addressed" mark. The card shows how many are still open.

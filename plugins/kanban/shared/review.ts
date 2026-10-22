@@ -39,8 +39,6 @@ export const VERIFIED_REPORT_VERSION = 2;
 export const NOT_COVERED_REPORT_VERSION = 3;
 /** The first report version whose verified, introduced findings were triaged; older ones keep the score heuristic. */
 export const TRIAGED_REPORT_VERSION = 4;
-/** The first report version whose findings may carry a `suggestion`, the fix as an exact edit of new-side lines. */
-export const SUGGESTION_REPORT_VERSION = 6;
 
 /**
  * Which finders a review runs: Quick has correctness, CLAUDE.md compliance, scope and style; Standard adds testing and

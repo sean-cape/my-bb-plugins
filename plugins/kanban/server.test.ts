@@ -3813,7 +3813,8 @@ describe("narrative review", () => {
     expect(story.stale).toBe(true);
 
     const second = (await current().harness.behavior.callRpc("narrative_generate", { ticketId: card.id })) as Narrative;
-    expect(compares).toEqual([`9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c...${head}`]);
+    // Leaving out the diff's reads of the PR's merge base.
+    expect(compares.filter((compare) => !compare.endsWith("?per_page=1"))).toEqual([`9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c...${head}`]);
     const secondPrompt = String(spawned.at(-1)!.prompt);
     expect(secondPrompt).toContain("`revision` chapter");
     expect(secondPrompt).toContain("git fetch origin 9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c");

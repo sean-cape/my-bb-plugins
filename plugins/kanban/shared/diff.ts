@@ -121,6 +121,9 @@ export const suggestionItemSchema = z.object({
   endLine: z.number().int().min(1),
   expected: z.array(z.string()),
   replacement: z.array(z.string()),
+  before: z.array(z.string()).max(10).optional(),
+  after: z.array(z.string()).max(10).optional(),
+  headSha: z.string().nullable().optional(),
 });
 export type SuggestionItem = z.infer<typeof suggestionItemSchema>;
 /** Part of the diff's history: after `from` (exclusive) up to `to`, which may be `WORKTREE` (uncommitted changes). */

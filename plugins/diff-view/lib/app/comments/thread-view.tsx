@@ -8,6 +8,7 @@ import { CHEVRON, FAST, OPACITY_TRANSITION, PRESS, enter, useOpenedSinceMount } 
 import { relativeTime } from "../format";
 import { useDiffSource } from "../source";
 import { longLineLabel, shortLineLabel } from "../../line-range";
+import { trimCommentBody } from "../../suggestions";
 import { DiffCommentForm } from "./comment-form";
 import { DiffCommentsContext } from "./context";
 import { isUnsent, localCommentState, threadIsOpen, threadKeyActions, type DiffThread, type LocalCommentState, type ThreadEntry } from "./threads";
@@ -15,6 +16,8 @@ import { returnToDiff, useIsFocused, useThreadControls } from "../keys/review-ke
 import { CARD_BODY, CARD_FOOTER, CARD_HEADER, SPANNING_CARD } from "../ui/spanning-card";
 import { SuggestionsContext } from "../suggestions/context";
 import { CommentBody } from "../suggestions/suggestion-diff";
+import { SuggestionBadge, SuggestionButtons } from "../suggestions/suggestion-actions";
+import { isInBatch, suggestionKeyHints } from "../suggestions/actions";
 import type { ThreadSuggestion } from "../suggestions/thread-suggestion";
 
 /** How an entry's suggestion blocks draw: over the thread's lines today, with the applying one's badges. */
@@ -24,8 +27,7 @@ interface EntrySuggestion {
 }
 
 function SuggestionBadges({ suggestion, inBatch }: EntrySuggestion) {
-  if (suggestion?.applied === true) return <Badge tone="success">applied</Badge>;
-  return inBatch ? <Badge tone="accent">in batch</Badge> : null;
+  return <SuggestionBadge applied={suggestion?.applied === true} inBatch={inBatch} />;
 }
 
 function EntryBody({ id, body, shown }: { id: string; body: string; shown: EntrySuggestion }) {
@@ -118,7 +120,7 @@ function ThreadEntryView({
     }
     setSaving(true);
     try {
-      await actions.onEdit(comment.id, draft.trim());
+      await actions.onEdit(comment.id, trimCommentBody(draft));
       returnToDiff(document.activeElement);
       setEditing(false);
     } finally {
@@ -206,12 +208,10 @@ function ThreadEntryView({
 /** The keys that act on the thread under the cursor, so they are discoverable without the `?` sheet. */
 function ThreadKeyHint({ thread, open, shown, suggestion }: { thread: DiffThread; open: boolean; shown: boolean; suggestion: EntrySuggestion }) {
   const { canPostToGithub, canResolve } = useContext(DiffCommentsContext);
-  const { apply } = useContext(SuggestionsContext);
+  const suggestions = useContext(SuggestionsContext);
   const actions = threadKeyActions(thread, canPostToGithub);
-  const applicable = apply !== null && suggestion.suggestion?.item != null;
   const hints = [
-    applicable ? "A apply suggestion" : null,
-    applicable ? (suggestion.inBatch ? "B unbatch" : "B batch") : null,
+    ...suggestionKeyHints(suggestions, suggestion.suggestion?.item ?? null),
     actions.canReply ? "a reply" : null,
     canResolve && actions.canResolve ? (thread.resolved === true ? "r unresolve" : "r resolve") : null,
     actions.ownUnsent !== null ? "e edit" : null,
@@ -236,8 +236,7 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
   const focused = useIsFocused("thread", thread.id);
   const suggestions = useContext(SuggestionsContext);
   const suggestion = suggestions.forThread(thread);
-  const applicable = suggestion?.item ?? null;
-  const inBatch = applicable !== null && suggestions.batch.some((item) => item.id === applicable.id);
+  const inBatch = isInBatch(suggestions.batch, suggestion?.item ?? null);
   const shown: EntrySuggestion = { suggestion, inBatch };
   const canResolve = actions.canResolve && threadKeyActions(thread, actions.canPostToGithub).canResolve;
   const setResolved = async (resolved: boolean) => {
@@ -352,28 +351,7 @@ export function DiffThreadView({ thread }: { thread: DiffThread }) {
                   {thread.resolved === true ? "Unresolve" : "Resolve"}
                 </button>
               ) : null}
-              {applicable !== null && suggestions.apply !== null ? (
-                <>
-                  <button
-                    type="button"
-                    className={cn(THREAD_ACTION, PRESS)}
-                    disabled={suggestions.busy}
-                    title="Apply this suggestion to the code now (A)"
-                    onClick={() => void suggestions.apply?.([applicable])}
-                  >
-                    Apply suggestion
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={inBatch}
-                    className={cn(THREAD_ACTION, PRESS, inBatch && "bg-state-active text-foreground")}
-                    title="Apply it with others in one go: Commit N suggestions above the diff, or gB (B)"
-                    onClick={() => suggestions.toggleBatch(applicable)}
-                  >
-                    {inBatch ? "Remove from batch" : "Add to batch"}
-                  </button>
-                </>
-              ) : null}
+              <SuggestionButtons actions={suggestions} item={suggestion?.item ?? null} applyTitle="Apply this suggestion to the code now (A)" />
             </div>
           )}
         </div>

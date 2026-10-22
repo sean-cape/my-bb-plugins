@@ -10,7 +10,7 @@ import { githubPages, prShortName, resolveToken, reviewThreadResolution, setRevi
 import type { Projects } from "../projects";
 import { locationLabel } from "bb-diff-view/line-range";
 import { SUGGESTION_NOTE, mentionsSuggestion } from "bb-diff-view/suggestions";
-import { parseStringArray, shortId, threadTitle } from "../util";
+import { createKeyedQueue, parseStringArray, shortId, threadTitle } from "../util";
 
 export function commentsBody(ticket: Ticket, comments: PrComment[]): string {
   const label = (comment: PrComment) =>
@@ -92,8 +92,36 @@ export function createPrComments(
   const { projectForTicket } = projects;
   const { codeReviewThreadVisibility } = codeReviewThreads;
 
-  /** Pull every comment kind for one PR and replace the ticket's stored set. */
-  async function syncPrComments(row: TicketRow, token: string, signal?: AbortSignal): Promise<void> {
+  const syncs = createKeyedQueue();
+  /**
+   * Pull every comment kind for one PR and replace the ticket's stored set. A card's syncs run one at a time, so one
+   * that read GitHub earlier never lands after a later one and puts back stale lines or deletes newer comments.
+   */
+  function syncPrComments(row: TicketRow, token: string, signal?: AbortSignal): Promise<void> {
+    return syncs.enqueue(row.id, () => syncNow(stmts.byId.get(row.id) ?? row, token, signal));
+  }
+
+  const backfilled = new Set<string>();
+  /**
+   * Syncs a card's comments once when they never were (or a migration asked for them again), whatever its PR's state:
+   * the sync loop only revisits open PRs, so a merged or closed card's comments would otherwise never get their hunks.
+   */
+  async function syncIfUnsynced(ticketId: string): Promise<void> {
+    const row = stmts.byId.get(ticketId);
+    if (row === undefined || row.pr_repo === null || row.pr_number === null || row.comments_synced_for !== null || backfilled.has(ticketId)) return;
+    const auth = await resolveToken(settings);
+    if (auth === null) return;
+    backfilled.add(ticketId);
+    try {
+      await syncPrComments(row, auth.token);
+      publish();
+    } catch (error) {
+      backfilled.delete(ticketId);
+      bb.log.warn(`could not sync comments for ${row.pr_repo}#${row.pr_number}: ${String(error)}`);
+    }
+  }
+
+  async function syncNow(row: TicketRow, token: string, signal?: AbortSignal): Promise<void> {
     if (row.pr_repo === null || row.pr_number === null) return;
     const base = `/repos/${row.pr_repo}`;
     const [issueComments, reviewComments, reviews, resolvedByRoot] = await Promise.all([
@@ -277,7 +305,7 @@ export function createPrComments(
     return parseStringArray(row.comment_ids).length;
   }
 
-  return { syncPrComments, spawnApplyForComments, listComments, setSelected, setAddressed, setResolved, completeApply };
+  return { syncPrComments, syncIfUnsynced, spawnApplyForComments, listComments, setSelected, setAddressed, setResolved, completeApply };
 }
 
 export type PrComments = ReturnType<typeof createPrComments>;

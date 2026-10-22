@@ -36,7 +36,9 @@ plugins embed.
   as a text diff. A binary file says so. When bb's diff of the thread is cut
   at its size limit, the view reads the whole diff from the local checkout
   instead; with no local checkout, a banner above the diff says how many files
-  came without their changes (each can still be loaded).
+  came without their changes (each can still be loaded). A loaded patch is
+  kept across a refresh only while the diff's head commit and the file's line
+  counts are unchanged, so a working tree's file is loaded again after one.
 - **File marks**: with a Nerd Font (see the nerd-font plugin), each file in the
   tree and on its header leads with one muted icon: a diff glyph when it was
   added, deleted, renamed or copied, its file type otherwise. Without one, the
@@ -57,22 +59,31 @@ plugins embed.
   new-side lines as they read today, removed, and the suggestion, added. `I`
   on a line or a `V` selection opens a comment holding those lines in a
   suggestion block with the caret inside it; in any comment box the
-  "Suggest" button, or ⌘⇧S, inserts one for its lines. On a thread whose
+  "Suggest" button inserts one for its lines. On a thread whose
   suggestion can still apply (not outdated or resolved, its lines in the
   diff), "Apply suggestion" or `A` applies it now, and "Add to batch" or `B`
   puts it in the batch (outlined, "in batch"); "Commit N suggestions" in the
   summary bar, or `gB`, applies the batch. Hosts with a checkout write its
   files (the diff-view plugin; kanban's thread cards); kanban's PR cards
   commit to the PR branch and resolve the applied threads. A suggestion
-  whose lines changed since is refused (nothing in the batch is applied),
-  an applied one says "applied", and the diff refreshes. Comments with a
-  suggestion reach the agent with a line saying the block is the exact
-  replacement for the lines.
+  whose lines, or the line just above or below them, changed since is
+  refused (nothing in the batch is applied), as is one made at a PR head
+  the branch has moved past, a file that isn't UTF-8 text, and a symlink. A
+  checkout's files are replaced whole (a temp file renamed over each), one
+  apply at a time, and put back if a later one fails. An applied one says
+  "applied" and the diff refreshes; a suggestion that drops lines from the
+  end of its range keeps reading as unapplied until it is applied from here,
+  or, on GitHub, until its lines differ from those it was left on. Comments
+  with a suggestion reach the agent with a line saying the block is the
+  exact replacement for the lines, and an unclosed block keeps its trailing
+  whitespace when the comment is saved. Suggestions also read a file whose
+  patch came through "Load diff".
 - **Comments view**: a third reading mode beside Files (and Narrative), shown
   once there is a thread, or `gc` (again to return where you were). It lists
   every thread grouped by file in diff order (open, resolved, outdated,
-  local and GitHub), each over its code: the commented lines of today's diff,
-  or for an outdated GitHub thread the hunk GitHub stored when it was left; a
+  local and GitHub), each over its code: the commented lines of today's diff
+  (with the lines they replaced, or a few either side in a run of only added
+  lines, such as a new file), or for an outdated GitHub thread the hunk GitHub stored when it was left; a
   thread with neither sits under its file's name. Chips (or `F` there) filter
   open, resolved, outdated or all. The files view's cursor and thread keys
   work on it (`j`/`k`, `c`, Enter, `a`, `r`, `e`, `dd`, `M`, `gx`, `go`), and
@@ -113,7 +124,9 @@ plugins embed.
   opens a picker of All changes, the host's review marks ("Since last
   review"), then every commit, oldest first: `j`/`k` move, Enter (or a click)
   picks one, Space or `x` (or a shift-click) on a commit starts a range and
-  Enter on another picks every commit between them, Escape closes. The diff
+  Enter on another picks every commit between them (Enter back on the first,
+  or across every commit, says it shows one commit or all changes), Escape
+  closes. The diff
   then shows only that part of the history and the control names it (`abc1234`,
   "3 commits", a mark). A partial range is for reading: comments and viewed
   marks work only when it ends at the head, and only on new-side lines, where
@@ -186,7 +199,8 @@ plugins embed.
   where the repository and commit are known, as on a PR, else
   `path:L10-14`. `gO` opens the file at the line in bb's file preview for a
   checkout, else on GitHub. `gb` shows who last changed the line or
-  selection, one row per commit (short sha, author, age, summary): `j`/`k`
+  selection, beside that side of the line, one row per commit (short sha,
+  author, age, summary): `j`/`k`
   move, Enter opens the commit on GitHub, Escape closes. A thread's blame
   reads its checkout: the working tree for new lines, the merge base for old.
   Each file header's "…" menu does the same by mouse for the whole file
@@ -264,11 +278,15 @@ dependency:
   `loadPatch(path)` adds "Load diff" to files that came without a patch.
   `commits()` adds the commit picker (`gr`); `getDiff`, `getStructural` and
   `loadPatch` then take a `CommitRange { from, to }` (`from` exclusive, `to`
-  possibly `WORKTREE`).
+  possibly `WORKTREE`). A new source object starts the view afresh (the commit
+  range, loaded patches and suggestion batch were picked over the old one), so
+  memoize it.
   `DiffResult.truncatedNote` is the banner's text for a truncated diff, and
   `DiffFile.binary` labels a file as binary. `suggestions.apply(items,
   message)` lights up `A`, `B` and `gB`: each `SuggestionItem` carries the
-  lines it expects, and the host refuses the call when any moved. A finding's
+  lines it expects, the lines just around them (`before`, `after`) and, on a
+  PR diff, the `headSha` it was read at, and the host refuses the call when
+  any moved; `message` is for a host that commits (null for its default). A finding's
   item has the id `finding:<reviewId>/<findingId>`; after it applies, the view
   calls `reviews.setApplied(reviewId, findingId, true)` when the source has it.
 - `bb-diff-view/suggestions`: finding suggestion blocks in a comment body,
@@ -285,8 +303,11 @@ dependency:
   repository) and file sides, `patchFromSides` (a file's patch from its two
   sides, for `loadPatch`), difftastic, `git grep` symbol search,
   `git blame`, and `applySuggestionsInCheckout`. A source with `blame` lights up `gb`; a diff's `repo` and shas
-  make `yl` links GitHub permalinks. For commit ranges: `environmentCommits`,
+  make `yl` links GitHub permalinks, and `blameRev` names the revision either
+  side of a diff or range is blamed at. For commit ranges: `environmentCommits`
+  (which finds the merge base itself when not given it),
   `environmentRangeDiff` and `environmentRangeFileSides` (local git),
   `checkedRange` (only shas reach git), and `createExpiringCache`, which the
-  plugin uses so one view's per-file calls share one diff read for 15 seconds.
+  plugin uses so one view's per-file calls share one diff read for 15 seconds
+  (never for a range ending at the working tree).
 - `bb-diff-view/types`: the data shapes.

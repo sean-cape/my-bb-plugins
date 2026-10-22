@@ -42,7 +42,7 @@ function storedReview(overrides: Partial<Review> = {}): Review {
 }
 
 describe("finding suggestions in review reports", () => {
-  it("reads a version 5 report, whose findings have no suggestion", () => {
+  it("reads a finding without a suggestion field, as reports before version 6 have, as having none", () => {
     const report = parseReviewReport(body(5, [finding()]));
     expect(report?.findings[0]?.suggestion).toBeNull();
   });

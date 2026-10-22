@@ -2,7 +2,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { DiffCommentTarget } from "../../types";
 import { longLineLabel } from "../../line-range";
-import { suggestionBlock, suggestionCaret, suggestionLines } from "../../suggestions";
+import { suggestionBlock, suggestionCaret, suggestionLines, trimCommentBody } from "../../suggestions";
 import { Button, COMPACT } from "../ui/button";
 import { cn } from "../utils";
 import { FAST, enter } from "../ui/motion";
@@ -12,11 +12,6 @@ import { SuggestionsContext } from "../suggestions/context";
 import { DiffCommentsContext } from "./context";
 import { returnToDiff } from "../keys/review-keys-context";
 import { CARD_HEADER, SPANNING_CARD } from "../ui/spanning-card";
-
-/** ⌘⇧S (Ctrl-Shift-S off a Mac) in a comment box inserts a suggestion block. */
-function isSuggestChord(event: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; key: string }): boolean {
-  return (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === "s";
-}
 
 export function DiffCommentForm({
   path,
@@ -79,7 +74,7 @@ export function DiffCommentForm({
     if (body.trim() === "") return;
     setPending(true);
     try {
-      await onSubmit(body.trim(), target);
+      await onSubmit(trimCommentBody(body), target);
       setBody("");
       returnToDiff(textareaRef.current);
       onCancel();
@@ -111,11 +106,6 @@ export function DiffCommentForm({
           onFocus={placeCaret}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void submit();
-            else if (isSuggestChord(event) && suggestable !== null) {
-              event.preventDefault();
-              event.stopPropagation();
-              insertSuggestion();
-            }
           }}
           placeholder={target === "github" ? "Comment for the PR (⌘↩ to add, Esc to cancel)" : "What should the agent change here? (⌘↩ to add, Esc to cancel)"}
           aria-label="Comment"
@@ -124,7 +114,7 @@ export function DiffCommentForm({
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           <span className="mr-auto min-w-0 text-[11px] text-muted-foreground">{target === "github" ? "Draft until you post it to the PR" : viewTarget === "github" && canPostToGithub ? labels.localOnlyThread : labels.localHint}</span>
           {suggestable !== null ? (
-            <span title="Insert a suggestion block holding these lines, to edit into the change you mean (⌘⇧S)">
+            <span title="Insert a suggestion block holding these lines, to edit into the change you mean">
               <Button type="button" variant="ghost" className={COMPACT} onClick={insertSuggestion}>
                 <Icon name="diff-view-diff" className="size-3.5" />
                 Suggest

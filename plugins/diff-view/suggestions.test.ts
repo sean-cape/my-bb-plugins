@@ -12,7 +12,7 @@ import type { FileNavModel } from "./lib/app/keys/review-keys-context";
 import { NO_SUGGESTIONS, type SuggestionActions } from "./lib/app/suggestions/actions";
 import { threadSuggestion, type LinesAt } from "./lib/app/suggestions/thread-suggestion";
 import { applySuggestionsInCheckout } from "./lib/server";
-import { alreadyApplied, applySuggestionsToText, newSideLines, parseCommentBody, suggestionBlock, suggestionBlocks, suggestionCaret, suggestionLines } from "./lib/suggestions";
+import { applySuggestionsToText, suggestionLanded, newSideLines, parseCommentBody, suggestionBlock, suggestionBlocks, suggestionCaret, suggestionLines } from "./lib/suggestions";
 import type { DiffComment, SuggestionItem } from "./lib/types";
 import { commentsMessage } from "./server";
 
@@ -74,10 +74,17 @@ describe("applySuggestionsToText", () => {
     expect(() => applySuggestionsToText(text, [item(1, 2, ["one", "two"], ["x"]), item(2, 2, ["two"], ["y"])])).toThrow(/overlaps a\.ts:L1-2/u);
   });
 
-  it("knows lines already reading as the replacement", () => {
-    expect(alreadyApplied(["A", "B", "c"], ["A", "B"])).toBe(true);
-    expect(alreadyApplied(["A"], ["A", "B"])).toBe(false);
-    expect(alreadyApplied(null, ["A"])).toBe(false);
+  it("knows lines already reading as the replacement, but not a shrink that keeps the range's first lines", () => {
+    const landed = (current: string[] | null, atReplacement: string[] | null, replacement: string[], original: string[] | null = null) => suggestionLanded({ rangeLength: 2, current, atReplacement, replacement, original });
+    expect(landed(["A", "B"], ["A", "B"], ["A", "B"])).toBe(true);
+    expect(landed(["A", "c"], ["A", "c", "d"], ["A", "B", "C"])).toBe(false);
+    expect(landed(null, null, ["A"])).toBe(false);
+    // L2-3 "foo();", "debug();" -> "foo();": the lines before applying already start with the replacement.
+    expect(landed(["foo();", "debug();"], ["foo();"], ["foo();"])).toBe(false);
+    expect(landed(["foo();", "debug();"], ["foo();"], ["foo();"], ["foo();", "debug();"])).toBe(false);
+    expect(landed(["foo();", "next();"], ["foo();"], ["foo();"], ["foo();", "debug();"])).toBe(true);
+    // Keeping the line and adding one after it leaves the range as it was left on.
+    expect(suggestionLanded({ rangeLength: 1, current: ["foo();"], atReplacement: ["foo();", "bar();"], replacement: ["foo();", "bar();"], original: ["foo();"] })).toBe(true);
   });
 });
 

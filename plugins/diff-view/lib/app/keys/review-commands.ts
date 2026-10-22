@@ -395,12 +395,12 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
           }
           // Enter folds a file only from its header; on a code line it would be an easy accident.
           if (command.action === "annotation" && cursor.line !== null) return;
+          const collapsed = files.find((file) => file.path === cursor.path)?.collapsed === true;
           // On a file the diff came without a patch for, Enter loads it instead.
-          if (command.action === "annotation" && model?.loadPatch !== undefined && files.find((file) => file.path === cursor.path)?.collapsed !== true) {
+          if (command.action === "annotation" && model?.loadPatch !== undefined && !collapsed) {
             model.loadPatch();
             return;
           }
-          const collapsed = files.find((file) => file.path === cursor.path)?.collapsed === true;
           env.setCollapsed([cursor.path], !collapsed);
           if (!collapsed) go(env, header);
           return;
