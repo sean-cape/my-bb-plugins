@@ -4,7 +4,7 @@ import type { KanbanContext } from "../context";
 import type { BoardStore } from "../board";
 import type { DiffCommentRow, PendingReviewRow, TicketRow } from "../db/rows";
 import type { Changes } from "../diff/changes";
-import { GithubHttpError, github, githubGraphql, githubPages, githubPost, githubRequest, resolveToken, reviewThreads, type GithubReview, type GithubReviewComment } from "../github";
+import { GithubHttpError, NO_GITHUB_TOKEN, github, githubGraphql, githubPages, githubPost, githubRequest, resolveToken, reviewThreads, type GithubReview, type GithubReviewComment } from "../github";
 import { createKeyedQueue, errorMessage, shortId } from "../util";
 import { locationLabel } from "bb-diff-view/line-range";
 
@@ -63,7 +63,7 @@ export function createPendingReview(ctx: KanbanContext, { board, changes }: { bo
 
   async function token(): Promise<string> {
     const auth = await resolveToken(settings);
-    if (auth === null) throw new Error("No GitHub token configured.");
+    if (auth === null) throw new Error(NO_GITHUB_TOKEN);
     return auth.token;
   }
 

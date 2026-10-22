@@ -5,6 +5,9 @@ import { USER_AGENT, execFileAsync } from "./util";
 
 export const GITHUB_API = "https://api.github.com";
 const API_VERSION = "2022-11-28";
+export const NO_GITHUB_TOKEN = "No GitHub token configured.";
+/** The author of a commit GitHub names neither a user nor a git author for. */
+export const UNKNOWN_AUTHOR = "unknown";
 
 /** A non-2xx GitHub response; `status` tells a rejected payload (422) apart from an outage. */
 export class GithubHttpError extends Error {
@@ -451,7 +454,7 @@ export interface GithubBlameRange {
 export function blameLinesFromRanges(ranges: readonly GithubBlameRange[], start: number, end: number): BlameLine[] {
   const lines: BlameLine[] = [];
   for (const range of ranges) {
-    const author = range.commit.author?.user?.login ?? range.commit.author?.name ?? "unknown";
+    const author = range.commit.author?.user?.login ?? range.commit.author?.name ?? UNKNOWN_AUTHOR;
     const time = Date.parse(range.commit.authoredDate);
     for (let line = Math.max(start, range.startingLine); line <= Math.min(end, range.endingLine); line++) {
       lines.push({ line, sha: range.commit.oid, author, time: Number.isNaN(time) ? 0 : time, summary: range.commit.messageHeadline });

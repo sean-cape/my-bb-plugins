@@ -1,6 +1,7 @@
 import { useContext, useMemo, type RefObject } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { cn } from "../utils";
+import { plural } from "../format";
 import { Badge } from "../ui/badge";
 import { Button, COMPACT } from "../ui/button";
 import { CHEVRON, FAST, PRESS, enter } from "../ui/motion";
@@ -54,7 +55,7 @@ function SectionView({
           <Badge title="This file is no longer in the diff">not in the diff</Badge>
         ) : null}
         <span className="shrink-0 tabular-nums text-muted-foreground">
-          {count} thread{count === 1 ? "" : "s"}
+          {plural(count, "thread")}
         </span>
       </div>
       {collapsed ? (

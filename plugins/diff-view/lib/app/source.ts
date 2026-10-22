@@ -29,9 +29,9 @@ import type {
  * review findings, the tour and hunk explanations. Keep the object stable (memoize it): the view refetches when it changes.
  */
 export interface DiffSource {
-  /** `range` limits the diff to part of its history (see `commits`); null or absent is all the changes. */
-  getDiff(refresh: boolean, range?: CommitRange | null): Promise<DiffResult>;
-  getStructural(path: string, range?: CommitRange | null): Promise<StructuralDiff>;
+  /** `range` limits the diff to part of its history (see `commits`); null is all the changes. */
+  getDiff(refresh: boolean, range: CommitRange | null): Promise<DiffResult>;
+  getStructural(path: string, range: CommitRange | null): Promise<StructuralDiff>;
   symbolDefinitions(symbol: string): Promise<SymbolLookup>;
   symbolUsages(symbol: string): Promise<SymbolUsages>;
   peekFile(path: string, startLine: number, endLine: number): Promise<FileSlice>;
@@ -68,9 +68,9 @@ export interface DiffSource {
     explain(path: string, side: "old" | "new", startLine: number, endLine: number): Promise<HunkExplanation>;
   };
   /** The text patch of a file the diff came without one for (too large), made from its two sides; null when there is none. */
-  loadPatch?(path: string, range?: CommitRange | null): Promise<string | null>;
+  loadPatch?(path: string, range: CommitRange | null): Promise<string | null>;
   /** Who last changed lines `startLine`–`endLine` of one side of a file in the diff; lights up `gb`. */
-  blame?(path: string, side: DiffSide, startLine: number, endLine: number, range?: CommitRange | null): Promise<BlameLine[]>;
+  blame?(path: string, side: DiffSide, startLine: number, endLine: number, range: CommitRange | null): Promise<BlameLine[]>;
   /**
    * Applies suggested changes, one or a batch, refusing them all when any item's `expected` lines moved; `message` is
    * for a host that commits them, null for its default. Lights up `A`, `B` and `gB`, for comments' and findings' suggestions.

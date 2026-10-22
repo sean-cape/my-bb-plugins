@@ -1,6 +1,6 @@
 // A card's commits for the diff view's commit picker, and the review marks it offers to read on from.
 import type { DiffCommits } from "../../shared/diff";
-import type { GithubPullCommit, GithubReview } from "../github";
+import { UNKNOWN_AUTHOR, type GithubPullCommit, type GithubReview } from "../github";
 
 type DiffCommit = DiffCommits["commits"][number];
 
@@ -12,7 +12,7 @@ export function commitsFromGithub(list: readonly GithubPullCommit[]): DiffCommit
   return list.map((entry) => ({
     sha: entry.sha,
     summary: entry.commit.message.split("\n")[0] ?? "",
-    author: entry.author?.login ?? entry.commit.author?.name ?? "",
+    author: entry.author?.login ?? entry.commit.author?.name ?? UNKNOWN_AUTHOR,
     date: entry.commit.author?.date ?? "",
   }));
 }

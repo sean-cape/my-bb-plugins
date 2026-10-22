@@ -4,9 +4,10 @@ import { createContext, useContext, useEffect, useRef, useState, type RefObject 
 import { createPortal } from "react-dom";
 import type { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { DiffFile, DiffResult } from "../types";
+import { UNCOMMITTED_SHA, type DiffFile, type DiffResult } from "../types";
+import { lineSpanLabel } from "../line-range";
 import { errorMessage, relativeTime, shortSha } from "./format";
-import { blameCommits, fileLink, fileSide, firstHunkSpan, githubCommitUrl, githubFileUrl, lineRuns, missingSide, type BlameCommit, type LineSpan } from "./links";
+import { blameCommits, fileLink, fileSide, firstHunkSpan, githubCommitUrl, githubFileUrl, lineRuns, missingSide, openInNewTab, type BlameCommit, type LineSpan } from "./links";
 import { FILE_POPOVER_KEYMAP, type FilePopoverCommand } from "./keys/keymap";
 import type { FileActions } from "./keys/review-commands";
 import { usePortalScopeProps } from "./portal-scope";
@@ -18,8 +19,6 @@ import { usePopover } from "./ui/use-popover";
 import { runListMotion, useKeyHandler } from "./ui/vim-keys";
 import { cn } from "./utils";
 
-/** The all-zero sha git blame gives a line not committed yet. */
-const UNCOMMITTED = /^0+$/u;
 const BLAME_WIDTH_PX = 480;
 /** The header menu's `w-44`. */
 const MENU_WIDTH_PX = 176;
@@ -70,7 +69,7 @@ export function fileActionsFor({
         if (accepted) return;
       }
       const url = githubFileUrl(diff, file, span);
-      if (url !== null) window.open(url, "_blank", "noopener,noreferrer");
+      if (url !== null) openInNewTab(url);
       else notify(side === "LEFT" && diff.environmentId !== null ? "The old side is only on GitHub, and this checkout's commit isn't known there" : noCheckout);
     },
     blame:
@@ -218,11 +217,11 @@ export function BlamePopover({ path, span, anchor, repo, onClose }: { path: stri
   const now = Date.now();
   const box = anchor ?? new DOMRect(window.innerWidth / 2 - BLAME_WIDTH_PX / 2, window.innerHeight / 3, 0, 0);
   const open = (sha: string) => {
-    if (UNCOMMITTED.test(sha)) toast.message("Not committed yet");
+    if (sha === UNCOMMITTED_SHA) toast.message("Not committed yet");
     else if (repo === null) toast.message("This checkout's GitHub repository isn't known");
-    else window.open(githubCommitUrl(repo, sha), "_blank", "noopener,noreferrer");
+    else openInNewTab(githubCommitUrl(repo, sha));
   };
-  const lines = span.end > span.start ? `L${span.start}–${span.end}` : `L${span.start}`;
+  const lines = lineSpanLabel(span.start, span.end);
   return createPortal(
     <div
       {...portalScope}
@@ -252,7 +251,7 @@ export function BlamePopover({ path, span, anchor, repo, onClose }: { path: stri
       ) : (
         <ul ref={list} className="min-h-0 overflow-y-auto py-1 text-xs">
           {state.commits.map((commit) => {
-            const uncommitted = UNCOMMITTED.test(commit.sha);
+            const uncommitted = commit.sha === UNCOMMITTED_SHA;
             return (
               <li key={commit.sha}>
                 <button

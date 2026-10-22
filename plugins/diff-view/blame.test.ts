@@ -1,15 +1,15 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { keymapConflicts } from "../vim-mode/lib/index.ts";
 import { FILE_POPOVER_KEYMAP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import type { Cursor, NavRow } from "./lib/app/keys/nav";
-import { runReviewCommand, type FileActions, type ReviewEnv } from "./lib/app/keys/review-commands";
+import { runReviewCommand, type FileActions } from "./lib/app/keys/review-commands";
 import type { FileNavModel } from "./lib/app/keys/review-keys-context";
 import { blameCommits, cursorSpan, fileLink, firstHunkSpan, githubCommitUrl, githubFileUrl, lineRuns, type LineSpan } from "./lib/app/links";
-import { gitBlame, githubRepoFromRemote, parseBlamePorcelain, UNCOMMITTED_SHA } from "./lib/server";
+import { gitBlame, githubRepoFromRemote, parseBlamePorcelain } from "./lib/server";
+import { UNCOMMITTED_SHA } from "./lib/types";
+import { git, reviewEnv, tempRepo } from "./test-helpers";
 
 const A = "a".repeat(40);
 const B = "b".repeat(40);
@@ -47,20 +47,17 @@ describe("parseBlamePorcelain", () => {
 describe("gitBlame", () => {
   let dir = "";
   let first = "";
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { cwd: dir, encoding: "utf8" }).trim();
-  beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "diff-view-blame-"));
-    git("init", "-q");
-    writeFileSync(join(dir, "a.txt"), "one\ntwo\nthree\n");
-    git("add", "a.txt");
-    git("commit", "-q", "-m", "Add a");
-    first = git("rev-parse", "HEAD");
-    writeFileSync(join(dir, "a.txt"), "one\nTWO\nthree\n");
-    git("commit", "-q", "-am", "Shout two");
-    writeFileSync(join(dir, "a.txt"), "one\nTWO\nthree!\n");
+  beforeAll(async () => {
+    dir = await tempRepo("diff-view-blame-");
+    await writeFile(join(dir, "a.txt"), "one\ntwo\nthree\n");
+    await git(dir, "add", "a.txt");
+    await git(dir, "commit", "-q", "-m", "Add a");
+    first = await git(dir, "rev-parse", "HEAD");
+    await writeFile(join(dir, "a.txt"), "one\nTWO\nthree\n");
+    await git(dir, "commit", "-q", "-am", "Shout two");
+    await writeFile(join(dir, "a.txt"), "one\nTWO\nthree!\n");
   });
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rm(dir, { recursive: true, force: true }));
 
   it("blames the working tree, uncommitted lines included", async () => {
     const lines = await gitBlame(dir, null, "a.txt", 1, 3);
@@ -141,7 +138,7 @@ describe("blame grouping", () => {
       { sha: A, author: "Ada", time: 0, summary: A, lines: [10, 12, 13] },
       { sha: B, author: "Bo", time: 0, summary: B, lines: [11] },
     ]);
-    expect(lineRuns([10, 12, 13])).toBe("L10, 12–13");
+    expect(lineRuns([10, 12, 13])).toBe("L10, 12-13");
     expect(lineRuns([])).toBe("");
   });
 });
@@ -154,7 +151,6 @@ describe("copy, open and blame keys", () => {
 
   const rows: NavRow[] = [1, 2, 3].map((n) => ({ left: n, right: n, hunk: 0, changed: false }));
   const run = (command: Parameters<typeof runReviewCommand>[0], cursor: Cursor, visual: Cursor | null, blame: boolean) => {
-    let state = { cursor, visual, pending: "", focused: null, cursorShown: true } as ReturnType<ReviewEnv["keys"]["get"]>;
     const calls: unknown[] = [];
     const actions: FileActions = {
       copyPath: (path) => calls.push(["copyPath", path]),
@@ -163,18 +159,9 @@ describe("copy, open and blame keys", () => {
       blame: blame ? (path, span) => calls.push(["blame", path, span]) : null,
     };
     const models = new Map<string, FileNavModel>([["a.ts", { rows, cutToHunk: false, element: () => null }]]);
-    const env = {
-      keys: { get: () => state, set: (patch: Partial<typeof state>) => (state = { ...state, ...patch }), models, threads: new Map(), findings: new Map() },
-      files: [{ path: "a.ts", collapsed: false, rows }],
-      threads: [],
-      findings: [],
-      onScreen: () => true,
-      seat: () => null,
-      notify: (message: string) => calls.push(["notify", message]),
-      fileActions: actions,
-    } as unknown as ReviewEnv;
+    const { env, state } = reviewEnv({ files: [{ path: "a.ts", collapsed: false, rows }], notify: (message: string) => calls.push(["notify", message]), fileActions: actions }, { cursor, visual, models });
     runReviewCommand(command, 1, env);
-    return { calls, visual: state.visual };
+    return { calls, visual: state().visual };
   };
   const at = (line: number | null): Cursor => ({ path: "a.ts", side: "RIGHT", line, want: "RIGHT" });
 

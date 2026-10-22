@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blameLinesFromRanges, githubRepoFromRemote, type GithubBlameRange } from "./github";
+import { blameLinesFromRanges, type GithubBlameRange } from "./github";
 
 const range = (startingLine: number, endingLine: number, oid: string, login: string | null): GithubBlameRange => ({
   startingLine,
@@ -17,11 +17,5 @@ describe("blameLinesFromRanges", () => {
       [6, "c", "cy"],
     ]);
     expect(lines[0]).toMatchObject({ summary: "commit a", time: Date.parse("2026-10-01T12:00:00Z") });
-  });
-});
-
-describe("githubRepoFromRemote", () => {
-  it("is the diff view library's, lowercased as project matching expects", () => {
-    expect(githubRepoFromRemote("git@github.com:Owner/Repo.git")).toBe("owner/repo");
   });
 });

@@ -6,7 +6,7 @@ import type { CardThreads, ThreadEnvironment } from "../card-threads";
 import type { CodeReviewThreads } from "../code-review-threads";
 import type { KanbanContext } from "../context";
 import { rowToComment, rowToCommentApply, type CommentApplyRow, type TicketRow } from "../db/rows";
-import { githubPages, prShortName, resolveToken, reviewThreadResolution, setReviewThreadResolved, type GithubIssueComment, type GithubReview, type GithubReviewComment } from "../github";
+import { NO_GITHUB_TOKEN, githubPages, prShortName, resolveToken, reviewThreadResolution, setReviewThreadResolved, type GithubIssueComment, type GithubReview, type GithubReviewComment } from "../github";
 import type { Projects } from "../projects";
 import { locationLabel } from "bb-diff-view/line-range";
 import { SUGGESTION_NOTE, mentionsSuggestion } from "bb-diff-view/suggestions";
@@ -287,7 +287,7 @@ export function createPrComments(
     const ticket = getTicket(row.ticket_id);
     if (ticket.pr === null) throw new Error("This card has no pull request");
     const auth = await resolveToken(settings);
-    if (auth === null) throw new Error("No GitHub token configured.");
+    if (auth === null) throw new Error(NO_GITHUB_TOKEN);
     const now = await setReviewThreadResolved(ticket.pr.repo, ticket.pr.number, Number(rootId.slice(rootId.indexOf(":") + 1)), resolved, auth.token);
     stmts.setThreadResolved.run(now ? 1 : 0, rootId, rootId);
     publish();

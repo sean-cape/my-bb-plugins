@@ -3,7 +3,7 @@ import { allDiffThreads } from "./lib/app/comments/threads";
 import { commentSections } from "./lib/app/comments/comment-sections";
 import { navRows, patchRows } from "./lib/app/text/patch-rows";
 import type { Cursor, NavFile } from "./lib/app/keys/nav";
-import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
+import { runReviewCommand } from "./lib/app/keys/review-commands";
 import { currentLoadedPatch, loadedPatchEntry, shownPatch, whitespaceKeep, whitespaceOnlyPaths } from "./lib/app/patches";
 import { searchDiff } from "./lib/app/search/diff-search";
 import { rangeGate } from "./lib/app/commits/commit-range";
@@ -12,29 +12,9 @@ import { FILE_FILTER_MENU_KEYMAP } from "./lib/app/file-filter";
 import { flipped, withMembers } from "./lib/app/sets";
 import { compileSearch, keymapConflicts } from "../vim-mode/lib/index.ts";
 import type { DiffComment, DiffFile, DiffResult } from "./lib/types";
+import { localComment, reviewEnv } from "./test-helpers";
 
-function local(overrides: Partial<DiffComment> & { id: string }): DiffComment {
-  return {
-    path: "new.ts",
-    line: 1,
-    side: "RIGHT",
-    startLine: null,
-    startSide: null,
-    body: "body",
-    target: "local",
-    inReplyTo: null,
-    author: null,
-    authorThreadId: null,
-    createdAt: 0,
-    updatedAt: 0,
-    postedAt: null,
-    postedUrl: null,
-    githubCommentId: null,
-    addressedAt: null,
-    applyId: null,
-    ...overrides,
-  };
-}
+const local = (overrides: Partial<DiffComment> & { id: string }): DiffComment => localComment({ path: "new.ts", ...overrides });
 
 const ADDED = ["@@ -0,0 +1,40 @@", ...Array.from({ length: 40 }, (_, index) => `+line ${index + 1}`)].join("\n");
 const shownLines = (patch: string | null) => (patch === null ? [] : patchRows(patch).rows.map((row) => row.right));
@@ -69,31 +49,22 @@ describe("v", () => {
   ];
   const run = (accepted: boolean) => {
     const cursor: Cursor = { path: "a.ts", side: "RIGHT", line: 1, want: "RIGHT" };
-    let state = { cursor, visual: null, pending: "", focused: null } as ReturnType<ReviewEnv["keys"]["get"]>;
     const marked: [string, boolean][] = [];
-    const env = {
-      keys: {
-        get: () => state,
-        set: (patch: Partial<typeof state>) => (state = { ...state, ...patch }),
-        models: new Map(files.map((file) => [file.path, { rows, cutToHunk: false, element: () => null }])),
-        threads: new Map(),
-        findings: new Map(),
+    const models = new Map(files.map((file) => [file.path, { rows, cutToHunk: false, element: () => null }]));
+    const { env, state } = reviewEnv(
+      {
+        files,
+        viewed: new Set<string>(),
+        seat: () => cursor,
+        markViewed: (path: string, isViewed: boolean) => {
+          marked.push([path, isViewed]);
+          return accepted;
+        },
       },
-      files,
-      threads: [],
-      findings: [],
-      viewed: new Set<string>(),
-      onScreen: () => true,
-      seat: () => cursor,
-      reveal: () => {},
-      notify: () => {},
-      markViewed: (path: string, isViewed: boolean) => {
-        marked.push([path, isViewed]);
-        return accepted;
-      },
-    } as unknown as ReviewEnv;
+      { cursor, models },
+    );
     runReviewCommand({ kind: "viewed" }, 1, env);
-    return { marked, at: state.cursor };
+    return { marked, at: state().cursor };
   };
 
   it("moves on to the next file once the mark is made", () => {

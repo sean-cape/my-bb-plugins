@@ -1,5 +1,8 @@
 // Suggested changes: GitHub's ```suggestion blocks in comment bodies, the lines they replace, and applying them to a
 // file's text. Pure, shared by the view and every host's server.
+import { groupByPath } from "./app/format";
+import { lineSpanLabel } from "./line-range";
+import { walkPatch } from "./patch";
 import type { LineRange, SuggestionItem } from "./types";
 
 /** A comment body cut into Markdown and the suggestion blocks between it. */
@@ -81,8 +84,6 @@ export function suggestionLines(range: LineRange): { startLine: number; endLine:
   return { startLine: Math.min(range.startLine, range.line), endLine: Math.max(range.startLine, range.line) };
 }
 
-const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/u;
-
 /**
  * Every new-side line a unified patch shows (added and context), by line number. A hunk ends where its new-side count
  * says, so the empty string after a patch's final newline is not a line. A hunk cut short (GitHub's `diff_hunk`) reads
@@ -90,23 +91,17 @@ const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/u;
  */
 export function newSideLineMap(patch: string): Map<number, string> {
   const found = new Map<number, string>();
-  let next: number | null = null;
   let left = 0;
-  for (const text of patch.split("\n")) {
-    const header = HUNK_HEADER.exec(text);
-    if (header !== null) {
-      next = Number(header[1]);
-      left = header[2] === undefined ? 1 : Number(header[2]);
-      continue;
-    }
-    if (next === null || left <= 0 || text.startsWith("\\") || text.startsWith("-")) continue;
-    if (text.startsWith("+") || text.startsWith(" ") || text === "") {
-      const line = text.slice(1);
-      found.set(next, line.endsWith("\r") ? line.slice(0, -1) : line);
-      next += 1;
+  walkPatch(patch, {
+    header: ({ newCount }) => {
+      left = newCount;
+    },
+    line: ({ text, new: line }) => {
+      if (line === null || left <= 0) return;
+      found.set(line, text.endsWith("\r") ? text.slice(0, -1) : text);
       left -= 1;
-    }
-  }
+    },
+  });
   return found;
 }
 
@@ -161,7 +156,7 @@ export function suggestionLanded({
 export class SuggestionConflictError extends Error {}
 
 function label(item: Pick<SuggestionItem, "path" | "startLine" | "endLine">): string {
-  return `${item.path}:${item.startLine === item.endLine ? `L${item.startLine}` : `L${item.startLine}-${item.endLine}`}`;
+  return `${item.path}:${lineSpanLabel(item.startLine, item.endLine)}`;
 }
 
 function lineEnding(piece: string): string {
@@ -224,9 +219,7 @@ export function suggestionFileText(bytes: Uint8Array, path: string): string {
 
 /** Items grouped by file, in the order their files first appear. */
 export function suggestionsByPath(items: readonly SuggestionItem[]): Map<string, SuggestionItem[]> {
-  const byPath = new Map<string, SuggestionItem[]>();
-  for (const item of items) byPath.set(item.path, [...(byPath.get(item.path) ?? []), item]);
-  return byPath;
+  return groupByPath(items);
 }
 
 /** The commit message when the reviewer gives none, as GitHub words it. */

@@ -37,3 +37,13 @@ export function locationLabel(path: string, range: LineRange): string {
   const span = range.startLine === null ? `${range.line}` : `${range.startLine}-${range.line}`;
   return `${path}:${span}${range.side === "LEFT" ? " (old side)" : ""}`;
 }
+
+/** `12`, or `12-18` for lines 12 to 18 of one side. */
+export function lineSpan(start: number, end: number): string {
+  return start === end ? `${start}` : `${start}-${end}`;
+}
+
+/** `L12` or `L12-18`. */
+export function lineSpanLabel(start: number, end: number): string {
+  return `L${lineSpan(start, end)}`;
+}

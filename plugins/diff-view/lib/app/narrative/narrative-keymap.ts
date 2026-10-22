@@ -56,6 +56,7 @@ const SHARED_HELP = KEY_HELP.filter((section) => section.title !== "File list").
     v: "Mark the excerpt's file viewed or not",
     zr: "Not in excerpts: they are line diffs",
     gd: "Not in excerpts: they are line diffs",
+    gl: "Split or unified, for the excerpts (remembered apart from the files view's)",
     S: "Back to the files view, cursor where it was (S there comes back)",
   }),
 );

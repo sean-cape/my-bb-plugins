@@ -3,20 +3,7 @@ import type { StructuralDiff } from "./lib/types";
 import { detectMoves } from "./lib/app/structural/moves";
 import { structuralRows, visibleRows, type StructuralRow } from "./lib/app/structural/rows";
 import { tableEntries, unifiedRows } from "./lib/app/structural/unified-rows";
-
-function structural(aligned: StructuralDiff["aligned"], changedNew: number[] = [], changedOld: number[] = []): StructuralDiff {
-  return {
-    available: true,
-    reason: null,
-    language: null,
-    status: "changed",
-    oldText: "",
-    newText: "",
-    aligned,
-    oldChanges: changedOld.map((line) => ({ line, changes: [] })),
-    newChanges: changedNew.map((line) => ({ line, changes: [] })),
-  };
-}
+import { structural } from "./test-helpers";
 
 /** Each row as `index:lhs/rhs`, `-` for a blank side. */
 const shape = (rows: readonly StructuralRow[]) => rows.map((row) => `${row.index}:${row.lhs ?? "-"}/${row.rhs ?? "-"}`);

@@ -35,15 +35,10 @@ export function isUnsent(entry: ThreadEntry): boolean {
 }
 
 /**
- * Merge synced GitHub review comments with the board's own diff comments into threads; posted drafts show once, as
- * their synced copy. GitHub threads outdated by a later push are over and stay out of the diff, unless a reply to
- * one is still unsent here; resolved ones stay, folded, so they can be reopened.
+ * Synced GitHub review comments merged with the board's own diff comments into threads; posted drafts show once, as
+ * their synced copy. A thread outdated by a later push keeps no line. Which of them the diff draws is `shownInline`'s
+ * call; the comments view lists them all.
  */
-export function buildDiffThreads(local: readonly DiffComment[], github: readonly GithubComment[]): DiffThread[] {
-  return allDiffThreads(local, github).filter((thread) => !thread.outdated || thread.entries.some(isUnsent));
-}
-
-/** Every thread `buildDiffThreads` merges, outdated ones included (with a null line), for the comments view. */
 export function allDiffThreads(local: readonly DiffComment[], github: readonly GithubComment[]): DiffThread[] {
   const synced = new Set(github.filter((comment) => comment.kind === "review-comment").map((comment) => comment.id));
   // Only an inline synced copy replaces a posted draft; drafts that went into a review body have no inline copy to show.

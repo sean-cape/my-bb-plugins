@@ -1,3 +1,4 @@
+import { COMMIT_SHA_PATTERN, WORKTREE_SHA } from "bb-diff-view/types";
 import { z } from "zod";
 
 export const diffSideSchema = z.enum(["LEFT", "RIGHT"]);
@@ -127,7 +128,7 @@ export const suggestionItemSchema = z.object({
 });
 export type SuggestionItem = z.infer<typeof suggestionItemSchema>;
 /** Part of the diff's history: after `from` (exclusive) up to `to`, which may be `WORKTREE` (uncommitted changes). */
-export const commitRangeSchema = z.object({ from: z.string().regex(/^[0-9a-f]{7,40}$/u), to: z.string().regex(/^([0-9a-f]{7,40}|WORKTREE)$/u) }).strict();
+export const commitRangeSchema = z.object({ from: z.string().regex(COMMIT_SHA_PATTERN), to: z.union([z.string().regex(COMMIT_SHA_PATTERN), z.literal(WORKTREE_SHA)]) }).strict();
 export type CommitRange = z.infer<typeof commitRangeSchema>;
 
 /** The diff's commits oldest first, the review marks to read on from, and where the first commit starts. */

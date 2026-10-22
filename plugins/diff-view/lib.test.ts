@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildDiffThreads, localCommentState, threadIsOpen, threadKeyActions } from "./lib/app/comments/threads";
+import { allDiffThreads, localCommentState, threadIsOpen, threadKeyActions } from "./lib/app/comments/threads";
+import { shownInline } from "./lib/app/comments/comment-sections";
 import { fetchChangeTotals, knownChangeTotals } from "./lib/app/change-totals";
 import { buildFileTree } from "./lib/app/file-tree/build-file-tree";
 import { statusMark } from "./lib/app/file-status";
@@ -26,50 +27,10 @@ import type { DiffThread } from "./lib/app/comments/threads";
 import type { NarrativeRevision, NarrativeStep, NarrativeStory } from "./lib/types";
 import { splitUnifiedDiff } from "./lib/server";
 import type { DiffComment, DiffFile, Finding, GithubComment, Review, StructuralDiff } from "./lib/types";
+import { githubComment, localComment, structural } from "./test-helpers";
 
-function local(overrides: Partial<DiffComment> & { id: string }): DiffComment {
-  return {
-    path: "x.ts",
-    line: 1,
-    side: "RIGHT",
-    startLine: null,
-    startSide: null,
-    body: "body",
-    target: "local",
-    inReplyTo: null,
-    author: null,
-    authorThreadId: null,
-    createdAt: 0,
-    updatedAt: 0,
-    postedAt: null,
-    postedUrl: null,
-    githubCommentId: null,
-    addressedAt: null,
-    applyId: null,
-    ...overrides,
-  };
-}
-
-function github(overrides: Partial<GithubComment> & { id: string }): GithubComment {
-  return {
-    kind: "review-comment",
-    author: "octocat",
-    mine: false,
-    body: "body",
-    path: "x.ts",
-    line: 1,
-    inReplyTo: null,
-    side: "RIGHT",
-    startLine: null,
-    startSide: null,
-    outdated: false,
-    resolved: null,
-    url: "https://github.invalid/c",
-    createdAt: "1970-01-01T00:00:00Z",
-    addressedAt: null,
-    ...overrides,
-  };
-}
+const local = (overrides: Partial<DiffComment> & { id: string }): DiffComment => localComment({ path: "x.ts", ...overrides });
+const github = (overrides: Partial<GithubComment> & { id: string }): GithubComment => githubComment({ path: "x.ts", ...overrides });
 
 describe("localCommentState", () => {
   it("reads agent replies, drafts, posted, addressed, sent and pending comments", () => {
@@ -82,9 +43,9 @@ describe("localCommentState", () => {
   });
 });
 
-describe("buildDiffThreads", () => {
+describe("allDiffThreads", () => {
   it("puts the root first and replies after it oldest first", () => {
-    const threads = buildDiffThreads(
+    const threads = allDiffThreads(
       [local({ id: "late", inReplyTo: "root", createdAt: 30 }), local({ id: "root", createdAt: 10 }), local({ id: "early", inReplyTo: "root", createdAt: 20 })],
       [],
     );
@@ -93,7 +54,7 @@ describe("buildDiffThreads", () => {
   });
 
   it("interleaves local replies to a GitHub thread by time", () => {
-    const threads = buildDiffThreads(
+    const threads = allDiffThreads(
       [local({ id: "mine", inReplyTo: "review-comment:1", createdAt: Date.parse("1970-01-01T00:00:02Z") })],
       [github({ id: "review-comment:1" }), github({ id: "review-comment:2", inReplyTo: "review-comment:1", createdAt: "1970-01-01T00:00:03Z" })],
     );
@@ -103,12 +64,12 @@ describe("buildDiffThreads", () => {
   });
 
   it("shows a posted draft once, as its synced copy", () => {
-    const threads = buildDiffThreads([local({ id: "draft", target: "github", postedAt: 1, githubCommentId: "review-comment:7" })], [github({ id: "review-comment:7" })]);
+    const threads = allDiffThreads([local({ id: "draft", target: "github", postedAt: 1, githubCommentId: "review-comment:7" })], [github({ id: "review-comment:7" })]);
     expect(threads.map((thread) => thread.id)).toEqual(["review-comment:7"]);
   });
 
   it("keeps a posted draft with no synced copy yet, and attaches GitHub replies to it by its GitHub id", () => {
-    const threads = buildDiffThreads(
+    const threads = allDiffThreads(
       [local({ id: "draft", target: "github", postedAt: 1, githubCommentId: "review-comment:7" })],
       [github({ id: "review-comment:8", inReplyTo: "review-comment:7" })],
     );
@@ -118,35 +79,37 @@ describe("buildDiffThreads", () => {
   });
 
   it("groups replies whose root is gone into an orphaned thread that cannot be answered", () => {
-    const [thread] = buildDiffThreads([local({ id: "reply", inReplyTo: "gone", target: "github" })], []);
+    const [thread] = allDiffThreads([local({ id: "reply", inReplyTo: "gone", target: "github" })], []);
     expect(thread).toMatchObject({ id: "gone", orphaned: true, onGithub: false });
   });
 
-  it("keeps resolved GitHub threads, closed, and leaves outdated ones out unless a reply to one is still unsent", () => {
+  it("leaves resolved and outdated GitHub threads out of the diff unless a reply to one is still unsent", () => {
+    const inline = (locals: DiffComment[], githubs: GithubComment[]) => allDiffThreads(locals, githubs).filter(shownInline);
     const resolved = github({ id: "review-comment:1", resolved: true });
     const outdated = github({ id: "review-comment:2", outdated: true, line: 12 });
     const open = github({ id: "review-comment:3" });
-    const threads = buildDiffThreads([], [resolved, outdated, open]);
-    expect(threads.map((thread) => thread.id)).toEqual(["review-comment:1", "review-comment:3"]);
-    expect(threads.map(threadIsOpen)).toEqual([false, true]);
-    const withDraft = buildDiffThreads([local({ id: "reply", inReplyTo: "review-comment:2", target: "github" })], [outdated]);
+    const threads = inline([], [resolved, outdated, open]);
+    expect(threads.map((thread) => thread.id)).toEqual(["review-comment:3"]);
+    expect(threads.map(threadIsOpen)).toEqual([true]);
+    expect(inline([local({ id: "reply", inReplyTo: "review-comment:1", target: "github" })], [resolved]).map((thread) => thread.id)).toEqual(["review-comment:1"]);
+    const withDraft = inline([local({ id: "reply", inReplyTo: "review-comment:2", target: "github" })], [outdated]);
     expect(withDraft.map((thread) => thread.id)).toEqual(["review-comment:2"]);
-    const sent = buildDiffThreads([local({ id: "reply", inReplyTo: "review-comment:2", target: "github", postedAt: 1, githubCommentId: "review-comment:9" })], [outdated]);
+    const sent = inline([local({ id: "reply", inReplyTo: "review-comment:2", target: "github", postedAt: 1, githubCommentId: "review-comment:9" })], [outdated]);
     expect(sent).toEqual([]);
   });
 
   it("drops the lines of an outdated GitHub comment that still shows for its unsent reply", () => {
-    const [thread] = buildDiffThreads([local({ id: "reply", inReplyTo: "review-comment:1", target: "github" })], [github({ id: "review-comment:1", outdated: true, line: 12, startLine: 10, startSide: "RIGHT" })]);
+    const [thread] = allDiffThreads([local({ id: "reply", inReplyTo: "review-comment:1", target: "github" })], [github({ id: "review-comment:1", outdated: true, line: 12, startLine: 10, startSide: "RIGHT" })]);
     expect(thread).toMatchObject({ line: null, startLine: null, startSide: null, outdated: true });
   });
 
   it("anchors a multi-line comment's thread on its range", () => {
-    const [thread] = buildDiffThreads([local({ id: "a", line: 14, startLine: 10, startSide: "RIGHT" })], []);
+    const [thread] = allDiffThreads([local({ id: "a", line: 14, startLine: 10, startSide: "RIGHT" })], []);
     expect(thread).toMatchObject({ line: 14, side: "RIGHT", startLine: 10, startSide: "RIGHT" });
   });
 
   it("lets replies go to GitHub only from line comments that are, or will become, inline GitHub comments", () => {
-    const onGithub = (comment: DiffComment) => buildDiffThreads([comment], [])[0]!.onGithub;
+    const onGithub = (comment: DiffComment) => allDiffThreads([comment], [])[0]!.onGithub;
     expect(onGithub(local({ id: "a", target: "github" }))).toBe(true);
     expect(onGithub(local({ id: "a", target: "github", line: null }))).toBe(false);
     expect(onGithub(local({ id: "a", target: "github", postedAt: 1, githubCommentId: "review-comment:1" }))).toBe(true);
@@ -155,12 +118,12 @@ describe("buildDiffThreads", () => {
   });
 
   it("ignores synced comments that are not inline review comments", () => {
-    expect(buildDiffThreads([], [github({ id: "issue-comment:1", kind: "issue-comment" }), github({ id: "review-comment:2", path: null })])).toEqual([]);
+    expect(allDiffThreads([], [github({ id: "issue-comment:1", kind: "issue-comment" }), github({ id: "review-comment:2", path: null })])).toEqual([]);
   });
 });
 
 describe("threadIsOpen", () => {
-  const thread = (locals: DiffComment[], githubs: GithubComment[] = []) => buildDiffThreads(locals, githubs)[0]!;
+  const thread = (locals: DiffComment[], githubs: GithubComment[] = []) => allDiffThreads(locals, githubs)[0]!;
   it("closes addressed threads unless a reply is still unsent, and opens a resolved one shown for its unsent reply", () => {
     expect(threadIsOpen(thread([local({ id: "reply", inReplyTo: "review-comment:1", target: "github" })], [github({ id: "review-comment:1", resolved: true })]))).toBe(true);
     expect(threadIsOpen(thread([local({ id: "root", applyId: "s", addressedAt: 1 })]))).toBe(false);
@@ -307,7 +270,7 @@ describe("finding filter", () => {
 });
 
 describe("buildLineAnnotations", () => {
-  const threads = buildDiffThreads([local({ id: "a", line: 3 }), local({ id: "file", line: null }), local({ id: "b", line: 9, side: "LEFT" })], []);
+  const threads = allDiffThreads([local({ id: "a", line: 3 }), local({ id: "file", line: null }), local({ id: "b", line: 9, side: "LEFT" })], []);
   const findings = inlineFindingsByPath([review("r", 1, [finding("F1", [{ file: "x.ts", startLine: 3, endLine: 3 }, { file: "x.ts", startLine: 7, endLine: 7 }, { file: "x.ts", startLine: null, endLine: null }])])], null).get("x.ts")!;
   const composer = { line: 3, side: "RIGHT" as const, startLine: null, startSide: null };
   const keys = (list: ReturnType<typeof buildLineAnnotations>) => list.map((annotation) => annotation.metadata.key);
@@ -324,7 +287,7 @@ describe("buildLineAnnotations", () => {
 
   it("hands a submitted composer's index to the thread it became, so nothing after it shifts", () => {
     const before = keys(buildLineAnnotations(threads, composer, findings));
-    const added = buildDiffThreads([local({ id: "a", line: 3 }), local({ id: "file", line: null }), local({ id: "b", line: 9, side: "LEFT" }), local({ id: "c", line: 3 })], []);
+    const added = allDiffThreads([local({ id: "a", line: 3 }), local({ id: "file", line: null }), local({ id: "b", line: 9, side: "LEFT" }), local({ id: "c", line: 3 })], []);
     const after = keys(buildLineAnnotations(added, null, findings));
     expect(after.indexOf("thread:c")).toBe(before.indexOf("composer"));
     expect(after.slice(3)).toEqual(before.slice(3));
@@ -342,20 +305,6 @@ describe("riskByPath", () => {
     expect(Object.fromEntries(riskByPath({ ...tour, stale: true }, findings))).toEqual({ "a.ts": 5, "b.ts": 4 });
   });
 });
-
-function structural(aligned: StructuralDiff["aligned"], changedNew: number[] = [], changedOld: number[] = []): StructuralDiff {
-  return {
-    available: true,
-    reason: null,
-    language: null,
-    status: "changed",
-    oldText: "",
-    newText: "",
-    aligned,
-    oldChanges: changedOld.map((line) => ({ line, changes: [] })),
-    newChanges: changedNew.map((line) => ({ line, changes: [] })),
-  };
-}
 
 describe("structural rows", () => {
   const unchanged = (count: number): StructuralDiff["aligned"] => Array.from({ length: count }, (_, i) => [i + 1, i + 1]);
@@ -695,18 +644,18 @@ describe("review keys", () => {
 
 describe("threadKeyActions", () => {
   it("offers edit, delete and a move for your unsent comment, and links to where the thread lives", () => {
-    const [pending] = buildDiffThreads([local({ id: "c1" })], []);
+    const [pending] = allDiffThreads([local({ id: "c1" })], []);
     expect(threadKeyActions(pending!, true)).toMatchObject({ canReply: true, canResolve: false, ownUnsent: { id: "c1" }, moveTo: "github", url: null, agentThread: null });
-    const [onGithub] = buildDiffThreads([], [github({ id: "review-comment:1" })]);
+    const [onGithub] = allDiffThreads([], [github({ id: "review-comment:1" })]);
     expect(threadKeyActions(onGithub!, true)).toMatchObject({ canResolve: true, url: "https://github.invalid/c" });
-    const [orphan] = buildDiffThreads([], [github({ id: "review-comment:2", inReplyTo: "review-comment:gone" })]);
+    const [orphan] = allDiffThreads([], [github({ id: "review-comment:2", inReplyTo: "review-comment:gone" })]);
     expect(threadKeyActions(orphan!, true)).toMatchObject({ canReply: false, canResolve: false });
     expect(threadKeyActions(pending!, false).moveTo).toBeNull();
-    const [draft] = buildDiffThreads([local({ id: "d1", target: "github" })], []);
+    const [draft] = allDiffThreads([local({ id: "d1", target: "github" })], []);
     expect(threadKeyActions(draft!, true).moveTo).toBe("local");
-    const [fileLevel] = buildDiffThreads([local({ id: "f1", line: null })], []);
+    const [fileLevel] = allDiffThreads([local({ id: "f1", line: null })], []);
     expect(threadKeyActions(fileLevel!, true).moveTo).toBeNull();
-    const [answered] = buildDiffThreads([local({ id: "r1", applyId: "a1" }), local({ id: "r2", inReplyTo: "r1", author: "agent", authorThreadId: "thr_x", createdAt: 5 })], []);
+    const [answered] = allDiffThreads([local({ id: "r1", applyId: "a1" }), local({ id: "r2", inReplyTo: "r1", author: "agent", authorThreadId: "thr_x", createdAt: 5 })], []);
     expect(threadKeyActions(answered!, true)).toMatchObject({ ownUnsent: null, moveTo: null, agentThread: "thr_x" });
   });
 });

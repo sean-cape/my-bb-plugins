@@ -123,7 +123,6 @@ export function useCommentsMode(options: CommentsModeOptions) {
   });
   const envRef = useRef(env);
   envRef.current = env;
-  // The comments view opens at its top, on the first section.
   useEffect(() => {
     if (mode !== "comments") return;
     scrollRef.current?.scrollTo({ top: 0 });

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
 import {
   NO_EXTENSION,
   NO_FILE_FILTER,
@@ -15,10 +14,11 @@ import {
   writeFileFilter,
   type FileMarks,
 } from "./lib/app/file-filter";
-import { FILE_TREE_KEYMAP, KEY_HELP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
+import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import { COMMENTS_KEYMAP } from "./lib/app/comments/comments-keymap";
 import { NARRATIVE_KEYMAP } from "./lib/app/narrative/narrative-keymap";
-import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
+import { runReviewCommand } from "./lib/app/keys/review-commands";
+import { reviewEnv } from "./test-helpers";
 
 const file = (path: string, status = "modified") => ({ path, status });
 
@@ -100,13 +100,11 @@ describe("file filter keys", () => {
     expect(REVIEW_KEYMAP.gf).toEqual({ kind: "fileFilter" });
     expect(NARRATIVE_KEYMAP.gf).toEqual({ kind: "openInFiles" });
     expect(COMMENTS_KEYMAP.gf).toEqual({ kind: "openInFiles" });
-    expect(keymapConflicts(REVIEW_KEYMAP)).toEqual([]);
-    expect(unboundHelpKeys(KEY_HELP, [REVIEW_KEYMAP, FILE_TREE_KEYMAP], ["⌘↩"])).toEqual([]);
   });
 
   it("opens the menu before there is a line, even with every file filtered out", () => {
     const opened: string[] = [];
-    const env = { files: [], openOverlay: (kind: string) => opened.push(kind), keys: { get: () => ({ cursor: null }) } } as unknown as ReviewEnv;
+    const { env } = reviewEnv({ openOverlay: (kind: string) => opened.push(kind) });
     runReviewCommand({ kind: "fileFilter" }, 1, env);
     expect(opened).toEqual(["fileFilter"]);
   });

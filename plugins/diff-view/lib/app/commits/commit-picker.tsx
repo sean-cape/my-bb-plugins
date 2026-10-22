@@ -1,7 +1,6 @@
 // The commit picker (`gr`) and the summary bar's control naming what it picked.
 import { createContext, useEffect, useId, useMemo, useState } from "react";
-import type { CommitRange, DiffCommits } from "../../types";
-import { WORKTREE_SHA } from "../../types";
+import { commitRangeKey, WORKTREE_SHA, type CommitRange, type DiffCommits } from "../../types";
 import { relativeTime } from "../format";
 import type { DiffSource } from "../source";
 import { useDiffInstance } from "../state";
@@ -9,7 +8,7 @@ import { FAST, PRESS, enter } from "../ui/motion";
 import { usePopover } from "../ui/use-popover";
 import { usePickerKeys } from "../ui/vim-keys";
 import { cn } from "../utils";
-import { COMMIT_PICKER_KEYMAP, collapsedRangeNote, pickedRange, pickerRows, rangeEndsAtHead, rangeGate, rangeKey, rangeSpan, shortCommit, toggledRangeStart, type CommitRow } from "./commit-range";
+import { COMMIT_PICKER_KEYMAP, collapsedRangeNote, pickedRange, pickerRows, rangeEndsAtHead, rangeGate, rangeSpan, shortCommit, toggledRangeStart, type CommitRow } from "./commit-range";
 
 /** The part of the history the view shows, for the renderers that fetch a file's diff themselves. */
 export const CommitRangeContext = createContext<CommitRange | null>(null);
@@ -41,11 +40,11 @@ export function useDiffCommits(source: DiffSource, instanceKey: string): DiffCom
 
 /** The part of the history the view shows (null is all the changes), its commits, and what the range lets the view do. */
 export function useCommitRange(source: DiffSource, instanceKey: string) {
-  const [range, setRange] = useState<CommitRange | null>(null);
+  const [commitRange, setCommitRange] = useState<CommitRange | null>(null);
   const commits = useDiffCommits(source, instanceKey);
-  const atHead = rangeEndsAtHead(range, commits);
-  const gate = useMemo(() => rangeGate(range, atHead), [range, atHead]);
-  return { range, setRange, commits, atHead, gate };
+  const atHead = rangeEndsAtHead(commitRange, commits);
+  const gate = useMemo(() => rangeGate(commitRange, atHead), [commitRange, atHead]);
+  return { commitRange, setCommitRange, commits, atHead, gate };
 }
 
 /** The summary bar's "Commits" control: what the diff covers, opening the picker on press (as `gr` does). */
@@ -84,7 +83,7 @@ export function CommitPicker({
   notify: (message: string) => void;
 }) {
   const rows = pickerRows(commits);
-  const currentKey = rangeKey(current);
+  const currentKey = commitRangeKey(current);
   const span = current === null ? null : rangeSpan(current, commits);
   const [highlight, setHighlight] = useState(() => {
     const at = rows.findIndex((row) => rowRangeKey(row, commits) === currentKey);
@@ -101,9 +100,9 @@ export function CommitPicker({
   const pickRow = (index: number) => {
     const row = rows[index];
     if (row === undefined) return;
-    const range = pickedRange(commits, row, start);
-    if (range === undefined) notify("Where the first commit starts from is unknown; pick a later commit");
-    else onPick(range, collapsedRangeNote(commits, row, start));
+    const pick = pickedRange(commits, row, start);
+    if (pick.kind === "unknown") notify("Where the first commit starts from is unknown; pick a later commit");
+    else onPick(pick.range, collapsedRangeNote(commits, row, start));
   };
   const markStart = (index: number) => {
     const next = toggledRangeStart(rows[index], start);
@@ -204,7 +203,7 @@ function CommitRowLabel({ row, commits, now }: { row: CommitRow; commits: DiffCo
 
 /** The range a row picks on its own, to tick the current one. */
 function rowRangeKey(row: CommitRow, commits: DiffCommits): string | null {
-  const range = pickedRange(commits, row, null);
-  return range === undefined ? null : rangeKey(range);
+  const pick = pickedRange(commits, row, null);
+  return pick.kind === "unknown" ? null : commitRangeKey(pick.range);
 }
 

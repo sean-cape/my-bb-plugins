@@ -1,5 +1,6 @@
 import type { DiffSide, LineRange } from "../../types";
 import { checkedLineRange } from "../../line-range";
+import { walkPatch } from "../../patch";
 import type { NavRow } from "../keys/nav";
 
 interface PatchRow {
@@ -14,51 +15,21 @@ export interface PatchRows {
   at: Map<string, number>;
 }
 
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
-
-function rowKey(side: DiffSide, line: number): string {
+/** The key `PatchRows.at` holds a line under. */
+export function rowKey(side: DiffSide, line: number): string {
   return `${side}:${line}`;
 }
 
 export function patchRows(patch: string): PatchRows {
   const rows: PatchRow[] = [];
   const at = new Map<string, number>();
-  let hunk = -1;
-  let oldLine = 0;
-  let newLine = 0;
-  let oldLeft = 0;
-  let newLeft = 0;
-  for (const text of patch.split("\n")) {
-    const header = HUNK_HEADER.exec(text);
-    if (header !== null) {
-      hunk += 1;
-      oldLine = Number(header[1]);
-      oldLeft = header[2] === undefined ? 1 : Number(header[2]);
-      newLine = Number(header[3]);
-      newLeft = header[4] === undefined ? 1 : Number(header[4]);
-      continue;
-    }
-    if (oldLeft <= 0 && newLeft <= 0) continue;
-    const mark = text[0];
-    let row: PatchRow;
-    if (mark === "-") {
-      row = { hunk, left: oldLine++, right: null };
-      oldLeft -= 1;
-    } else if (mark === "+") {
-      row = { hunk, left: null, right: newLine++ };
-      newLeft -= 1;
-    } else if (mark === " " || text === "") {
-      // Some tools strip the space off blank context lines.
-      row = { hunk, left: oldLine++, right: newLine++ };
-      oldLeft -= 1;
-      newLeft -= 1;
-    } else {
-      continue;
-    }
-    if (row.left !== null) at.set(rowKey("LEFT", row.left), rows.length);
-    if (row.right !== null) at.set(rowKey("RIGHT", row.right), rows.length);
-    rows.push(row);
-  }
+  walkPatch(patch, {
+    line: ({ hunk, old, new: right }) => {
+      if (old !== null) at.set(rowKey("LEFT", old), rows.length);
+      if (right !== null) at.set(rowKey("RIGHT", right), rows.length);
+      rows.push({ hunk, left: old, right });
+    },
+  });
   return { rows, at };
 }
 

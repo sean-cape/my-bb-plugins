@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
 import type { InlineFinding } from "./lib/app/findings/findings";
-import { KEY_HELP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
+import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import type { Cursor, NavRow } from "./lib/app/keys/nav";
-import { runReviewCommand, type FindingAnchor, type ReviewEnv } from "./lib/app/keys/review-commands";
+import { runReviewCommand, type FindingAnchor } from "./lib/app/keys/review-commands";
 import type { FileNavModel } from "./lib/app/keys/review-keys-context";
 import { NO_SUGGESTIONS, type SuggestionActions } from "./lib/app/suggestions/actions";
 import { findingSuggestion, findingSuggestionBody, findingSuggestionId, findingSuggestionRange, parseFindingSuggestionId, type FindingSuggestionState } from "./lib/app/suggestions/finding-suggestion";
 import type { LinesAt } from "./lib/app/suggestions/thread-suggestion";
 import { suggestionBlocks } from "./lib/suggestions";
 import type { Finding, FindingSuggestion, SuggestionItem } from "./lib/types";
+import { reviewEnv } from "./test-helpers";
 
 const file = ["one", "two", "three"];
 const linesAt: LinesAt = (path, start, end) => (path !== "a.ts" || end > file.length ? null : file.slice(start - 1, end));
@@ -62,30 +62,25 @@ describe("findingSuggestion", () => {
 });
 
 describe("finding suggestion keys", () => {
-  it("are bound without conflicts and listed", () => {
+  it("binds gs", () => {
     expect(REVIEW_KEYMAP.gs).toEqual({ kind: "postSuggestion" });
-    expect(keymapConflicts(REVIEW_KEYMAP)).toEqual([]);
-    expect(unboundHelpKeys(KEY_HELP.filter((section) => section.title === "Suggested changes"), [REVIEW_KEYMAP])).toEqual([]);
   });
 
   const rows: NavRow[] = [1, 2, 3].map((n) => ({ left: n, right: n, hunk: 0, changed: false }));
   const at: Cursor = { path: "a.ts", side: "RIGHT", line: 2, want: "RIGHT" };
   const run = (command: Parameters<typeof runReviewCommand>[0], item: InlineFinding, suggestions: Partial<SuggestionActions>) => {
     const anchor: FindingAnchor = { id: "r1:F1:2", path: "a.ts", side: "RIGHT", line: 2, item };
-    let state = { cursor: at, visual: null, pending: "", focused: { kind: "finding", id: anchor.id }, cursorShown: true } as ReturnType<ReviewEnv["keys"]["get"]>;
     const calls: unknown[] = [];
     const models = new Map<string, FileNavModel>([["a.ts", { rows, cutToHunk: false, element: () => null }]]);
-    const env = {
-      keys: { get: () => state, set: (patch: Partial<typeof state>) => (state = { ...state, ...patch }), models, threads: new Map(), findings: new Map() },
-      files: [{ path: "a.ts", collapsed: false, rows }],
-      threads: [],
-      findings: [anchor],
-      onScreen: () => true,
-      seat: () => null,
-      reveal: () => {},
-      notify: (message: string) => calls.push(["notify", message]),
-      suggestions: { ...NO_SUGGESTIONS, forFinding: (entry: InlineFinding) => findingSuggestion(entry, linesAt), ...suggestions },
-    } as unknown as ReviewEnv;
+    const { env } = reviewEnv(
+      {
+        files: [{ path: "a.ts", collapsed: false, rows }],
+        findings: [anchor],
+        notify: (message: string) => calls.push(["notify", message]),
+        suggestions: { ...NO_SUGGESTIONS, forFinding: (entry: InlineFinding) => findingSuggestion(entry, linesAt), ...suggestions },
+      },
+      { cursor: at, focused: { kind: "finding", id: anchor.id }, models },
+    );
     runReviewCommand(command, 1, env);
     return calls;
   };

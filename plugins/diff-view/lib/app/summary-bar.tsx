@@ -86,9 +86,10 @@ function ModeSwitch({ mode, stale, onChange, narrative = true, comments = false 
 
 /**
  * The strip above a non-empty diff: the files / narrative / comments switch where the source has a narrative or any
- * thread, totals (what the diff is against in their tooltip), where comments go, the findings filter, the threads
- * left out of the diff, and progress: files viewed, and in the
- * narrative the step reached. The keys themselves are on `?`, named in the view's corner label.
+ * thread, totals (what the diff is against in their tooltip), the commits shown, where comments go, the findings
+ * filter, whitespace, hidden threads and those left out of the diff, the suggestion batch, the `/` search, split or
+ * unified, the file filter, and progress: files viewed, and in the narrative the page reached. The keys themselves are
+ * on `?`, named in the view's corner label.
  */
 export function SummaryBar({
   diff,

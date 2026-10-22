@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
-import type { CommitRange, DiffFile, DiffResult } from "../types";
+import { commitRangeKey, type CommitRange, type DiffFile, type DiffResult } from "../types";
 import type { DiffThread } from "./comments/threads";
-import { rangeKey } from "./commits/commit-range";
 import type { PlacedFinding } from "./findings/findings";
 import { currentLoadedPatch, loadedPatchEntry, shownPatch, whitespaceKeep, whitespaceOnlyPaths, type LoadedPatch, type ShownPatch } from "./patches";
 
@@ -12,7 +11,7 @@ import { currentLoadedPatch, loadedPatchEntry, shownPatch, whitespaceKeep, white
  */
 export function useLoadedPatches(diff: DiffResult | null, range: CommitRange | null) {
   const [loaded, setLoaded] = useState<ReadonlyMap<string, LoadedPatch>>(() => new Map());
-  const keyOf = (path: string) => `${rangeKey(range)}:${path}`;
+  const keyOf = (path: string) => `${commitRangeKey(range)}:${path}`;
   const loadedPatchOf = (file: DiffFile): string | null => (diff === null ? null : currentLoadedPatch(loaded.get(keyOf(file.path)), file, diff));
   const rememberLoadedPatch = (file: DiffFile, patch: string) => {
     if (diff !== null) setLoaded((current) => new Map(current).set(keyOf(file.path), loadedPatchEntry(file, diff, patch)));

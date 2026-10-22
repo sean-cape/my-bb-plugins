@@ -2,12 +2,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
-import { COMMENTS_KEY_HELP, COMMENTS_KEYMAP } from "./lib/app/comments/comments-keymap";
 import type { DiffThread } from "./lib/app/comments/threads";
-import { KEY_HELP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
+import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import type { Cursor, NavRow } from "./lib/app/keys/nav";
-import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
+import { runReviewCommand } from "./lib/app/keys/review-commands";
 import type { FileNavModel } from "./lib/app/keys/review-keys-context";
 import { NO_SUGGESTIONS, type SuggestionActions } from "./lib/app/suggestions/actions";
 import { threadSuggestion, type LinesAt } from "./lib/app/suggestions/thread-suggestion";
@@ -15,6 +13,7 @@ import { applySuggestionsInCheckout } from "./lib/server";
 import { applySuggestionsToText, suggestionLanded, newSideLines, parseCommentBody, suggestionBlock, suggestionBlocks, suggestionCaret, suggestionLines } from "./lib/suggestions";
 import type { DiffComment, SuggestionItem } from "./lib/types";
 import { commentsMessage } from "./server";
+import { reviewEnv } from "./test-helpers";
 
 const item = (startLine: number, endLine: number, expected: string[], replacement: string[], path = "a.ts"): SuggestionItem => ({ id: `c${startLine}`, path, startLine, endLine, expected, replacement });
 
@@ -165,32 +164,25 @@ describe("threadSuggestion", () => {
 });
 
 describe("suggestion keys", () => {
-  it("are bound without conflicts and listed", () => {
+  it("are bound", () => {
     expect([REVIEW_KEYMAP.I, REVIEW_KEYMAP.A, REVIEW_KEYMAP.B, REVIEW_KEYMAP.gB]).toEqual([{ kind: "suggest" }, { kind: "applySuggestion" }, { kind: "batchSuggestion" }, { kind: "commitSuggestions" }]);
-    expect(keymapConflicts(REVIEW_KEYMAP)).toEqual([]);
-    expect(keymapConflicts(COMMENTS_KEYMAP)).toEqual([]);
-    expect(unboundHelpKeys(KEY_HELP.filter((section) => section.title === "Suggested changes"), [REVIEW_KEYMAP])).toEqual([]);
-    expect(unboundHelpKeys(COMMENTS_KEY_HELP, [COMMENTS_KEYMAP])).toEqual([]);
   });
 
   const rows: NavRow[] = [1, 2, 3].map((n) => ({ left: n, right: n, hunk: 0, changed: false }));
   const run = (command: Parameters<typeof runReviewCommand>[0], cursor: Cursor, visual: Cursor | null, suggestions: Partial<SuggestionActions>, threads: DiffThread[] = []) => {
-    let state = { cursor, visual, pending: "", focused: null, cursorShown: true } as ReturnType<ReviewEnv["keys"]["get"]>;
     const calls: unknown[] = [];
     const models = new Map<string, FileNavModel>([["a.ts", { rows, cutToHunk: false, element: () => null }]]);
-    const env = {
-      keys: { get: () => state, set: (patch: Partial<typeof state>) => (state = { ...state, ...patch }), models, threads: new Map(), findings: new Map() },
-      files: [{ path: "a.ts", collapsed: false, rows }],
-      threads,
-      findings: [],
-      onScreen: () => true,
-      seat: () => null,
-      reveal: () => {},
-      focusComposer: () => false,
-      startComment: (path: string, range: unknown) => calls.push(["startComment", path, range]),
-      notify: (message: string) => calls.push(["notify", message]),
-      suggestions: { ...NO_SUGGESTIONS, ...suggestions },
-    } as unknown as ReviewEnv;
+    const { env } = reviewEnv(
+      {
+        files: [{ path: "a.ts", collapsed: false, rows }],
+        threads,
+        focusComposer: () => false,
+        startComment: (path: string, range: unknown) => calls.push(["startComment", path, range]),
+        notify: (message: string) => calls.push(["notify", message]),
+        suggestions: { ...NO_SUGGESTIONS, ...suggestions },
+      },
+      { cursor, visual, models },
+    );
     runReviewCommand(command, 1, env);
     return calls;
   };

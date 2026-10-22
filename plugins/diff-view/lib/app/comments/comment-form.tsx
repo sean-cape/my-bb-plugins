@@ -13,6 +13,9 @@ import { DiffCommentsContext } from "./context";
 import { returnToDiff } from "../keys/review-keys-context";
 import { CARD_HEADER, SPANNING_CARD } from "../ui/spanning-card";
 
+/** The box grows with its text up to this many rows, then scrolls. */
+const MAX_ROWS = 12;
+
 export function DiffCommentForm({
   path,
   range,
@@ -101,7 +104,7 @@ export function DiffCommentForm({
           ref={textareaRef}
           autoFocus
           value={body}
-          rows={Math.min(12, Math.max(reply ? 2 : 3, body.split("\n").length + 1))}
+          rows={Math.min(MAX_ROWS, Math.max(reply ? 2 : 3, body.split("\n").length + 1))}
           onChange={(event) => setBody(event.target.value)}
           onFocus={placeCaret}
           onKeyDown={(event) => {

@@ -9,11 +9,45 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { DIFF_CHANGED } from "./events";
 import { checkedLineRange, locationLabel } from "./lib/line-range";
-import { applySuggestionsInCheckout, emptyDiff, environmentDiff, environmentFileSides, gitBlame, grepDefinitions, grepUsages, hideVendoredFiles, localEnvironmentPath, patchFromSides, runDifftastic } from "./lib/server";
+import {
+  applySuggestionsInCheckout,
+  blameRev,
+  createExpiringCache,
+  emptyDiff,
+  environmentCommits,
+  environmentDiff,
+  environmentFileSides,
+  environmentRangeDiff,
+  environmentRangeFileSides,
+  gitBlame,
+  grepDefinitions,
+  grepUsages,
+  hideVendoredFiles,
+  localEnvironmentPath,
+  noCommits,
+  patchFromSides,
+  runDifftastic,
+} from "./lib/server";
 import { SUGGESTION_NOTE, mentionsSuggestion } from "./lib/suggestions";
-import type { BlameLine, DiffComment, DiffFile, DiffResult, FileSlice, StructuralDiff, SuggestionItem, SymbolLookup, SymbolUsages } from "./lib/types";
-import { COMMIT_SHA_PATTERN, blameRev, commitRangeKey, createExpiringCache, environmentCommits, environmentRangeDiff, environmentRangeFileSides } from "./lib/server";
-import { WORKTREE_SHA, type CommitRange, type DiffCommits } from "./lib/types";
+import {
+  COMMIT_SHA_PATTERN,
+  WORKTREE_SHA,
+  commitRangeKey,
+  type BlameLine,
+  type CommitRange,
+  type DiffComment,
+  type DiffCommits,
+  type DiffFile,
+  type DiffResult,
+  type FileSides,
+  type FileSlice,
+  type StructuralDiff,
+  type SuggestionItem,
+  type SymbolLookup,
+  type SymbolUsages,
+} from "./lib/types";
+
+const NO_ENVIRONMENT = "This thread has no environment yet.";
 
 const threadIdSchema = z.string().min(1);
 const commentBodySchema = z.string().trim().min(1).max(10_000);
@@ -164,7 +198,10 @@ export const rpcContract = defineRpcContract({
   diff_comments_send: { input: threadInput, output: z.object({ sent: z.number().int() }) },
   /** The text patch of a file the diff came without one for, made from its two sides. */
   diff_load_patch: { input: z.object({ threadId: threadIdSchema, path: z.string().min(1), range: commitRangeSchema.nullable().default(null) }).strict(), output: z.object({ patch: z.string().nullable() }) },
-  /** Who last changed lines of a file in the thread's checkout: the working tree for the new side, the merge base for the old. */
+  /**
+   * Who last changed lines of a file in the thread's checkout, at the commit either side of the diff reads: a range's
+   * end and start, else the working tree for the new side and the merge base for the old.
+   */
   diff_blame: {
     input: z.object({ threadId: threadIdSchema, path: z.string().min(1), side: sideSchema, startLine: z.number().int().min(1), endLine: z.number().int().min(1), range: commitRangeSchema.nullable().default(null) }).strict(),
     output: z.object({ lines: z.array(blameLineSchema) }),
@@ -314,13 +351,13 @@ export default async function plugin(bb: BbPluginApi) {
   /** The thread's changes, or a range of its history; `fresh` reads them again rather than from the cache. */
   async function fullDiff(threadId: string, range: CommitRange | null = null, fresh = false): Promise<DiffResult> {
     const environmentId = await threadEnvironment(threadId);
-    if (environmentId === null) return emptyDiff("none", "This thread has no environment yet.");
+    if (environmentId === null) return emptyDiff("none", NO_ENVIRONMENT);
     // A range ending at the working tree changes with every edit, so it is never served from the cache.
     return diffCache.get(`${environmentId}:${commitRangeKey(range)}`, () => (range === null ? environmentDiff(bb.sdk, environmentId) : environmentRangeDiff(bb.sdk, environmentId, range)), fresh || range?.to === WORKTREE_SHA);
   }
 
   async function threadDiff(threadId: string, refresh: boolean, range: CommitRange | null): Promise<DiffResult> {
-    // The whole diff is read afresh on every ask, as it always was; a range of commits only changes on a refresh.
+    // The whole diff is read afresh on every ask; a range of commits only changes on a refresh.
     const diff = await fullDiff(threadId, range, refresh || range === null);
     return (await settings.get()).hideVendored ? hideVendoredFiles(diff) : diff;
   }
@@ -332,9 +369,9 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   /** One file of the thread's changes (or a range of them) and its two sides as text. */
-  async function fileWithSides(threadId: string, path: string, range: CommitRange | null): Promise<{ file: DiffFile; sides: { old: string | null; new: string | null } }> {
+  async function fileWithSides(threadId: string, path: string, range: CommitRange | null): Promise<{ file: DiffFile; sides: FileSides }> {
     const environmentId = await threadEnvironment(threadId);
-    if (environmentId === null) throw new Error("This thread has no environment yet.");
+    if (environmentId === null) throw new Error(NO_ENVIRONMENT);
     const diff = await fullDiff(threadId, range);
     const file = fileInDiff(diff, path);
     const sides = range === null ? await environmentFileSides(bb.sdk, environmentId, file, diff.baseRef) : await environmentRangeFileSides(bb.sdk, environmentId, range, file);
@@ -486,7 +523,7 @@ export default async function plugin(bb: BbPluginApi) {
     },
     diff_commits: async ({ threadId }) => {
       const environmentId = await threadEnvironment(threadId);
-      if (environmentId === null) return { commits: [], marks: [], base: null };
+      if (environmentId === null) return noCommits();
       return environmentCommits(bb.sdk, environmentId);
     },
   });

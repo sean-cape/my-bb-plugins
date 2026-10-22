@@ -48,9 +48,9 @@ export const COMMENTS_KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["H"], action: "Hide or show the threads in the files and narrative views" },
       { keys: ["gl"], action: "Split or unified" },
       { keys: ["R"], action: "Refresh" },
-      { keys: ["?"], action: "This sheet" },
       { keys: ["A"], action: "Apply the thread's suggested change now" },
       { keys: ["B", "gB"], action: "Add it to the batch or take it out / apply the batch" },
+      { keys: ["?"], action: "This sheet" },
     ],
   },
 ];

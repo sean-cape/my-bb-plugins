@@ -1,7 +1,6 @@
 // Hiding whitespace changes from a unified patch, as `git diff -w` would. Pure, for the tests.
+import { walkPatch } from "../../patch";
 import type { DiffSide } from "../../types";
-
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
 
 /** Above this many deleted × added lines in one block, only the block's matching ends pair up. */
 const MAX_LCS_CELLS = 4_000_000;
@@ -26,50 +25,24 @@ function parse(patch: string): { preamble: string[]; hunks: Hunk[] } {
   const preamble: string[] = [];
   const hunks: Hunk[] = [];
   let current: Hunk | null = null;
-  let oldLine = 0;
-  let newLine = 0;
-  let oldLeft = 0;
-  let newLeft = 0;
-  for (const text of patch.split("\n")) {
-    const header = HUNK_HEADER.exec(text);
-    if (header !== null) {
-      oldLine = Number(header[1]);
-      oldLeft = header[2] === undefined ? 1 : Number(header[2]);
-      newLine = Number(header[3]);
-      newLeft = header[4] === undefined ? 1 : Number(header[4]);
+  walkPatch(patch, {
+    header: ({ text }) => {
       current = { header: text, lines: [], after: [] };
       hunks.push(current);
-      continue;
-    }
-    if (current === null) {
-      preamble.push(text);
-      continue;
-    }
-    const last = current.lines.at(-1);
-    if (text.startsWith("\\") && last !== undefined && last.noNewline === null && current.after.length === 0) {
-      last.noNewline = text;
-      continue;
-    }
-    if (oldLeft <= 0 && newLeft <= 0) {
-      current.after.push(text);
-      continue;
-    }
-    const mark = text[0];
-    if (mark === "-") {
-      current.lines.push({ mark, text: text.slice(1), noNewline: null, old: oldLine++, new: null });
-      oldLeft -= 1;
-    } else if (mark === "+") {
-      current.lines.push({ mark, text: text.slice(1), noNewline: null, old: null, new: newLine++ });
-      newLeft -= 1;
-    } else if (mark === " " || text === "") {
-      // Some tools strip the space off blank context lines.
-      current.lines.push({ mark: " ", text: text.slice(1), noNewline: null, old: oldLine++, new: newLine++ });
-      oldLeft -= 1;
-      newLeft -= 1;
-    } else {
-      current.after.push(text);
-    }
-  }
+    },
+    line: ({ mark, text, old, new: added }) => {
+      current!.lines.push({ mark, text, noNewline: null, old, new: added });
+    },
+    other: (text) => {
+      if (current === null) {
+        preamble.push(text);
+        return;
+      }
+      const last = current.lines.at(-1);
+      if (text.startsWith("\\") && last !== undefined && last.noNewline === null && current.after.length === 0) last.noNewline = text;
+      else current.after.push(text);
+    },
+  });
   return { preamble, hunks };
 }
 

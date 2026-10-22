@@ -1,4 +1,5 @@
 import type { BlameLine, DiffFile, DiffResult, DiffSide } from "../types";
+import { lineSpan, lineSpanLabel } from "../line-range";
 import { lineOn, rowIndexOf, type Cursor, type NavRow } from "./keys/nav";
 
 /** Lines `start`–`end` of one side of a file. */
@@ -40,8 +41,7 @@ export function fileLink(diff: LinkDiff, file: LinkFile, span: LineSpan | null):
   const url = githubFileUrl(diff, file, span);
   if (url !== null) return url;
   if (span === null) return sidePath(file, fileSide(file));
-  const lines = span.end > span.start ? `L${span.start}-${span.end}` : `L${span.start}`;
-  return `${sidePath(file, span.side)}:${lines}${span.side === "LEFT" ? " (old side)" : ""}`;
+  return `${sidePath(file, span.side)}:${lineSpanLabel(span.start, span.end)}${span.side === "LEFT" ? " (old side)" : ""}`;
 }
 
 export function githubCommitUrl(repo: string, sha: string): string {
@@ -101,15 +101,20 @@ export function blameCommits(lines: readonly BlameLine[]): BlameCommit[] {
   return [...bySha.values()];
 }
 
-/** `L10–12, 14` for sorted line numbers. */
+/** `L10-12, 14` for sorted line numbers. */
 export function lineRuns(lines: readonly number[]): string {
   const runs: string[] = [];
   let start = lines[0];
   for (let index = 1; index <= lines.length; index++) {
     const previous = lines[index - 1]!;
     if (index < lines.length && lines[index] === previous + 1) continue;
-    runs.push(start === previous ? `${start}` : `${start}–${previous}`);
+    runs.push(lineSpan(start!, previous));
     start = lines[index];
   }
   return runs.length === 0 ? "" : `L${runs.join(", ")}`;
+}
+
+/** Opens a link in a new tab that can't reach back into bb's window. */
+export function openInNewTab(url: string): void {
+  window.open(url, "_blank", "noopener,noreferrer");
 }

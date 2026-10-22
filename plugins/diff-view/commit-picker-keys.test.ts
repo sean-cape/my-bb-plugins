@@ -2,8 +2,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { COMMIT_PICKER_KEYMAP, collapsedRangeNote, pickedRange, pickerRows, rangeLabel, toggledRangeStart } from "./lib/app/commits/commit-range";
 import type { CommitRange, DiffCommits } from "./lib/types";
 import { createPickerKeys } from "../vim-mode/lib/index.ts";
+import { sha } from "./test-helpers";
 
-const sha = (n: number) => String(n).repeat(40).slice(0, 40);
 const commit = (n: number) => ({ sha: sha(n), summary: `commit ${n}`, author: "a", date: "" });
 const HISTORY: DiffCommits = { commits: [commit(1), commit(2), commit(3), commit(4)], marks: [{ sha: sha(1), label: "Since last review" }], base: sha(9) };
 
@@ -17,8 +17,8 @@ function picker(commits: DiffCommits) {
     setHighlight: (index) => (state.highlight = index),
     pick: (index) => {
       const row = rows[index]!;
-      const range = pickedRange(commits, row, state.start);
-      if (range !== undefined) state.picked = { range, note: collapsedRangeNote(commits, row, state.start) };
+      const pick = pickedRange(commits, row, state.start);
+      if (pick.kind === "range") state.picked = { range: pick.range, note: collapsedRangeNote(commits, row, state.start) };
     },
     keymap: COMMIT_PICKER_KEYMAP,
     onCommand: (_, { event }) => {

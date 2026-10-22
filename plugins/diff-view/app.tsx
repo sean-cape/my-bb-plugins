@@ -37,8 +37,8 @@ function useThreadDiffSource(threadId: string): DiffSource {
   const rpc = useRpc<typeof rpcContract>();
   return useMemo<DiffSource>(
     () => ({
-      getDiff: (refresh, range) => rpc.call("diff_get", { threadId, refresh, range: range ?? null }),
-      getStructural: (path, range) => rpc.call("diff_structural", { threadId, path, range: range ?? null }),
+      getDiff: (refresh, range) => rpc.call("diff_get", { threadId, refresh, range }),
+      getStructural: (path, range) => rpc.call("diff_structural", { threadId, path, range }),
       symbolDefinitions: (symbol) => rpc.call("symbol_definitions", { threadId, symbol }),
       symbolUsages: (symbol) => rpc.call("symbol_usages", { threadId, symbol }),
       peekFile: (path, startLine, endLine) => rpc.call("symbol_peek_file", { threadId, path, startLine, endLine }),
@@ -54,8 +54,8 @@ function useThreadDiffSource(threadId: string): DiffSource {
       deleteComment: async (id) => {
         await rpc.call("diff_comment_delete", { id });
       },
-      loadPatch: async (path, range) => (await rpc.call("diff_load_patch", { threadId, path, range: range ?? null })).patch,
-      blame: async (path, side, startLine, endLine, range) => (await rpc.call("diff_blame", { threadId, path, side, startLine, endLine, range: range ?? null })).lines,
+      loadPatch: async (path, range) => (await rpc.call("diff_load_patch", { threadId, path, range })).patch,
+      blame: async (path, side, startLine, endLine, range) => (await rpc.call("diff_blame", { threadId, path, side, startLine, endLine, range })).lines,
       // The checkout's changes stay uncommitted, so a commit message has nowhere to go.
       suggestions: { apply: (items) => rpc.call("diff_suggestions_apply", { threadId, items }) },
       commits: () => rpc.call("diff_commits", { threadId }),

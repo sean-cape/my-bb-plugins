@@ -334,10 +334,27 @@ export interface SuggestionsApplied {
 /** The pseudo-commit standing for a checkout's uncommitted changes, last in an environment's commit list. */
 export const WORKTREE_SHA = "WORKTREE";
 
+/** The all-zero sha `git blame` gives a line not committed yet. */
+export const UNCOMMITTED_SHA = "0".repeat(40);
+
+/** A commit sha as a range end may name one: abbreviated or full, lowercase hex. */
+export const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/u;
+
 /** Part of a diff's history: the changes after `from` (exclusive) up to and including `to`. */
 export interface CommitRange {
   from: string;
   to: string;
+}
+
+/** One file's text either side of a diff; null for a side the file isn't on, or isn't text on. */
+export interface FileSides {
+  old: string | null;
+  new: string | null;
+}
+
+/** A range as a cache or React key: `all` for all the changes. */
+export function commitRangeKey(range: CommitRange | null): string {
+  return range === null ? "all" : `${range.from}..${range.to}`;
 }
 
 export interface DiffCommit {

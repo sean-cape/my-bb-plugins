@@ -1,5 +1,6 @@
 // Server-side diff pieces shared by every plugin that shows the diff view: parsing unified diffs, reading an
-// environment's changes, running difftastic, and searching a checkout for symbols.
+// environment's changes (all of them, or a range of its commits) and a file's sides, running difftastic, searching a
+// checkout for symbols, blame, applying suggested changes to a checkout, and a short-lived cache for diff reads.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -8,8 +9,24 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { SuggestionConflictError, applySuggestionsToText, suggestionFileText, suggestionsByPath } from "./suggestions";
-import type { BlameLine, DiffFile, DiffResult, DiffSide, FileSlice, StructuralDiff, SuggestionItem, SuggestionsApplied, SymbolDefinition, SymbolUsages } from "./types";
-import { WORKTREE_SHA, type CommitRange, type DiffCommit, type DiffCommits } from "./types";
+import {
+  COMMIT_SHA_PATTERN,
+  WORKTREE_SHA,
+  type BlameLine,
+  type CommitRange,
+  type DiffCommit,
+  type DiffCommits,
+  type DiffFile,
+  type DiffResult,
+  type DiffSide,
+  type FileSlice,
+  type FileSides,
+  type StructuralDiff,
+  type SuggestionItem,
+  type SuggestionsApplied,
+  type SymbolDefinition,
+  type SymbolUsages,
+} from "./types";
 
 const execFileAsync = promisify(execFile);
 
@@ -103,7 +120,20 @@ export async function environmentDiff(sdk: Sdk, environmentId: string): Promise<
 
 const LOCAL_DIFF_MAX_BUFFER = 256 * 1024 * 1024;
 const LOCAL_DIFF_TIMEOUT_MS = 120_000;
+/** For git commands that answer at once: a remote's URL, a merge base, a rev-parse. */
+const GIT_QUICK_TIMEOUT_MS = 10_000;
+// quotepath off, so a non-ASCII path comes out as itself rather than quoted octal bytes.
+const GIT_DIFF = ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff"];
 const UNTRACKED_DIFF_CONCURRENCY = 8;
+
+function localGitOptions(cwd: string) {
+  return { cwd, maxBuffer: LOCAL_DIFF_MAX_BUFFER, timeout: LOCAL_DIFF_TIMEOUT_MS };
+}
+
+/** A diff with no commits to pick from. */
+export function noCommits(): DiffCommits {
+  return { commits: [], marks: [], base: null };
+}
 
 /**
  * The same diff as bb's SDK gives (against the merge base, or HEAD for uncommitted changes, untracked files included)
@@ -117,10 +147,10 @@ export async function localEnvironmentDiff(sdk: Sdk, environmentId: string, merg
 
 /** `git diff from to` in a checkout; a null `to` is the working tree, untracked files included. */
 async function checkoutDiff(dir: string, from: string, to: string | null): Promise<DiffFile[]> {
-  const options = { cwd: dir, maxBuffer: LOCAL_DIFF_MAX_BUFFER, timeout: LOCAL_DIFF_TIMEOUT_MS };
-  if (to !== null) return splitUnifiedDiff((await execFileAsync("git", ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "-M", from, to, "--"], options)).stdout);
+  const options = localGitOptions(dir);
+  if (to !== null) return splitUnifiedDiff((await execFileAsync("git", [...GIT_DIFF, "-M", from, to, "--"], options)).stdout);
   const [{ stdout: tracked }, { stdout: untrackedList }] = await Promise.all([
-    execFileAsync("git", ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "-M", from, "--"], options),
+    execFileAsync("git", [...GIT_DIFF, "-M", from, "--"], options),
     execFileAsync("git", ["ls-files", "--others", "--exclude-standard", "-z"], options),
   ]);
   const untracked = untrackedList.split("\0").filter((path) => path !== "");
@@ -200,7 +230,7 @@ function parseNameStatus(text: string): DiffFile[] {
 /** `git diff --no-index` output, which exits 1 when the files differ. */
 async function gitDiffNoIndex(paths: [string, string], cwd: string): Promise<string> {
   try {
-    return (await execFileAsync("git", ["-c", "core.quotepath=off", "diff", "--no-index", "--no-color", "--no-ext-diff", "--", ...paths], { cwd, maxBuffer: LOCAL_DIFF_MAX_BUFFER, timeout: LOCAL_DIFF_TIMEOUT_MS })).stdout;
+    return (await execFileAsync("git", [...GIT_DIFF, "--no-index", "--", ...paths], localGitOptions(cwd))).stdout;
   } catch (error) {
     const failed = error as { code?: number; stdout?: unknown };
     if (failed.code === 1 && typeof failed.stdout === "string") return failed.stdout;
@@ -242,7 +272,7 @@ export function githubRepoFromRemote(remote: string | null): string | null {
 /** The GitHub repository a checkout's `origin` remote points at, or null. */
 export async function checkoutGithubRepo(dir: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], { cwd: dir, timeout: 10_000 });
+    const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], { cwd: dir, timeout: GIT_QUICK_TIMEOUT_MS });
     return githubRepoFromRemote(stdout);
   } catch {
     return null;
@@ -263,7 +293,7 @@ async function environmentRepo(sdk: Sdk, environmentId: string): Promise<string 
  * Both sides of one file of an environment diff, as text; null for a side that does not exist or is binary.
  * `mergeBaseRef` is the diff's resolved merge-base sha (`DiffResult.baseRef`), not a branch name.
  */
-export async function environmentFileSides(sdk: Sdk, environmentId: string, file: DiffFile, mergeBaseRef: string | null): Promise<{ old: string | null; new: string | null }> {
+export async function environmentFileSides(sdk: Sdk, environmentId: string, file: DiffFile, mergeBaseRef: string | null): Promise<FileSides> {
   const read = async (side: "old" | "new"): Promise<string | null> => {
     if (side === "old" && file.status === "added") return null;
     if (side === "new" && file.status === "removed") return null;
@@ -306,7 +336,7 @@ export function structuralUnavailable(reason: string): StructuralDiff {
 }
 
 /** difftastic's syntax-aware diff of two versions of `path`; a null side is a file that does not exist there. */
-export async function runDifftastic(difftPath: string, path: string, sides: { old: string | null; new: string | null }): Promise<StructuralDiff> {
+export async function runDifftastic(difftPath: string, path: string, sides: FileSides): Promise<StructuralDiff> {
   if (isVendoredPath(path)) return structuralUnavailable("Vendored file; the structural diff skips these.");
   const base: StructuralDiff = { ...structuralUnavailable(""), reason: null, oldText: sides.old ?? "", newText: sides.new ?? "" };
   if (sides.old === null && sides.new === null) return { ...base, reason: "This file has no text content on either side (binary or oversized)." };
@@ -383,6 +413,7 @@ const PEEK_AFTER = 18;
 const DEFINITION_LIMIT = 40;
 const USAGE_LIMIT = 300;
 const GIT_GREP_TIMEOUT_MS = 15_000;
+const GIT_BLAME_TIMEOUT_MS = 15_000;
 
 interface GrepHit {
   path: string;
@@ -457,9 +488,6 @@ function parseGrepLine(line: string): GrepHit | null {
   return match === null ? null : { path: match[1]!, line: Number.parseInt(match[2]!, 10), snippet: match[3]!.trim().slice(0, 200) };
 }
 
-/** The all-zero sha `git blame` gives a line not committed yet. */
-export const UNCOMMITTED_SHA = "0".repeat(40);
-
 /** `git blame --porcelain` (or `--line-porcelain`) output as one entry per line; a commit's details come with its first line only. */
 export function parseBlamePorcelain(output: string): BlameLine[] {
   const commits = new Map<string, { author: string; time: number; summary: string }>();
@@ -501,17 +529,23 @@ export function blameRev(side: DiffSide, range: CommitRange | null, base: string
   return base ?? range?.from ?? "HEAD";
 }
 
+/** `path` when it is relative and has no `..` to climb out of the checkout it is read in; throws otherwise. */
+export function checkedRelativePath(path: string): string {
+  if (path.startsWith("/") || path.split("/").includes("..")) throw new Error(`Invalid path ${path}`);
+  return path;
+}
+
 /**
  * Who last changed lines `start`–`end` of `path` in a checkout: at `rev`, or in the working tree (uncommitted lines
  * included) when `rev` is null.
  */
 export async function gitBlame(dir: string, rev: string | null, path: string, start: number, end: number): Promise<BlameLine[]> {
-  if (path.startsWith("/") || path.split("/").includes("..")) throw new Error("Invalid path");
+  checkedRelativePath(path);
   const from = Math.max(1, Math.min(start, end));
   const to = Math.max(from, start, end);
   const args = ["blame", "--porcelain", "-L", `${from},${to}`, ...(rev === null ? [] : [rev]), "--", path];
   try {
-    const { stdout } = await execFileAsync("git", args, { cwd: dir, timeout: GIT_GREP_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await execFileAsync("git", args, { cwd: dir, timeout: GIT_BLAME_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 });
     return parseBlamePorcelain(stdout);
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
@@ -524,8 +558,7 @@ export async function gitBlame(dir: string, rev: string | null, path: string, st
  * leaves it, a symlink, or anything but a regular file, since a link could point a write anywhere.
  */
 async function checkoutFile(root: string, path: string): Promise<string> {
-  const file = resolve(root, path);
-  if (!file.startsWith(root + sep)) throw new Error(`Invalid path ${path}`);
+  const file = resolve(root, checkedRelativePath(path));
   let stats;
   try {
     stats = await lstat(file);
@@ -602,17 +635,10 @@ export async function applySuggestionsInCheckout(dir: string, items: readonly Su
   });
 }
 
-/** A commit sha as a range end may name one: abbreviated or full, lowercase hex. */
-export const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/u;
-
 /** Throws unless both ends are shas (or `to` is the working tree), so nothing else reaches git or a GitHub URL. */
 export function checkedRange(range: CommitRange): CommitRange {
   if (!COMMIT_SHA_PATTERN.test(range.from) || (range.to !== WORKTREE_SHA && !COMMIT_SHA_PATTERN.test(range.to))) throw new Error("Invalid commit range");
   return range;
-}
-
-export function commitRangeKey(range: CommitRange | null): string {
-  return range === null ? "all" : `${range.from}..${range.to}`;
 }
 
 const LOG_FORMAT = "%H%x1f%an%x1f%aI%x1f%s";
@@ -628,7 +654,7 @@ export function parseGitLog(output: string): DiffCommit[] {
 
 /** The commits on a checkout's HEAD since `base`, oldest first, and uncommitted changes as a last pseudo-commit. */
 export async function localCommits(dir: string, base: string): Promise<DiffCommit[]> {
-  const options = { cwd: dir, maxBuffer: LOCAL_DIFF_MAX_BUFFER, timeout: LOCAL_DIFF_TIMEOUT_MS };
+  const options = localGitOptions(dir);
   const [{ stdout: log }, { stdout: status }] = await Promise.all([
     execFileAsync("git", ["log", "--reverse", `--format=${LOG_FORMAT}`, `${base}..HEAD`, "--"], options),
     execFileAsync("git", ["status", "--porcelain"], options),
@@ -645,39 +671,39 @@ export async function localCommits(dir: string, base: string): Promise<DiffCommi
  */
 export async function environmentCommits(sdk: Sdk, environmentId: string, base?: string | null): Promise<DiffCommits> {
   const dir = await localEnvironmentPath(sdk, environmentId);
-  if (dir === null) return { commits: [], marks: [], base: null };
+  if (dir === null) return noCommits();
   try {
     const known = base !== undefined ? base : await checkoutMergeBase(dir, (await sdk.environments.get({ environmentId })).mergeBaseBranch);
     // Resolved to a full sha, since a range's ends must be shas.
-    const from = (await execFileAsync("git", ["rev-parse", "--verify", "--end-of-options", `${known ?? "HEAD"}^{commit}`], { cwd: dir, timeout: 10_000 })).stdout.trim();
+    const from = (await execFileAsync("git", ["rev-parse", "--verify", "--end-of-options", `${known ?? "HEAD"}^{commit}`], { cwd: dir, timeout: GIT_QUICK_TIMEOUT_MS })).stdout.trim();
     return { commits: await localCommits(dir, from), marks: [], base: from };
   } catch {
-    return { commits: [], marks: [], base: null };
+    return noCommits();
   }
 }
 
 /** Where a checkout's HEAD left `branch`; null, a diff of uncommitted changes alone, without a branch. */
 async function checkoutMergeBase(dir: string, branch: string | null): Promise<string | null> {
   if (branch === null) return null;
-  return (await execFileAsync("git", ["merge-base", branch, "HEAD"], { cwd: dir, timeout: 10_000 })).stdout.trim();
+  return (await execFileAsync("git", ["merge-base", branch, "HEAD"], { cwd: dir, timeout: GIT_QUICK_TIMEOUT_MS })).stdout.trim();
 }
 
 /** One file at a commit of a checkout; null when it is not there. */
 async function gitShow(dir: string, rev: string, path: string): Promise<string | null> {
   try {
-    return (await execFileAsync("git", ["show", `${rev}:${path}`], { cwd: dir, maxBuffer: LOCAL_DIFF_MAX_BUFFER, timeout: LOCAL_DIFF_TIMEOUT_MS })).stdout;
+    return (await execFileAsync("git", ["show", `${rev}:${path}`], localGitOptions(dir))).stdout;
   } catch {
     return null;
   }
 }
 
 /** Both sides of one file of a range of a checkout's history: at `from`, and at `to` (the working tree for `WORKTREE`). */
-export async function localRangeFileSides(dir: string, range: CommitRange, file: DiffFile): Promise<{ old: string | null; new: string | null }> {
+export async function localRangeFileSides(dir: string, range: CommitRange, file: DiffFile): Promise<FileSides> {
   const { from, to } = checkedRange(range);
   const readNew = async () => {
     if (to !== WORKTREE_SHA) return gitShow(dir, to, file.path);
-    if (file.path.startsWith("/") || file.path.split("/").includes("..")) return null;
     try {
+      checkedRelativePath(file.path);
       // Resolved first, so a symlink in the checkout can't read a file outside it.
       const [root, real] = await Promise.all([realpath(dir), realpath(join(dir, file.path))]);
       return real.startsWith(root + sep) ? await readFile(real, "utf8") : null;
@@ -713,7 +739,7 @@ export async function environmentRangeDiff(sdk: Sdk, environmentId: string, rang
   };
 }
 
-export async function environmentRangeFileSides(sdk: Sdk, environmentId: string, range: CommitRange, file: DiffFile): Promise<{ old: string | null; new: string | null }> {
+export async function environmentRangeFileSides(sdk: Sdk, environmentId: string, range: CommitRange, file: DiffFile): Promise<FileSides> {
   const dir = await localEnvironmentPath(sdk, environmentId);
   if (dir === null) throw new Error(NO_CHECKOUT_FOR_RANGE);
   return localRangeFileSides(dir, range, file);

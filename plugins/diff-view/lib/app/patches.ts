@@ -1,6 +1,7 @@
 // Each file's patch as the view draws and searches it: the diff's own, or the one "Load diff" fetched, with whitespace
 // changes made context while they are hidden. Pure, for the tests.
 import type { DiffFile, DiffResult, DiffSide } from "../types";
+import { rowKey } from "./text/patch-rows";
 import { ignoreWhitespacePatch, onlyWhitespaceChanged, patchHasChanges } from "./text/whitespace";
 
 export interface ShownPatch {
@@ -46,8 +47,8 @@ export function whitespaceOnlyPaths(files: readonly DiffFile[], patchOf: (file: 
 
 /** The lines a hunk whose changes are all whitespace stays drawn for: a thread's, on its side, and a finding's, on the new side. */
 export function whitespaceKeep(threads: readonly { side: DiffSide; line: number | null }[], findings: readonly { line: number | null }[]): (side: DiffSide, line: number) => boolean {
-  const marked = new Set([...threads.flatMap((thread) => (thread.line === null ? [] : [`${thread.side}:${thread.line}`])), ...findings.flatMap((entry) => (entry.line === null ? [] : [`RIGHT:${entry.line}`]))]);
-  return (side, line) => marked.has(`${side}:${line}`);
+  const marked = new Set([...threads.flatMap((thread) => (thread.line === null ? [] : [rowKey(thread.side, thread.line)])), ...findings.flatMap((entry) => (entry.line === null ? [] : [rowKey("RIGHT", entry.line)]))]);
+  return (side, line) => marked.has(rowKey(side, line));
 }
 
 /** One file's patch as drawn: as it is, or with whitespace changes made context outside the lines `keep` holds. */

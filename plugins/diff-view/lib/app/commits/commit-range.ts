@@ -1,5 +1,6 @@
 // Picking part of a diff's history: the picker's rows, the range each row stands for, and how a range is named.
 import { WORKTREE_SHA, type CommitRange, type DiffCommits, type DiffSide, type LineRange } from "../../types";
+import { shortSha } from "../format";
 import type { Keymap } from "../ui/vim-keys-core";
 
 export type CommitRow = { kind: "all" } | { kind: "mark"; sha: string; label: string } | { kind: "commit"; index: number };
@@ -11,12 +12,8 @@ export function headOf(commits: DiffCommits): string | null {
   return commits.commits.at(-1)?.sha ?? null;
 }
 
-export function rangeKey(range: CommitRange | null): string {
-  return range === null ? "all" : `${range.from}..${range.to}`;
-}
-
 export function shortCommit(sha: string): string {
-  return sha === WORKTREE_SHA ? "Uncommitted" : sha.slice(0, 7);
+  return sha === WORKTREE_SHA ? "Uncommitted" : shortSha(sha);
 }
 
 /** All changes, then each mark (but one at the head, which would read as nothing), then each commit oldest first. */
@@ -31,20 +28,29 @@ export function normalizeRange(range: CommitRange, commits: DiffCommits): Commit
   return range.from === commits.base && range.to === headOf(commits) ? null : range;
 }
 
-/** Commits `a` through `b` (either order) as a range; undefined when the first commit's parent is unknown. */
-export function commitsRange(commits: DiffCommits, a: number, b: number): CommitRange | null | undefined {
+/** What a row picks: a range (null for all the changes), or nothing when where the range would start is unknown. */
+export type RangePick = { kind: "range"; range: CommitRange | null } | { kind: "unknown" };
+
+const UNKNOWN: RangePick = { kind: "unknown" };
+
+function picked(range: CommitRange | null): RangePick {
+  return { kind: "range", range };
+}
+
+/** Commits `a` through `b` (either order) as a range; unknown when the first commit's parent is. */
+export function commitsRange(commits: DiffCommits, a: number, b: number): RangePick {
   const low = Math.min(a, b);
   const high = Math.max(a, b);
   const to = commits.commits[high]?.sha;
   const from = low === 0 ? commits.base : (commits.commits[low - 1]?.sha ?? null);
-  if (to === undefined || from === null) return undefined;
-  return normalizeRange({ from, to }, commits);
+  if (to === undefined || from === null) return UNKNOWN;
+  return picked(normalizeRange({ from, to }, commits));
 }
 
-/** From a mark to the head; undefined when there are no commits. */
-export function markRange(commits: DiffCommits, sha: string): CommitRange | null | undefined {
+/** From a mark to the head; unknown when there are no commits. */
+export function markRange(commits: DiffCommits, sha: string): RangePick {
   const head = headOf(commits);
-  return head === null ? undefined : normalizeRange({ from: sha, to: head }, commits);
+  return head === null ? UNKNOWN : picked(normalizeRange({ from: sha, to: head }, commits));
 }
 
 /**
@@ -58,10 +64,10 @@ export function toggledRangeStart(row: CommitRow | undefined, start: number | nu
 
 /**
  * What Enter (or a click) on `row` picks, with a range started at commit `start`: All changes, a mark to the head, or
- * the commits from the start to the row (the row alone without one); undefined when the first commit's parent is unknown.
+ * the commits from the start to the row (the row alone without one); unknown when the first commit's parent is.
  */
-export function pickedRange(commits: DiffCommits, row: CommitRow, start: number | null): CommitRange | null | undefined {
-  if (row.kind === "all") return null;
+export function pickedRange(commits: DiffCommits, row: CommitRow, start: number | null): RangePick {
+  if (row.kind === "all") return picked(null);
   if (row.kind === "mark") return markRange(commits, row.sha);
   return commitsRange(commits, start ?? row.index, row.index);
 }
@@ -70,7 +76,8 @@ export function pickedRange(commits: DiffCommits, row: CommitRow, start: number 
 export function collapsedRangeNote(commits: DiffCommits, row: CommitRow, start: number | null): string | null {
   if (start === null || row.kind !== "commit") return null;
   if (row.index === start) return `Showing ${shortCommit(commits.commits[start]!.sha)} alone: Enter on another commit picks a range from it`;
-  return commitsRange(commits, start, row.index) === null ? "Those are all the commits: showing all changes" : null;
+  const range = commitsRange(commits, start, row.index);
+  return range.kind === "range" && range.range === null ? "Those are all the commits: showing all changes" : null;
 }
 
 /** Whether the range reads up to the head, where the new side's lines are the ones comments and findings sit on. */

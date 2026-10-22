@@ -2,6 +2,7 @@ import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState
 import type { ReactNode } from "react";
 import type { DiffSide, HunkExplanation, SemanticChange, StructuralDiff, SymbolLookup } from "../../types";
 import { checkedLineRange } from "../../line-range";
+import { rowKey } from "../text/patch-rows";
 import { cn } from "../utils";
 import { FAST, OPACITY_TRANSITION, PRESS, SHIMMER, enter } from "../ui/motion";
 import { errorMessage } from "../format";
@@ -275,7 +276,7 @@ export function StructuralPatch({
   const notesByLine = useMemo(() => {
     const byLine = new Map<string, { threads: typeof threads; findings: typeof findings }>();
     const at = (side: DiffSide, line: number) => {
-      const key = `${side}:${line}`;
+      const key = rowKey(side, line);
       let entry = byLine.get(key);
       if (entry === undefined) byLine.set(key, (entry = { threads: [], findings: [] }));
       return entry;
@@ -324,7 +325,7 @@ export function StructuralPatch({
     return side === range.startSide ? line >= range.startLine : line <= range.line;
   };
   const annotationRow = (side: DiffSide, line: number) => {
-    const notes = notesByLine.get(`${side}:${line}`);
+    const notes = notesByLine.get(rowKey(side, line));
     const list = notes?.threads ?? [];
     const composing = composer !== null && composer.line === line && composer.side === side;
     const lineFindings = notes?.findings ?? [];

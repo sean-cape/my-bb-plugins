@@ -3,7 +3,7 @@ import { excerptPatch, fileForRef, type NarrativePatchFile, type NarrativeRef } 
 import type { DiffThread } from "../comments/threads";
 import type { PlacedFinding } from "../findings/findings";
 import type { ComposerAnchor } from "../patch-annotations";
-import { patchRows } from "../text/patch-rows";
+import { patchRows, rowKey } from "../text/patch-rows";
 import { ignoreWhitespacePatch } from "../text/whitespace";
 
 /** A step's refs to one file, in the order the step first names each file. */
@@ -51,7 +51,7 @@ export function excerptAnnotations(
   composer: ComposerAnchor | null,
 ): { threads: DiffThread[]; findings: PlacedFinding[]; composer: ComposerAnchor | null } {
   const { at } = patchRows(patch);
-  const shows = (side: "LEFT" | "RIGHT", line: number) => at.has(`${side}:${line}`);
+  const shows = (side: "LEFT" | "RIGHT", line: number) => at.has(rowKey(side, line));
   return {
     threads: threads.filter((thread) => thread.line === null || shows(thread.side, thread.line)),
     findings: findings.filter((entry) => entry.line !== null && shows("RIGHT", entry.line)),

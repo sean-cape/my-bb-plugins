@@ -1,18 +1,12 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { pickerRows } from "./lib/app/commits/commit-range";
-import { blameRev, environmentCommits, unquoteGitPath, withUnlistedFiles } from "./lib/server";
+import { blameRev, environmentCommits, environmentRangeDiff, localEnvironmentDiff, unquoteGitPath, withUnlistedFiles } from "./lib/server";
 import { WORKTREE_SHA, type CommitRange, type DiffResult, type DiffSide } from "./lib/types";
 import plugin from "./server";
-
-const execFileAsync = promisify(execFile);
-const git = async (cwd: string, ...args: string[]) => (await execFileAsync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd })).stdout.trim();
+import { fakeEnvironmentSdk, git, tempRepo } from "./test-helpers";
 
 describe("blameRev", () => {
   const range = (to: string): CommitRange => ({ from: "f".repeat(40), to });
@@ -75,8 +69,7 @@ describe("a local checkout", () => {
 
   /** main with one commit, and a feature branch checked out two commits ahead of it. */
   async function branchCheckout(): Promise<{ dir: string; base: string }> {
-    dir = await mkdtemp(join(tmpdir(), "diff-server-test-"));
-    await git(dir, "init", "-q", "-b", "main");
+    dir = await tempRepo("diff-server-test-");
     await writeFile(join(dir, "a.txt"), "one\n");
     await git(dir, "add", ".");
     await git(dir, "commit", "-q", "-m", "base");
@@ -91,13 +84,27 @@ describe("a local checkout", () => {
 
   it("lists the branch's commits from its merge base without being given it", async () => {
     const checkout = await branchCheckout();
-    const sdk = {
-      system: { config: async () => ({ primaryHostId: "host" }) },
-      environments: { get: async () => ({ mergeBaseBranch: "main", workspacePath: checkout.dir, hostId: "host" }) },
-    } as unknown as BbPluginApi["sdk"];
-    const history = await environmentCommits(sdk, "env");
+    const history = await environmentCommits(fakeEnvironmentSdk(checkout.dir), "env");
     expect(history.base).toBe(checkout.base);
     expect(history.commits.map((commit) => commit.summary)).toEqual(["second", "third"]);
+  });
+
+  it("reads non-ASCII paths as themselves, not as git's quoted octal", async () => {
+    const checkout = await branchCheckout();
+    const name = "caf\u00e9-\u65e5\u672c.txt";
+    await writeFile(join(checkout.dir, name), "one\n");
+    await git(checkout.dir, "add", ".");
+    await git(checkout.dir, "commit", "-q", "-m", "named");
+    const head = await git(checkout.dir, "rev-parse", "HEAD");
+    const range = await environmentRangeDiff(fakeEnvironmentSdk(checkout.dir), "env", { from: checkout.base, to: head });
+    expect(range.files.map((file) => file.path)).toEqual(["a.txt", name]);
+    await writeFile(join(checkout.dir, name), "two\n");
+    await writeFile(join(checkout.dir, `new-${name}`), "new\n");
+    const local = await localEnvironmentDiff(fakeEnvironmentSdk(checkout.dir), "env", head);
+    expect(local?.map((file) => [file.path, file.status])).toEqual([
+      [name, "modified"],
+      [`new-${name}`, "added"],
+    ]);
   });
 
   async function load(checkoutDir: string, diff: () => string) {

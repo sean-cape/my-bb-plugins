@@ -2,6 +2,7 @@ import { createContext, useEffect, useMemo, useRef, useState } from "react";
 import type { DiffSide } from "../../types";
 import type { Cursor } from "../keys/nav";
 import type { ReviewKeys } from "../keys/review-keys-context";
+import { rowKey } from "../text/patch-rows";
 import { compileSearch } from "../ui/vim-keys-core";
 import { createSearchHighlights, textRanges } from "../ui/vim-keys";
 import { cursorOnMatch, searchDiff, stepMatch, type DiffMatch, type SearchedFile } from "./diff-search";
@@ -38,7 +39,6 @@ export function useDiffSearch({ keys, files, scroller, painting }: { keys: Revie
   const pattern = useMemo(() => compileSearch(query), [query]);
   const search = useMemo(() => (pattern === null ? null : searchDiff(files, pattern)), [files, pattern]);
   const total = search?.matches.length ?? 0;
-  // While typing, the match Enter would reach.
   const preview = typing !== null && search !== null ? (stepMatch(search, typing.from, null, 1, 1, true)?.index ?? null) : null;
   const shownIndex = typing !== null ? preview : current !== null && current < total ? current : null;
 
@@ -73,15 +73,15 @@ export function useDiffSearch({ keys, files, scroller, painting }: { keys: Revie
         // A fold row takes a hidden line's numbers; that line is not drawn.
         model.rows.forEach((row, rowIndex) => {
           if (row.expander === true) return;
-          if (row.left !== null) rows!.set(`LEFT:${row.left}`, rowIndex);
-          if (row.right !== null) rows!.set(`RIGHT:${row.right}`, rowIndex);
+          if (row.left !== null) rows!.set(rowKey("LEFT", row.left), rowIndex);
+          if (row.right !== null) rows!.set(rowKey("RIGHT", row.right), rowIndex);
         });
         rowsOf.set(match.path, rows);
       }
       const reached = index === at ? cursorOnMatch(match, want).side : null;
       for (const side of ["LEFT", "RIGHT"] as const) {
         const line = side === "LEFT" ? match.left : match.right;
-        const row = line === null ? undefined : rows.get(`${side}:${line}`);
+        const row = line === null ? undefined : rows.get(rowKey(side, line));
         const element = row === undefined ? null : model.element(row, side);
         if (element === null) continue;
         // A structural row holds both sides and a "moved" label; its code is marked per side.

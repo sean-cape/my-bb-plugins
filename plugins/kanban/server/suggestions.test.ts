@@ -5,7 +5,9 @@ import type { PrComment } from "../shared/comments";
 import { commentsBody } from "./comments/pr-comments";
 import type { KanbanContext } from "./context";
 import { commitSuggestionsToPr, createSuggestions } from "./diff/suggestions";
-import { stubGitData } from "./git-data-stub";
+import { STUB_HEAD_BRANCH, STUB_HEAD_REPO, STUB_PR, stubGitData } from "./git-data-stub";
+
+const TOKEN = "token";
 
 const item = (path: string, startLine: number, endLine: number, expected: string[], replacement: string[], id = `review-comment:${startLine}`): SuggestionItem => ({ id, path, startLine, endLine, expected, replacement });
 
@@ -17,9 +19,9 @@ describe("commitSuggestionsToPr", () => {
   it("makes one commit on the head branch with every file's suggestions, keeping each file's mode", async () => {
     const git = stubGitData({ "src/a.ts": "one\ntwo\nthree\n", "run.sh": "echo hi\n" });
     vi.stubGlobal("fetch", git.fetch);
-    const result = await commitSuggestionsToPr("acme/widgets", 7, [item("src/a.ts", 3, 3, ["three"], ["THREE"]), item("src/a.ts", 1, 1, ["one"], []), item("run.sh", 1, 1, ["echo hi"], ["echo hello"])], null, "token");
-    const head = git.refs.get("feature/x")!;
-    expect(result).toEqual({ applied: 3, commitUrl: `https://github.com/fork/widgets/commit/${head}` });
+    const result = await commitSuggestionsToPr(STUB_PR.repo, STUB_PR.number, [item("src/a.ts", 3, 3, ["three"], ["THREE"]), item("src/a.ts", 1, 1, ["one"], []), item("run.sh", 1, 1, ["echo hi"], ["echo hello"])], null, TOKEN);
+    const head = git.refs.get(STUB_HEAD_BRANCH)!;
+    expect(result).toEqual({ applied: 3, commitUrl: `https://github.com/${STUB_HEAD_REPO}/commit/${head}` });
     const commit = git.commits.get(head)!;
     expect(commit.message).toBe("Apply suggestions from code review");
     expect(commit.parents).toHaveLength(1);
@@ -28,11 +30,11 @@ describe("commitSuggestionsToPr", () => {
     expect(git.blobs.get(tree.find((entry) => entry.path === "run.sh")!.sha)).toBe("echo hello\n");
     expect(git.blobs.get(tree.find((entry) => entry.path === "src/a.ts")!.sha)).toBe("two\nTHREE\n");
     expect(git.writes.map((write) => `${write.method} ${write.path}`)).toEqual([
-      "POST /repos/fork/widgets/git/blobs",
-      "POST /repos/fork/widgets/git/blobs",
-      "POST /repos/fork/widgets/git/trees",
-      "POST /repos/fork/widgets/git/commits",
-      "PATCH /repos/fork/widgets/git/refs/heads/feature/x",
+      `POST /repos/${STUB_HEAD_REPO}/git/blobs`,
+      `POST /repos/${STUB_HEAD_REPO}/git/blobs`,
+      `POST /repos/${STUB_HEAD_REPO}/git/trees`,
+      `POST /repos/${STUB_HEAD_REPO}/git/commits`,
+      `PATCH /repos/${STUB_HEAD_REPO}/git/refs/heads/${STUB_HEAD_BRANCH}`,
     ]);
     expect(git.writes.at(-1)!.body).toEqual({ sha: head, force: false });
   });
@@ -40,18 +42,18 @@ describe("commitSuggestionsToPr", () => {
   it("writes nothing when any item's lines moved on the branch, naming them", async () => {
     const git = stubGitData({ "src/a.ts": "one\ntwo\n" });
     vi.stubGlobal("fetch", git.fetch);
-    await expect(commitSuggestionsToPr("acme/widgets", 7, [item("src/a.ts", 1, 1, ["one"], ["ONE"]), item("src/a.ts", 2, 2, ["2"], ["TWO"])], "Tidy", "token")).rejects.toThrow(/src\/a\.ts:L2 changed since the suggestion was made/u);
-    await expect(commitSuggestionsToPr("acme/widgets", 7, [item("src/gone.ts", 1, 1, ["x"], ["y"])], null, "token")).rejects.toThrow(/src\/gone\.ts is not on the pull request's branch/u);
+    await expect(commitSuggestionsToPr(STUB_PR.repo, STUB_PR.number, [item("src/a.ts", 1, 1, ["one"], ["ONE"]), item("src/a.ts", 2, 2, ["2"], ["TWO"])], "Tidy", TOKEN)).rejects.toThrow(/src\/a\.ts:L2 changed since the suggestion was made/u);
+    await expect(commitSuggestionsToPr(STUB_PR.repo, STUB_PR.number, [item("src/gone.ts", 1, 1, ["x"], ["y"])], null, TOKEN)).rejects.toThrow(/src\/gone\.ts is not on the pull request's branch/u);
     expect(git.writes).toEqual([]);
   });
 });
 
 describe("createSuggestions", () => {
-  const prTicket = { id: "t1", pr: { repo: "acme/widgets", number: 7 }, threadId: null } as unknown as Ticket;
+  const prTicket = { id: "t1", pr: STUB_PR, threadId: null } as unknown as Ticket;
   const ctx = (warn: (message: string) => void) =>
     ({
       bb: { log: { warn } },
-      settings: { get: async () => ({ githubToken: "token", ghPath: "" }) },
+      settings: { get: async () => ({ githubToken: TOKEN, ghPath: "" }) },
       stmts: { byId: { get: () => undefined } },
     }) as unknown as KanbanContext;
 

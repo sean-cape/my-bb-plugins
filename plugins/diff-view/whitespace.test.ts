@@ -3,7 +3,8 @@ import { ignoreWhitespacePatch, onlyWhitespaceChanged, patchHasChanges } from ".
 import { patchRows } from "./lib/app/text/patch-rows";
 import { stepExcerpts } from "./lib/app/narrative/excerpts";
 import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
-import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
+import { runReviewCommand } from "./lib/app/keys/review-commands";
+import { reviewEnv } from "./test-helpers";
 
 const lines = (...rows: string[]) => rows.join("\n");
 
@@ -92,7 +93,7 @@ describe("hiding whitespace in the narrative and from the keys", () => {
   it("binds W, which works before there is a line", () => {
     expect(REVIEW_KEYMAP.W).toEqual({ kind: "whitespace" });
     let toggled = 0;
-    runReviewCommand({ kind: "whitespace" }, 1, { toggleWhitespace: () => (toggled += 1) } as unknown as ReviewEnv);
+    runReviewCommand({ kind: "whitespace" }, 1, reviewEnv({ toggleWhitespace: () => (toggled += 1) }).env);
     expect(toggled).toBe(1);
   });
 });

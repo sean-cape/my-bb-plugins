@@ -1,31 +1,45 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  blameRev,
+  checkedRange,
   emptyDiff,
+  environmentCommits,
   environmentDiff,
   environmentFileSides,
+  environmentRangeDiff,
+  environmentRangeFileSides,
+  gitBlame,
   grepDefinitions,
   grepUsages,
   hideVendoredFiles,
   isVendoredPath,
   localEnvironmentPath,
+  noCommits,
   patchFromSides,
-  gitBlame,
-  blameRev,
   runDifftastic,
   structuralUnavailable,
-  checkedRange,
-  commitRangeKey,
-  environmentCommits,
-  environmentRangeDiff,
-  environmentRangeFileSides,
 } from "bb-diff-view/server";
-import type { DiffSide } from "bb-diff-view/types";
+import { commitRangeKey, type DiffSide, type FileSides } from "bb-diff-view/types";
 import type { Ticket } from "../../shared/board";
 import type { BlameLine, CommitRange, DiffCommits, StructuralDiff, SymbolLookup, SymbolUsages, TicketDiff } from "../../shared/diff";
 import type { KanbanContext } from "../context";
-import { GITHUB_API, github, githubBlame, githubHeaders, githubPages, resolveToken, type GithubPull, type GithubPullFile } from "../github";
-import { COMPARE_FILE_LIMIT, compareCommits, mergeBaseOf, pullCommits, type GithubReview } from "../github";
+import {
+  COMPARE_FILE_LIMIT,
+  GITHUB_API,
+  NO_GITHUB_TOKEN,
+  compareCommits,
+  github,
+  githubBlame,
+  githubHeaders,
+  githubPages,
+  mergeBaseOf,
+  pullCommits,
+  resolveToken,
+  type GithubPull,
+  type GithubPullFile,
+  type GithubReview,
+} from "../github";
 import { commitsFromGithub, reviewMarks } from "./commits";
 import { errorMessage, execFileAsync } from "../util";
 
@@ -33,6 +47,8 @@ type DiffFile = TicketDiff["files"][number];
 
 /** GitHub lists at most 3,000 files of a pull request: 30 pages of 100. */
 const PR_FILE_PAGES = 30;
+const PR_FILE_LIMIT = PR_FILE_PAGES * 100;
+const NO_ENVIRONMENT = "The card's thread has no environment yet.";
 /** How long a PR's diff is kept, and an environment's range (its local git read). */
 const PR_DIFF_TTL_MS = 10 * 60_000;
 const ENVIRONMENT_RANGE_TTL_MS = 15_000;
@@ -60,7 +76,7 @@ type Truncation = Pick<TicketDiff, "truncated" | "truncatedNote">;
 
 /** Whether GitHub's file list of a pull request (`listed` files of its `changedFiles`) left some out. */
 export function prTruncation(listed: number, changedFiles: number | undefined): Truncation {
-  const limit = (PR_FILE_PAGES * 100).toLocaleString();
+  const limit = PR_FILE_LIMIT.toLocaleString();
   if (changedFiles !== undefined) {
     if (listed >= changedFiles) return { truncated: false, truncatedNote: null };
     return {
@@ -68,7 +84,7 @@ export function prTruncation(listed: number, changedFiles: number | undefined): 
       truncatedNote: `Showing ${listed.toLocaleString()} of this pull request's ${changedFiles.toLocaleString()} changed files: GitHub lists at most ${limit}. Open it on GitHub, or review it from a local checkout, for the rest.`,
     };
   }
-  if (listed < PR_FILE_PAGES * 100) return { truncated: false, truncatedNote: null };
+  if (listed < PR_FILE_LIMIT) return { truncated: false, truncatedNote: null };
   return { truncated: true, truncatedNote: `GitHub lists at most ${limit} files of a pull request; this one may have more.` };
 }
 
@@ -129,7 +145,7 @@ export function createChanges(ctx: KanbanContext) {
     let diff: TicketDiff;
     if (ticket.pr !== null) {
       const auth = await resolveToken(settings);
-      if (auth === null) return emptyDiff("pr", "No GitHub token configured.");
+      if (auth === null) return emptyDiff("pr", NO_GITHUB_TOKEN);
       const { mergeBase, files } = await compareCommits(ticket.pr.repo, range.from, range.to, auth.token);
       diff = {
         source: "pr",
@@ -147,7 +163,7 @@ export function createChanges(ctx: KanbanContext) {
       };
     } else if (ticket.threadId !== null) {
       const thread = await bb.sdk.threads.get({ threadId: ticket.threadId });
-      if (thread.environmentId === null) return emptyDiff("none", "The card's thread has no environment yet.");
+      if (thread.environmentId === null) return emptyDiff("none", NO_ENVIRONMENT);
       diff = await environmentRangeDiff(bb.sdk, thread.environmentId, range);
     } else {
       return emptyDiff("none", "No pull request or thread to diff.");
@@ -161,7 +177,7 @@ export function createChanges(ctx: KanbanContext) {
     const lastReviewSha = ctx.stmts.latestCompletedReview.get(ticket.id)?.commit_sha ?? null;
     if (ticket.pr !== null) {
       const auth = await resolveToken(settings);
-      if (auth === null) return { commits: [], marks: [], base: null };
+      if (auth === null) return noCommits();
       const [list, githubReviews, diff] = await Promise.all([
         pullCommits(ticket.pr.repo, ticket.pr.number, auth.token),
         githubPages<GithubReview>(`/repos/${ticket.pr.repo}/pulls/${ticket.pr.number}/reviews`, auth.token).catch(() => null),
@@ -173,11 +189,11 @@ export function createChanges(ctx: KanbanContext) {
     }
     if (ticket.threadId !== null) {
       const thread = await bb.sdk.threads.get({ threadId: ticket.threadId });
-      if (thread.environmentId === null) return { commits: [], marks: [], base: null };
+      if (thread.environmentId === null) return noCommits();
       const found = await environmentCommits(bb.sdk, thread.environmentId);
       return { ...found, marks: reviewMarks(found.commits, lastReviewSha, null, null) };
     }
-    return { commits: [], marks: [], base: null };
+    return noCommits();
   }
 
   /** The card's changes: the PR's files from GitHub, else the thread environment's working diff. */
@@ -188,7 +204,7 @@ export function createChanges(ctx: KanbanContext) {
       if (cached !== null) return cached;
       const auth = await resolveToken(settings);
       if (auth === null) {
-        return emptyDiff("pr", "No GitHub token configured.");
+        return emptyDiff("pr", NO_GITHUB_TOKEN);
       }
       const { repo, number } = ticket.pr;
       const [pull, files] = await Promise.all([
@@ -224,17 +240,17 @@ export function createChanges(ctx: KanbanContext) {
     }
     if (ticket.threadId !== null) {
       const thread = await bb.sdk.threads.get({ threadId: ticket.threadId });
-      if (thread.environmentId === null) return emptyDiff("none", "The card's thread has no environment yet.");
+      if (thread.environmentId === null) return emptyDiff("none", NO_ENVIRONMENT);
       return environmentDiff(bb.sdk, thread.environmentId);
     }
     return emptyDiff("none", "No pull request or thread to diff.");
   }
 
   /** Both sides of one file of the card's diff (`diff`, read for `range`), as text; null for a side that does not exist or is binary. */
-  async function fileSides(ticket: Ticket, diff: TicketDiff, file: DiffFile, range: CommitRange | null): Promise<{ old: string | null; new: string | null }> {
+  async function fileSides(ticket: Ticket, diff: TicketDiff, file: DiffFile, range: CommitRange | null): Promise<FileSides> {
     if (ticket.pr !== null) {
       const auth = await resolveToken(settings);
-      if (auth === null) throw new Error("No GitHub token configured.");
+      if (auth === null) throw new Error(NO_GITHUB_TOKEN);
       const fetchSide = async (ref: string | null, filePath: string): Promise<string | null> => {
         if (ref === null) return null;
         const response = await fetch(`${GITHUB_API}/repos/${ticket.pr!.repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}?ref=${ref}`, {
@@ -251,7 +267,7 @@ export function createChanges(ctx: KanbanContext) {
     }
     if (ticket.threadId !== null) {
       const thread = await bb.sdk.threads.get({ threadId: ticket.threadId });
-      if (thread.environmentId === null) throw new Error("The card's thread has no environment yet.");
+      if (thread.environmentId === null) throw new Error(NO_ENVIRONMENT);
       if (range !== null) return environmentRangeFileSides(bb.sdk, thread.environmentId, range, file);
       return environmentFileSides(bb.sdk, thread.environmentId, file, diff.baseRef);
     }
@@ -354,8 +370,10 @@ export function createChanges(ctx: KanbanContext) {
   }
 
   /**
-   * Who last changed lines of one side of a file in the card's diff. A PR's sides are its head and merge base, read
-   * from a local checkout that has them, else GitHub's blame; an environment's are its working tree and merge base.
+   * Who last changed lines of one side of a file in the card's diff, at the commits the diff compares: with commits
+   * picked, the range's end and its old side (on a PR, the comparison's merge base); else a PR's head and merge base,
+   * or an environment's working tree and merge base. A PR's are read from a local checkout that has them, else from
+   * GitHub's blame.
    */
   async function blame(ticket: Ticket, path: string, side: DiffSide, startLine: number, endLine: number, range: CommitRange | null = null): Promise<BlameLine[]> {
     const diff = await ticketDiff(ticket, false, range);
@@ -367,7 +385,7 @@ export function createChanges(ctx: KanbanContext) {
       if (rev === null) throw new Error("The PR's commits aren't known yet; refresh the diff.");
       if (localDir !== null && (await containsCommit(localDir.path, rev))) return gitBlame(localDir.path, rev, filePath, startLine, endLine);
       const auth = await resolveToken(settings);
-      if (auth === null) throw new Error("No GitHub token configured.");
+      if (auth === null) throw new Error(NO_GITHUB_TOKEN);
       return githubBlame(ticket.pr.repo, rev, filePath, startLine, endLine, auth.token);
     }
     if (localDir === null) throw new Error("Blame needs a local checkout of the card's thread.");

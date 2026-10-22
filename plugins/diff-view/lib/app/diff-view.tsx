@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ReactNode } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { DiffComment, DiffFile, SemanticChange, SymbolLookup } from "../types";
+import { commitRangeKey, type DiffComment, type DiffFile, type SemanticChange, type SymbolLookup } from "../types";
 import { otherLayout, readPreference, requestReload, setDiffPreferences, useDiffInstance, useDiffPreferences, writePreference } from "./state";
 import { DEFAULT_LABELS, type DiffSource, type DiffViewLabels } from "./source";
 import { DeltaStrip, useDelta } from "./delta-strip";
@@ -15,7 +15,7 @@ import type { ShownPatch } from "./patches";
 import { useLoadedPatches, useShownPatches } from "./use-patches";
 import { BlamePopover, fileActionsFor, type FileMenuActions } from "./file-actions";
 import { DiffViewProviders } from "./providers";
-import type { LineSpan } from "./links";
+import { openInNewTab, type LineSpan } from "./links";
 import { WHOLE_FILE, type ComposerAnchor, type PatchAnnotationProps } from "./patch-annotations";
 import { riskByPath } from "./risk";
 import { STICKY_HEADER_PX, cursorLineY } from "./scroll";
@@ -45,22 +45,21 @@ import { KEY_HELP, REVIEW_KEYMAP, type ReviewCommand } from "./keys/keymap";
 import { KeysOverlay, Picker, SearchBox, fileItems } from "./keys/overlays";
 import { focusAt, runReviewCommand, type FindingAnchor, type ReviewEnv } from "./keys/review-commands";
 import { createReviewKeys, useReviewKeysState, type FocusedAnnotation } from "./keys/review-keys-context";
-import { scrollPageBy, scrollerEnv, visibleCursor as paneVisibleCursor, type ScrollerPane } from "./keys/scroller-env";
+import { LINE_PX, scrollPageBy, scrollerEnv, visibleCursor as paneVisibleCursor, type ScrollerPane } from "./keys/scroller-env";
 import { useCursorReveal } from "./keys/use-cursor-reveal";
 import { CommentsView } from "./comments/comments-view";
 import { COMMENTS_KEY_HELP, COMMENTS_KEYMAP, type CommentsCommand } from "./comments/comments-keymap";
 import { threadCounts } from "./comments/comment-sections";
 import { useCommentsMode } from "./comments/use-comments-mode";
-import { errorMessage } from "./format";
+import { errorMessage, groupByPath, plural } from "./format";
 import { cn } from "./utils";
 import { enter } from "./ui/motion";
 import { focusRow, focusWhenShown, type Keymap } from "./ui/vim-keys";
-import { LINE_PX } from "./keys/scroller-env";
 import { SkeletonLines } from "./ui/skeleton";
 import { TruncationBanner } from "./large-diff";
 import { useSuggestions } from "./suggestions/use-suggestions";
 import { CommitPicker, CommitsButton, useCommitRange } from "./commits/commit-picker";
-import { rangeEndsAtHead, rangeKey, rangeLabel } from "./commits/commit-range";
+import { rangeEndsAtHead, rangeLabel } from "./commits/commit-range";
 import { useDiffSearch } from "./search/use-diff-search";
 import type { SearchedFile } from "./search/diff-search";
 import { NO_FILE_FILTER } from "./file-filter";
@@ -101,6 +100,7 @@ export interface DiffViewProps {
 
 const NO_PLACED_FINDINGS: PlacedFinding[] = [];
 const NO_THREADS: DiffThread[] = [];
+const SWITCH_TO_ALL_FIRST = "switch to All changes (gr) first";
 const NO_FILES: DiffFile[] = [];
 const NO_SEMANTICS: SemanticChange[] = [];
 const NO_RANGES: Array<[number, number]> = [];
@@ -185,8 +185,8 @@ export function DiffView(props: DiffViewProps) {
 
 function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labels: labelOverrides, renderSubmitBar, deltaActions, toolbar }: DiffViewProps) {
   // The part of the history shown; null is all the changes. A partial range is for reading: see `RangeGate`.
-  const { range, setRange, commits, atHead, gate } = useCommitRange(source, instanceKey);
-  const { diff, error } = useDiffResult(source, instanceKey, range);
+  const { commitRange, setCommitRange, commits, atHead, gate } = useCommitRange(source, instanceKey);
+  const { diff, error } = useDiffResult(source, instanceKey, commitRange);
   const notify = (message: string) => toast.message(message, { duration: 1800 });
   const labels = useMemo(() => ({ ...DEFAULT_LABELS, ...labelOverrides }), [labelOverrides]);
   const comments = useComments(source, refreshSignal);
@@ -212,7 +212,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   const delta = useDelta(source, diff?.headSha ?? null);
   const preferences = useDiffPreferences();
   const { findingFilter, hideWhitespace } = preferences;
-  const { rawPatches, whitespaceOnly, loadedPatchOf, rememberLoadedPatch } = useLoadedPatches(diff, range);
+  const { rawPatches, whitespaceOnly, loadedPatchOf, rememberLoadedPatch } = useLoadedPatches(diff, commitRange);
   const { viewed, collapsed, markViewed: markFileViewed, toggleCollapsed, expand, setCollapsedPaths } = useFileMarks(source, diff, (file) => hideWhitespace && whitespaceOnly.has(file.path));
   const currentPaths = useMemo(() => new Set(diff?.files.map((file) => file.path) ?? []), [diff]);
   const reader = useNarrativeReader({ story: narrative.story, instanceKey, currentPaths, viewed });
@@ -249,7 +249,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
       if (accepted) return;
     }
     if (lookup.open.kind === "github") {
-      window.open(`https://github.com/${lookup.open.repo}/blob/${lookup.open.sha}/${definition.path}${definition.line === null ? "" : `#L${definition.line}`}`, "_blank", "noopener,noreferrer");
+      openInNewTab(`https://github.com/${lookup.open.repo}/blob/${lookup.open.sha}/${definition.path}${definition.line === null ? "" : `#L${definition.line}`}`);
       return;
     }
     toast.message(labels.noCheckout);
@@ -270,18 +270,14 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   // `H` leaves every thread out of the files and the narrative; the comments view still lists them.
   const inlineThreads = preferences.hideThreads ? NO_THREADS : shownThreads;
   // Stable per file, so a re-render of the view (scrolling moves the active file) leaves each file's diff untouched.
-  const threadsByPath = useMemo(() => {
-    const byPath = new Map<string, DiffThread[]>();
-    for (const thread of inlineThreads) byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);
-    return byPath;
-  }, [inlineThreads]);
+  const threadsByPath = useMemo(() => groupByPath(inlineThreads), [inlineThreads]);
   const forPath = (path: string) => threadsByPath.get(path) ?? NO_THREADS;
   const shownPatches = useShownPatches({ rawPatches, hideWhitespace, whitespaceOnly, threadsByPath, findingsByPath });
   const { fileFilter, setFileFilter, fileFiltered, fileMarks, shownFiles, unhide } = useFileFilter({ instanceKey, diff, viewed, allThreads: comments.allThreads, findingsByPath, notify });
   // What `/` searches: each file's patch as drawn, so hidden whitespace changes never match.
   const searchFiles = useMemo((): SearchedFile[] => shownFiles.map((file) => ({ path: file.path, patch: shownPatches.get(file.path)?.patch ?? null })), [shownFiles, shownPatches]);
   const textSearch = useDiffSearch({ keys, files: searchFiles, scroller: () => mainRef.current, painting: mode === "files" });
-  const searchCount = textSearch.query === "" ? "" : textSearch.total === 0 ? "No matches" : textSearch.index === null ? `${textSearch.total} match${textSearch.total === 1 ? "" : "es"}` : `${textSearch.index + 1} of ${textSearch.total}`;
+  const searchCount = textSearch.query === "" ? "" : textSearch.total === 0 ? "No matches" : textSearch.index === null ? plural(textSearch.total, "match", "matches") : `${textSearch.index + 1} of ${textSearch.total}`;
   const toggleWhitespace = () => {
     const hide = !hideWhitespace;
     setDiffPreferences({ hideWhitespace: hide });
@@ -426,7 +422,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   };
   const enterNarrative = () => {
     if (!narrativeAvailable) {
-      notify(!gate.whole ? "The narrative covers all the changes; switch to All changes (gr) first" : "This view has no narrative review");
+      notify(!gate.whole ? `The narrative covers all the changes; ${SWITCH_TO_ALL_FIRST}` : "This view has no narrative review");
       return;
     }
     setMode("narrative");
@@ -466,7 +462,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   const hasFiles = diff !== null && diff.files.length > 0;
   useEffect(() => {
     // A new range is a new diff to start at the top of.
-    const placeKey = `${instanceKey}|${rangeKey(range)}`;
+    const placeKey = `${instanceKey}|${commitRangeKey(commitRange)}`;
     if (hasFiles && initialCursor.current?.instanceKey !== placeKey) initialCursor.current = { instanceKey: placeKey, placed: null, done: false };
     placeInitialCursorRef.current();
   });
@@ -508,7 +504,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     () => [...findingsByPath].flatMap(([path, list]) => list.map((entry): FindingAnchor => ({ id: findingAnchorId(entry), path, side: "RIGHT", line: entry.line, item: entry.item }))),
     [findingsByPath],
   );
-  const commitsControl = commits === null || (commits.commits.length === 0 && gate.whole) ? null : { label: rangeLabel(range, commits), partial: range !== null, onOpen: () => setOverlay({ kind: "commits" }) };
+  const commitsControl = commits === null || (commits.commits.length === 0 && gate.whole) ? null : { label: rangeLabel(commitRange, commits), partial: commitRange !== null, onOpen: () => setOverlay({ kind: "commits" }) };
   /** Blame under the line it is about (or the element it was asked from), once that line is in view. */
   const openBlame = (path: string, span: LineSpan, anchor: Element | null) => {
     const model = keys.models.get(path);
@@ -593,7 +589,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     canPostToGithub: source.canPostToGithub ?? false,
     moveComment: (id, target) => void comments.moveComment(id, target),
     canResolve: source.setThreadResolved !== undefined,
-    openUrl: (url) => window.open(url, "_blank", "noopener,noreferrer"),
+    openUrl: openInNewTab,
     openThread: onOpenThread,
     toggleFinding,
     explain: explainHunk,
@@ -672,7 +668,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     mode,
     setMode,
     available: commentsAvailable,
-    unavailable: !gate.whole ? "The comments view covers all the changes; switch to All changes (gr) first" : "No comment threads yet",
+    unavailable: !gate.whole ? `The comments view covers all the changes; ${SWITCH_TO_ALL_FIRST}` : "No comment threads yet",
     narrativeAvailable,
     enterNarrative,
     allThreads: comments.allThreads,
@@ -1047,7 +1043,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   };
 
   return (
-    <DiffViewProviders range={range} source={sourceContext} comments={commentActions} suggestions={suggestions} keys={keys} fileActions={fileMenuActions} searchCss={textSearch.css}>
+    <DiffViewProviders range={commitRange} source={sourceContext} comments={commentActions} suggestions={suggestions} keys={keys} fileActions={fileMenuActions} searchCss={textSearch.css}>
           {/* A wheel or a click means the reader is on the mouse; the cursor hides until the next key. */}
           <div ref={rootRef} data-diff-root="" tabIndex={-1} className="group/diff @container flex h-full min-h-0 flex-col outline-none" onWheelCapture={hideCursor} onPointerDownCapture={hideCursor}>
             <style>{textSearch.css}</style>
@@ -1214,7 +1210,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                       ) : null}
                       {shownFiles.map((file, index) => (
                         <FileSection
-                          key={`${rangeKey(range)}:${file.path}`}
+                          key={`${commitRangeKey(commitRange)}:${file.path}`}
                           file={file}
                           index={index}
                           sectionRef={(node) => {
@@ -1315,16 +1311,16 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
               {overlay?.kind === "commits" && commits !== null ? (
                 <CommitPicker
                   commits={commits}
-                  current={range}
+                  current={commitRange}
                   notify={notify}
                   onClose={closeOverlay}
                   onPick={(next, note) => {
                     closeOverlay();
-                    if (rangeKey(next) === rangeKey(range)) {
+                    if (commitRangeKey(next) === commitRangeKey(commitRange)) {
                       if (note !== null) notify(note);
                       return;
                     }
-                    setRange(next);
+                    setCommitRange(next);
                     notify(note ?? (next === null ? "Showing all changes" : `Showing ${rangeLabel(next, commits)}${rangeEndsAtHead(next, commits) ? "" : ": switch to All changes to comment or mark files viewed"}`));
                   }}
                 />

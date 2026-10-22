@@ -74,13 +74,15 @@ Goal: GitHub's review feature set, with this view's own keys and workflows. Skip
    view instance for the session.
 7. **Copy / open / blame**: `DiffResult.repo` (GitHub `owner/name`, null when unknown) lets the lib build blob URLs
    at `headSha`. Env sources without a GitHub repo copy `path:Lstart-end`. Blame is
-   `DiffSource.blame(path, side, startLine, endLine)`: local `git blame --porcelain` (new side at head, old side at
-   the base), else GitHub's GraphQL blame for PRs.
+   `DiffSource.blame(path, side, startLine, endLine, range)` and reads the commits the diff compares: with commits
+   picked, the range's end (new side) and its old side (a PR range's comparison merge base, an environment range's
+   start); else the head (an environment's working tree) and the merge base (a PR's with its base branch). Local
+   `git blame --porcelain` where the checkout has the commit, else GitHub's GraphQL blame for PRs.
 8. **Commit picker**: `DiffSource.commits()` returns the diff's commits (oldest first) and named marks
    (`Since last review` from kanban's latest stored review's commit, `Since your last GitHub review` from the user's
-   latest submitted PR review). `getDiff`, `getStructural` and `loadPatch` take an optional `CommitRange
-   { from, to }` (from exclusive). A partial range is for reading: comments and viewed marks work only when the
-   range ends at the head and only on the new side; everything else says to switch back to All changes. Env sources
+   latest submitted PR review). `getDiff`, `getStructural`, `loadPatch` and `blame` take a `CommitRange { from, to }`
+   (from exclusive), null for all the changes. A partial range is for reading: comments and viewed marks work only
+   when the range ends at the head and only on the new side; everything else says to switch back to All changes. Env sources
    list commits from the local checkout, with uncommitted changes as a last pseudo-commit.
 9. **Suggestions**: a ```` ```suggestion ```` block in any comment body renders as a small diff of the commented
    lines. `I` opens a comment prefilled with the lines' text in a suggestion block. `DiffSource.suggestions.apply(items,

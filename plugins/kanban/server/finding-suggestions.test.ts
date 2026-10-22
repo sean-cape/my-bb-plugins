@@ -77,12 +77,12 @@ describe("finding suggestions in review reports", () => {
     expect(earlierFindings([review])[0]).toMatchObject({ handle: "r1/F1", suggestion: SUGGESTION });
   });
 
-  it("tells a re-review to carry the suggestion forward, renumbered or nulled", () => {
+  it("hands a re-review each earlier finding with its suggestion", () => {
     const review = storedReview();
     const ticket = { id: "t1", title: "Cache lookups", description: "", pr: null, loop: null } as unknown as Ticket;
     const prompt = reviewPrompt(localSubject("0123456789abcdef0123456789abcdef01234567", "main"), ticket, review, [review], { plan: null, branch: null }, "standard");
-    expect(prompt).toContain('keeps the `"suggestion"` field');
-    expect(prompt).toContain('"suggestion": null');
-    expect(prompt).toContain('"replacement": "const a = 1;\\nconst b = 2;"');
+    const earlier = /## Earlier findings\n[\s\S]*?```json\n([\s\S]*?)\n```/u.exec(prompt)?.[1];
+    expect(earlier).toBeDefined();
+    expect(JSON.parse(earlier!)).toMatchObject([{ handle: "r1/F1", suggestion: SUGGESTION }]);
   });
 });

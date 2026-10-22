@@ -4,7 +4,7 @@ import type { SuggestionItem, SuggestionsApplied } from "bb-diff-view/types";
 import type { Ticket } from "../../shared/board";
 import type { PrComments } from "../comments/pr-comments";
 import type { KanbanContext } from "../context";
-import { github, githubPost, githubRequest, resolveToken } from "../github";
+import { NO_GITHUB_TOKEN, github, githubPost, githubRequest, resolveToken } from "../github";
 
 interface GitTreeEntry {
   path: string;
@@ -77,7 +77,7 @@ export function createSuggestions(ctx: KanbanContext, { prComments }: { prCommen
   async function applySuggestions(ticket: Ticket, items: SuggestionItem[], message: string | null): Promise<SuggestionsApplied> {
     if (ticket.pr !== null) {
       const auth = await resolveToken(settings);
-      if (auth === null) throw new Error("No GitHub token configured.");
+      if (auth === null) throw new Error(NO_GITHUB_TOKEN);
       const result = await commitSuggestionsToPr(ticket.pr.repo, ticket.pr.number, items, message, auth.token);
       // The commit landed; a thread that fails to resolve is only a stale mark, not a failed apply.
       for (const item of items) {

@@ -1,54 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { allDiffThreads, buildDiffThreads } from "./lib/app/comments/threads";
+import { allDiffThreads } from "./lib/app/comments/threads";
 import { commentSections, nextThreadFilter, recountHunk, shownInline, threadCounts, threadStatus } from "./lib/app/comments/comment-sections";
 import { COMMENTS_KEY_HELP, COMMENTS_KEYMAP } from "./lib/app/comments/comments-keymap";
-import { KEY_HELP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
+import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import { keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
-import type { DiffComment, GithubComment } from "./lib/types";
-
-function local(overrides: Partial<DiffComment> & { id: string }): DiffComment {
-  return {
-    path: "a.ts",
-    line: 1,
-    side: "RIGHT",
-    startLine: null,
-    startSide: null,
-    body: "body",
-    target: "local",
-    inReplyTo: null,
-    author: null,
-    authorThreadId: null,
-    createdAt: 0,
-    updatedAt: 0,
-    postedAt: null,
-    postedUrl: null,
-    githubCommentId: null,
-    addressedAt: null,
-    applyId: null,
-    ...overrides,
-  };
-}
-
-function github(overrides: Partial<GithubComment> & { id: string }): GithubComment {
-  return {
-    kind: "review-comment",
-    author: "octocat",
-    mine: false,
-    body: "body",
-    path: "a.ts",
-    line: 1,
-    inReplyTo: null,
-    side: "RIGHT",
-    startLine: null,
-    startSide: null,
-    outdated: false,
-    resolved: null,
-    url: "https://github.invalid/c",
-    createdAt: "1970-01-01T00:00:00Z",
-    addressedAt: null,
-    ...overrides,
-  };
-}
+import { githubComment as github, localComment as local } from "./test-helpers";
 
 // a.ts: lines 1-3 unchanged, 4 replaced, 5-12 unchanged context.
 const A_PATCH = ["@@ -1,12 +1,12 @@", " one", " two", " three", "-four", "+FOUR", " five", " six", " seven", " eight", " nine", " ten", " eleven", " twelve"].join("\n");
@@ -64,9 +20,9 @@ describe("thread status", () => {
   );
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
 
-  it("keeps outdated threads that buildDiffThreads leaves out", () => {
+  it("keeps outdated and resolved threads the diff leaves out", () => {
     expect(threads.map((thread) => thread.id).sort()).toEqual(["open", "review-comment:2", "review-comment:3", "review-comment:4"]);
-    expect(buildDiffThreads([], [github({ id: "review-comment:4", outdated: true })])).toEqual([]);
+    expect(allDiffThreads([], [github({ id: "review-comment:4", outdated: true })]).filter(shownInline)).toEqual([]);
   });
 
   it("names each thread open, resolved or outdated and counts them", () => {
@@ -136,9 +92,7 @@ describe("commentSections", () => {
 describe("comments view keys", () => {
   it("has no conflicting sequences, and every key its help lists is bound", () => {
     expect(keymapConflicts(COMMENTS_KEYMAP)).toEqual([]);
-    expect(keymapConflicts(REVIEW_KEYMAP)).toEqual([]);
     expect(unboundHelpKeys(COMMENTS_KEY_HELP, [COMMENTS_KEYMAP])).toEqual([]);
-    expect(unboundHelpKeys(KEY_HELP, [REVIEW_KEYMAP], ["⌘↩"]).filter((key) => key === "gc" || key === "H")).toEqual([]);
   });
 
   it("maps gc and H in the files view, and gf and F to the view's own commands", () => {

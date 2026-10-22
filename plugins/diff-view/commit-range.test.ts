@@ -1,20 +1,14 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { COMMIT_PICKER_KEYMAP, commitsRange, markRange, pickerRows, rangeEndsAtHead, rangeLabel, rangeSpan } from "./lib/app/commits/commit-range";
-import { FILE_TREE_KEYMAP, KEY_HELP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
-import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
+import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
+import { runReviewCommand } from "./lib/app/keys/review-commands";
 import { checkedRange, createExpiringCache, environmentCommits, environmentRangeDiff, localRangeFileSides, parseGitLog } from "./lib/server";
 import { WORKTREE_SHA, type DiffCommits } from "./lib/types";
-import { createPickerKeys, keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
+import { createPickerKeys, keymapConflicts } from "../vim-mode/lib/index.ts";
+import { fakeEnvironmentSdk, git, reviewEnv, sha, tempRepo } from "./test-helpers";
 
-const execFileAsync = promisify(execFile);
-
-const sha = (n: number) => String(n).repeat(40).slice(0, 40);
 const commit = (n: number) => ({ sha: sha(n), summary: `commit ${n}`, author: "a", date: "2026-10-01T00:00:00Z" });
 const HISTORY: DiffCommits = { commits: [commit(1), commit(2), commit(3)], marks: [{ sha: sha(1), label: "Since last review" }], base: sha(9) };
 
@@ -24,19 +18,19 @@ describe("commit ranges", () => {
   });
 
   it("makes a commit's range start at the one before it, and the first's at the base", () => {
-    expect(commitsRange(HISTORY, 0, 0)).toEqual({ from: sha(9), to: sha(1) });
-    expect(commitsRange(HISTORY, 1, 1)).toEqual({ from: sha(1), to: sha(2) });
-    expect(commitsRange(HISTORY, 2, 1)).toEqual({ from: sha(1), to: sha(3) });
+    expect(commitsRange(HISTORY, 0, 0)).toEqual({ kind: "range", range: { from: sha(9), to: sha(1) } });
+    expect(commitsRange(HISTORY, 1, 1)).toEqual({ kind: "range", range: { from: sha(1), to: sha(2) } });
+    expect(commitsRange(HISTORY, 2, 1)).toEqual({ kind: "range", range: { from: sha(1), to: sha(3) } });
   });
 
   it("calls every commit All changes, and gives up on a first commit with no known base", () => {
-    expect(commitsRange(HISTORY, 0, 2)).toBeNull();
-    expect(commitsRange({ ...HISTORY, base: null }, 0, 1)).toBeUndefined();
+    expect(commitsRange(HISTORY, 0, 2)).toEqual({ kind: "range", range: null });
+    expect(commitsRange({ ...HISTORY, base: null }, 0, 1)).toEqual({ kind: "unknown" });
   });
 
   it("runs a mark to the head", () => {
-    expect(markRange(HISTORY, sha(1))).toEqual({ from: sha(1), to: sha(3) });
-    expect(markRange({ ...HISTORY, commits: [] }, sha(1))).toBeUndefined();
+    expect(markRange(HISTORY, sha(1))).toEqual({ kind: "range", range: { from: sha(1), to: sha(3) } });
+    expect(markRange({ ...HISTORY, commits: [] }, sha(1))).toEqual({ kind: "unknown" });
   });
 
   it("names the selection", () => {
@@ -69,10 +63,8 @@ describe("commit ranges", () => {
 });
 
 describe("gr", () => {
-  it("is bound, listed, and clear of other keys; the picker's own keys too", () => {
+  it("is bound, and the picker's own keys are clear of each other", () => {
     expect(REVIEW_KEYMAP.gr).toEqual({ kind: "commits" });
-    expect(keymapConflicts(REVIEW_KEYMAP)).toEqual([]);
-    expect(unboundHelpKeys(KEY_HELP, [REVIEW_KEYMAP, FILE_TREE_KEYMAP], ["⌘↩"])).toEqual([]);
     const picker = createPickerKeys<"mark">({ length: () => 1, highlight: () => 0, setHighlight: () => {}, pick: () => {}, keymap: COMMIT_PICKER_KEYMAP });
     expect(keymapConflicts(picker.keymaps.list)).toEqual([]);
   });
@@ -80,9 +72,9 @@ describe("gr", () => {
   it("opens the picker, or says why there is none", () => {
     const notify = vi.fn();
     const openCommits = vi.fn();
-    const env = { notify, openCommits: null } as unknown as ReviewEnv;
+    const { env } = reviewEnv({ notify, openCommits: null });
     runReviewCommand({ kind: "commits" }, 1, env);
-    expect(notify).toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith("No commits to pick from here (they need a pull request or a local checkout)");
     runReviewCommand({ kind: "commits" }, 1, { ...env, openCommits });
     expect(openCommits).toHaveBeenCalledOnce();
   });
@@ -119,16 +111,10 @@ describe("range diffs from a local checkout", () => {
     if (dir !== null) await rm(dir, { recursive: true, force: true });
     dir = null;
   });
-  const git = async (cwd: string, ...args: string[]) => (await execFileAsync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd })).stdout.trim();
-  const sdkFor = (workspacePath: string | null) =>
-    ({
-      system: { config: async () => ({ primaryHostId: "host" }) },
-      environments: { get: async () => ({ mergeBaseBranch: "main", workspacePath, hostId: "host" }) },
-    }) as unknown as BbPluginApi["sdk"];
+  const sdkFor = (workspacePath: string | null) => fakeEnvironmentSdk(workspacePath);
 
   it("lists commits since the base with uncommitted changes last, and diffs one commit or the working tree", async () => {
-    dir = await mkdtemp(join(tmpdir(), "commit-range-test-"));
-    await git(dir, "init", "-q", "-b", "main");
+    dir = await tempRepo("commit-range-test-");
     await writeFile(join(dir, "a.txt"), "one\n");
     await git(dir, "add", ".");
     await git(dir, "commit", "-q", "-m", "base");

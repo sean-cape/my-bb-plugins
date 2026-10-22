@@ -2,6 +2,9 @@ import type { SuggestionItem } from "../../types";
 import { newSideLines, suggestionBlocks, suggestionLanded, suggestionLines } from "../../suggestions";
 import type { DiffThread, ThreadEntry } from "../comments/threads";
 
+/** Why a suggestion can't be applied or posted when the diff leaves some of its lines out. */
+export const LINES_NOT_SHOWN = "The diff doesn't show all of the suggestion's lines";
+
 /** New-side lines of a file as the diff shows them; null when it leaves any of them out. */
 export type LinesAt = (path: string, startLine: number, endLine: number) => string[] | null;
 
@@ -73,6 +76,6 @@ export function threadSuggestion(thread: DiffThread, linesAt: LinesAt, appliedId
   if (thread.outdated) return refuse("The thread is outdated: its lines changed since");
   if (thread.resolved === true) return refuse("The thread is resolved");
   if (range === null) return refuse("Suggestions replace lines on the new side");
-  if (expected === null) return refuse("The diff doesn't show all of the suggestion's lines");
+  if (expected === null) return refuse(LINES_NOT_SHOWN);
   return { ...found, item: { id: commentId, path: thread.path, startLine: range.startLine, endLine: range.endLine, expected, replacement: found.replacement }, reason: null, applied: false };
 }

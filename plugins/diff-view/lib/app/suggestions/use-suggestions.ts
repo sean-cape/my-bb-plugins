@@ -4,7 +4,8 @@ import type { DiffResult, SuggestionItem } from "../../types";
 import { linesFromMap, newSideLineMap } from "../../suggestions";
 import type { DiffThread } from "../comments/threads";
 import type { InlineFinding } from "../findings/findings";
-import { errorMessage } from "../format";
+import { errorMessage, plural } from "../format";
+import { openInNewTab } from "../links";
 import type { DiffSource } from "../source";
 import { requestReload } from "../state";
 import type { SuggestionActions } from "./actions";
@@ -99,11 +100,11 @@ export function useSuggestions({
             const ids = new Set(items.map((item) => item.id));
             setApplied((current) => new Set([...current, ...ids]));
             setBatch((current) => current.filter((item) => !ids.has(item.id)));
-            const what = `${result.applied} suggestion${result.applied === 1 ? "" : "s"}`;
+            const what = plural(result.applied, "suggestion");
             if (result.commitUrl === null) toast.success(`Applied ${what} to the checkout`);
             else {
               const url = result.commitUrl;
-              toast.success(`Committed ${what}`, { action: { label: "Open commit", onClick: () => window.open(url, "_blank", "noopener,noreferrer") } });
+              toast.success(`Committed ${what}`, { action: { label: "Open commit", onClick: () => openInNewTab(url) } });
             }
             const findings = items.flatMap((item) => parseFindingSuggestionId(item.id) ?? []);
             if (findings.length > 0) onFindingsApplied(findings);

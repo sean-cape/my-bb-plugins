@@ -1,15 +1,10 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
+import { runReviewCommand } from "./lib/app/keys/review-commands";
 import { environmentDiff, patchFromSides, splitUnifiedDiff, withUnlistedFiles } from "./lib/server";
 import type { DiffResult } from "./lib/types";
-
-const execFileAsync = promisify(execFile);
+import { fakeEnvironmentSdk, git, reviewEnv, tempRepo } from "./test-helpers";
 
 describe("patchFromSides", () => {
   it("makes a patch headed with the file's own paths, which the diff parser reads back", async () => {
@@ -99,20 +94,10 @@ describe("withUnlistedFiles", () => {
 
 describe("Enter on a file without a patch", () => {
   const run = (collapsed: boolean, loadPatch: (() => void) | undefined) => {
-    let state = { cursor: { path: "big.ts", side: "RIGHT", line: null, want: "RIGHT" }, visual: null, pending: "", focused: null } as ReturnType<ReviewEnv["keys"]["get"]>;
     const setCollapsed = vi.fn();
-    const env = {
-      keys: { get: () => state, set: (patch: Partial<typeof state>) => (state = { ...state, ...patch }), models: new Map([["big.ts", { rows: [], cutToHunk: false, element: () => null, loadPatch }]]), threads: new Map(), findings: new Map() },
-      files: [{ path: "big.ts", collapsed, rows: [] }],
-      threads: [],
-      findings: [],
-      onScreen: () => true,
-      seat: () => state.cursor,
-      reveal: () => {},
-      setCollapsed,
-      notify: () => {},
-    } as unknown as ReviewEnv;
-    runReviewCommand({ kind: "fold", action: "annotation" }, 1, env);
+    const models = new Map([["big.ts", { rows: [], cutToHunk: false, element: () => null, loadPatch }]]);
+    const built: ReturnType<typeof reviewEnv> = reviewEnv({ files: [{ path: "big.ts", collapsed, rows: [] }], seat: () => built.state().cursor, setCollapsed }, { cursor: { path: "big.ts", side: "RIGHT", line: null, want: "RIGHT" }, models });
+    runReviewCommand({ kind: "fold", action: "annotation" }, 1, built.env);
     return setCollapsed;
   };
 
@@ -137,21 +122,10 @@ describe("environmentDiff over a truncated SDK diff", () => {
     dir = null;
   });
 
-  const git = (cwd: string, ...args: string[]) => execFileAsync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd });
-
-  function fakeSdk(workspacePath: string | null, sdkDiff: string, files: string): BbPluginApi["sdk"] {
-    return {
-      system: { config: async () => ({ primaryHostId: "host" }) },
-      environments: {
-        get: async () => ({ mergeBaseBranch: "main", workspacePath, hostId: "host" }),
-        diff: async () => ({ outcome: "available", diff: { diff: sdkDiff, files, mergeBaseRef: "HEAD", shortstat: "", truncated: true } }),
-      },
-    } as unknown as BbPluginApi["sdk"];
-  }
+  const fakeSdk = (workspacePath: string | null, diff: string, files: string) => fakeEnvironmentSdk(workspacePath, { diff, files });
 
   it("reads the whole diff, untracked files included, from a local checkout", async () => {
-    dir = await mkdtemp(join(tmpdir(), "large-diff-test-"));
-    await git(dir, "init", "-q", "-b", "main");
+    dir = await tempRepo("large-diff-test-");
     await writeFile(join(dir, "kept.txt"), "one\n");
     await git(dir, "add", ".");
     await git(dir, "commit", "-q", "-m", "base");

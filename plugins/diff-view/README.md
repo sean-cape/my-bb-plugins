@@ -202,7 +202,9 @@ plugins embed.
   selection, beside that side of the line, one row per commit (short sha,
   author, age, summary): `j`/`k`
   move, Enter opens the commit on GitHub, Escape closes. A thread's blame
-  reads its checkout: the working tree for new lines, the merge base for old.
+  reads its checkout at the commits the diff compares: with commits picked
+  (`gr`), the range's end for new lines and its start for old; else the
+  working tree for new lines and the merge base for old.
   Each file header's "…" menu does the same by mouse for the whole file
   (Copy path, Copy link, Open file, and Blame of its first hunk).
   `t` shows or hides the file list. In it, `j`/`k` move (a count repeats),
@@ -266,8 +268,8 @@ dependency:
 "pnpm": { "overrides": { "bb-diff-view": "link:../diff-view/lib" } }
 ```
 
-- `bb-diff-view/app/diff-view`: `DiffView`, plus `DiffDisplayControls` and
-  `DiffRefreshButton` for a toolbar outside the view; `toolbar` may be a
+- `bb-diff-view/app/diff-view`: `DiffView`, plus `DiffRefreshButton` for a
+  toolbar outside the view; `toolbar` may be a
   function of the comments waiting to be sent, for a host that puts its send
   controls in its own heading row (kanban does). The host passes a
   `DiffSource` with the core methods (diff, structural diff, symbols, file

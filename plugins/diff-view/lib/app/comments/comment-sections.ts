@@ -1,7 +1,8 @@
 // The comments view's model: every thread's status, the filter over them, and the threads grouped by file in diff
 // order, each over its code. Pure, for the tests.
+import { groupByPath } from "../format";
 import { excerptPatch, type NarrativePatchFile, type NarrativeRef } from "../../narrative";
-import { patchRows } from "../text/patch-rows";
+import { patchRows, rowKey } from "../text/patch-rows";
 import { isUnsent, type DiffThread } from "./threads";
 
 export type ThreadStatus = "open" | "resolved" | "outdated";
@@ -152,7 +153,7 @@ const atHeader = (thread: DiffThread): DiffThread => ({ ...thread, line: null, s
 function placeOn(patch: string | null, threads: DiffThread[]): DiffThread[] {
   if (patch === null) return threads.map((thread) => (thread.line === null ? thread : atHeader(thread)));
   const { at } = patchRows(patch);
-  return threads.map((thread) => (thread.line === null || at.has(`${thread.side}:${thread.line}`) ? thread : atHeader(thread)));
+  return threads.map((thread) => (thread.line === null || at.has(rowKey(thread.side, thread.line)) ? thread : atHeader(thread)));
 }
 
 /** An outdated GitHub thread at the line it was left on, in the hunk GitHub stored; null when it stored none. */
@@ -175,11 +176,7 @@ function outdatedSection(thread: DiffThread): CommentSection | null {
  * follows over its own stored hunk, or under the header when GitHub stored none.
  */
 export function commentSections(threads: readonly DiffThread[], files: readonly NarrativePatchFile[], filter: ThreadFilter): CommentSection[] {
-  const byPath = new Map<string, DiffThread[]>();
-  for (const thread of threads) {
-    if (!matchesThreadFilter(thread, filter)) continue;
-    byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);
-  }
+  const byPath = groupByPath(threads.filter((thread) => matchesThreadFilter(thread, filter)));
   const order = new Map(files.map((file, index) => [file.path, index]));
   const paths = [...byPath.keys()].sort((a, b) => (order.get(a) ?? files.length) - (order.get(b) ?? files.length) || a.localeCompare(b));
   const sections: CommentSection[] = [];

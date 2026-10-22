@@ -5,7 +5,7 @@ import { rowToDiffComment, type DiffCommentRow } from "../db/rows";
 import type { Changes } from "../diff/changes";
 import type { DiffSubjects } from "../diff/subjects";
 import { doneColumn, type BoardStore } from "../board";
-import { GithubHttpError, githubPages, githubPost, resolveToken } from "../github";
+import { GithubHttpError, NO_GITHUB_TOKEN, githubPages, githubPost, resolveToken } from "../github";
 import type { PendingReview } from "./pending-review";
 import type { PrComments } from "./pr-comments";
 import { errorMessage, shortId } from "../util";
@@ -154,7 +154,7 @@ export function createDiffComments(
     /** The review's body: the user's summary over the file-level drafts, whichever of the two there are. */
     const reviewBody = (...parts: string[]) => parts.filter((part) => part !== "").join("\n\n");
     const auth = await resolveToken(settings);
-    if (auth === null) throw new Error("No GitHub token configured.");
+    if (auth === null) throw new Error(NO_GITHUB_TOKEN);
     const { repo, number } = ticket.pr;
     const topLevel = drafts.filter((comment) => comment.inReplyTo === null);
     const replyIds = drafts.filter((comment) => comment.inReplyTo !== null).map((comment) => comment.id);

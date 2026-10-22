@@ -28,6 +28,11 @@ import {
   type NavFile,
 } from "./nav";
 import type { FocusedAnnotation, ReviewKeys } from "./review-keys-context";
+import { LINES_NOT_SHOWN } from "../suggestions/thread-suggestion";
+
+const CANT_APPLY_HERE = "This view can't apply suggestions";
+const CANT_APPLY_THIS = "This suggestion can't be applied";
+const ALREADY_APPLYING = "Already applying suggestions";
 
 export type FindingAnchor = NavAnchor & { item: InlineFinding };
 
@@ -94,7 +99,7 @@ export interface ReviewEnv {
   /** The lines `I` puts in a suggestion block, and the suggestions `A`, `B` and `gB` apply. */
   suggestions: SuggestionActions;
   /** Opens the commit picker; null when the source lists no commits. */
-  openCommits?: (() => void) | null;
+  openCommits: (() => void) | null;
 }
 
 export interface FileActions {
@@ -228,9 +233,9 @@ function runViewCommand(command: ReviewCommand, env: ReviewEnv): boolean {
       return true;
     case "commitSuggestions": {
       const { apply, batch, busy } = env.suggestions;
-      if (apply === null) env.notify("This view can't apply suggestions");
+      if (apply === null) env.notify(CANT_APPLY_HERE);
       else if (batch.length === 0) env.notify("No suggestions in the batch (B adds the one under the cursor)");
-      else if (busy) env.notify("Already applying suggestions");
+      else if (busy) env.notify(ALREADY_APPLYING);
       else void apply([...batch]);
       return true;
     }
@@ -239,7 +244,7 @@ function runViewCommand(command: ReviewCommand, env: ReviewEnv): boolean {
       else env.openOverlay("search");
       return true;
     case "commits":
-      if (env.openCommits == null) env.notify("No commits to pick from here (they need a pull request or a local checkout)");
+      if (env.openCommits === null) env.notify("No commits to pick from here (they need a pull request or a local checkout)");
       else env.openCommits();
       return true;
     case "fileFilter":
@@ -396,7 +401,6 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
           // Enter folds a file only from its header; on a code line it would be an easy accident.
           if (command.action === "annotation" && cursor.line !== null) return;
           const collapsed = files.find((file) => file.path === cursor.path)?.collapsed === true;
-          // On a file the diff came without a patch for, Enter loads it instead.
           if (command.action === "annotation" && model?.loadPatch !== undefined && !collapsed) {
             model.loadPatch();
             return;
@@ -567,8 +571,9 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       }
       return;
     }
-    // The view switches modes before a command reaches here.
+    // The view switches modes before these reach here.
     case "narrative":
+    case "commentsView":
       return;
     case "copyPath":
       env.fileActions.copyPath(cursor.path);
@@ -589,8 +594,6 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       else env.fileActions.open(cursor.path, span);
       return;
     }
-    case "commentsView":
-      return;
     case "suggest": {
       if (env.focusComposer()) return;
       if (model !== null && row !== -1 && model.rows[row]?.expander === true) {
@@ -633,11 +636,7 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
         env.notify(thread === null ? "No comment thread or review finding on this line" : "No suggested change in this thread");
         return;
       }
-      if (suggestion.item === null) {
-        env.notify(suggestion.reason ?? "This suggestion can't be applied");
-        return;
-      }
-      runSuggestion(env, command.kind, suggestion.item, null);
+      runSuggestion(env, command.kind, suggestion.item, suggestion.reason);
       return;
     }
     case "postSuggestion": {
@@ -652,7 +651,7 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       else if (state === null) env.notify("This finding has no suggested change");
       else if (state.applied) env.notify("Already applied");
       else if (env.suggestions.posted.has(state.id)) env.notify("Already posted as a draft on the pull request");
-      else if (state.current === null) env.notify("The diff doesn't show all of the suggestion's lines, so GitHub can't take a comment on them");
+      else if (state.current === null) env.notify(`${LINES_NOT_SHOWN}, so GitHub can't take a comment on them`);
       else {
         env.keys.set({ focused: { kind: "finding", id: finding.id } });
         void env.suggestions.post(finding.item, state);
@@ -665,15 +664,15 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
 /** `A` applies a suggestion now, `B` adds it to the batch or takes it out. */
 function runSuggestion(env: ReviewEnv, kind: "applySuggestion" | "batchSuggestion", item: SuggestionItem | null, reason: string | null): void {
   if (item === null) {
-    env.notify(reason ?? "This suggestion can't be applied");
+    env.notify(reason ?? CANT_APPLY_THIS);
     return;
   }
   const { apply, busy, toggleBatch } = env.suggestions;
-  if (apply === null) env.notify("This view can't apply suggestions");
+  if (apply === null) env.notify(CANT_APPLY_HERE);
   else if (kind === "batchSuggestion") {
     const added = toggleBatch(item);
     const count = env.suggestions.batch.length + (added ? 1 : -1);
     env.notify(added ? `Added to the batch (${count}; gB applies it)` : "Taken out of the batch");
-  } else if (busy) env.notify("Already applying suggestions");
+  } else if (busy) env.notify(ALREADY_APPLYING);
   else void apply([item]);
 }

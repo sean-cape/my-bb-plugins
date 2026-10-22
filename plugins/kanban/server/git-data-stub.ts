@@ -1,11 +1,16 @@
 import { vi } from "vitest";
 
+/** The pull request the stub serves, and where its head branch lives. */
+export const STUB_PR = { repo: "acme/widgets", number: 7 };
+export const STUB_HEAD_REPO = "fork/widgets";
+export const STUB_HEAD_BRANCH = "feature/x";
+
 /**
  * A pull request's head repository as GitHub's git data API serves it: a branch, commits, trees and blobs, with every
  * write recorded. The PR lives in `acme/widgets`; its head branch in a fork, or nowhere when `headRepo` is null.
  * Files are text, or bytes; `modes` gives a top-level entry's mode (run.sh is executable by default).
  */
-export function stubGitData(files: Record<string, string | Uint8Array>, { headRepo = "fork/widgets", modes = {} }: { headRepo?: string | null; modes?: Record<string, string> } = {}) {
+export function stubGitData(files: Record<string, string | Uint8Array>, { headRepo = STUB_HEAD_REPO, modes = {} }: { headRepo?: string | null; modes?: Record<string, string> } = {}) {
   let nextSha = 0;
   const sha = () => `sha${++nextSha}`;
   const blobs = new Map<string, string | Uint8Array>();
@@ -30,7 +35,7 @@ export function stubGitData(files: Record<string, string | Uint8Array>, { headRe
   };
   const root = sha();
   commits.set(root, { tree: writeTree(files), parents: [], message: "initial" });
-  const refs = new Map([["feature/x", root]]);
+  const refs = new Map([[STUB_HEAD_BRANCH, root]]);
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -39,8 +44,8 @@ export function stubGitData(files: Record<string, string | Uint8Array>, { headRe
     const path = decodeURIComponent(url.pathname);
     const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
     if (method !== "GET") writes.push({ method, path, body });
-    if (path === "/repos/acme/widgets/pulls/7") return json({ head: { ref: "feature/x", sha: root, repo: headRepo === null ? null : { full_name: headRepo } } });
-    const base = "/repos/fork/widgets/git";
+    if (path === `/repos/${STUB_PR.repo}/pulls/${STUB_PR.number}`) return json({ head: { ref: STUB_HEAD_BRANCH, sha: root, repo: headRepo === null ? null : { full_name: headRepo } } });
+    const base = `/repos/${STUB_HEAD_REPO}/git`;
     if (method === "GET" && path.startsWith(`${base}/ref/heads/`)) {
       const at = refs.get(path.slice(`${base}/ref/heads/`.length));
       return at === undefined ? json({ message: "Not Found" }, 404) : json({ object: { sha: at } });
@@ -62,10 +67,10 @@ export function stubGitData(files: Record<string, string | Uint8Array>, { headRe
     if (method === "POST" && path === `${base}/commits`) {
       const id = sha();
       commits.set(id, { tree: body.tree, parents: body.parents, message: body.message });
-      return json({ sha: id, html_url: `https://github.com/fork/widgets/commit/${id}` });
+      return json({ sha: id, html_url: `https://github.com/${STUB_HEAD_REPO}/commit/${id}` });
     }
-    if (method === "PATCH" && path === `${base}/refs/heads/feature/x`) {
-      refs.set("feature/x", body.sha);
+    if (method === "PATCH" && path === `${base}/refs/heads/${STUB_HEAD_BRANCH}`) {
+      refs.set(STUB_HEAD_BRANCH, body.sha);
       return json({ object: { sha: body.sha } });
     }
     return json({ message: `unexpected ${method} ${path}` }, 500);

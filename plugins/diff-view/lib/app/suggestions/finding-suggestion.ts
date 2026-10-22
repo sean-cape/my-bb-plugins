@@ -1,7 +1,8 @@
 import type { Finding, FindingSuggestion, LineRange, SuggestionItem } from "../../types";
+import { lineSpanLabel } from "../../line-range";
 import { suggestionBlock } from "../../suggestions";
 import type { InlineFinding } from "../findings/findings";
-import { suggestionLandedAt, type LinesAt, type SuggestionState } from "./thread-suggestion";
+import { LINES_NOT_SHOWN, suggestionLandedAt, type LinesAt, type SuggestionState } from "./thread-suggestion";
 
 const PREFIX = "finding:";
 
@@ -39,7 +40,7 @@ export function findingSuggestion(item: InlineFinding, linesAt: LinesAt, applied
   // A review records only the replacement, not the lines it read, so a shrinking one is known applied by this session's record alone.
   const applied = appliedIds.has(id) || suggestionLandedAt(linesAt, { path: suggestion.file, startLine: suggestion.startLine, endLine: suggestion.endLine, replacement });
   if (applied) return { ...found, item: null, reason: "Already applied", applied: true };
-  if (current === null) return { ...found, item: null, reason: "The diff doesn't show all of the suggestion's lines", applied: false };
+  if (current === null) return { ...found, item: null, reason: LINES_NOT_SHOWN, applied: false };
   return {
     ...found,
     item: { id, path: suggestion.file, startLine: suggestion.startLine, endLine: suggestion.endLine, expected: current, replacement },
@@ -61,6 +62,5 @@ export function findingSuggestionRange(suggestion: FindingSuggestion): LineRange
 
 /** `a.ts:L12` or `a.ts:L12-14`. */
 export function findingSuggestionLabel(suggestion: FindingSuggestion): string {
-  const lines = suggestion.startLine === suggestion.endLine ? `L${suggestion.startLine}` : `L${suggestion.startLine}-${suggestion.endLine}`;
-  return `${suggestion.file}:${lines}`;
+  return `${suggestion.file}:${lineSpanLabel(suggestion.startLine, suggestion.endLine)}`;
 }

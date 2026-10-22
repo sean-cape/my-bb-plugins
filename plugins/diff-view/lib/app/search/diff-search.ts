@@ -1,3 +1,4 @@
+import { patchLines, type PatchLine } from "../../patch";
 import type { DiffSide } from "../../types";
 import type { Cursor } from "../keys/nav";
 import { matchOffsets } from "../ui/vim-keys-core";
@@ -25,51 +26,10 @@ export interface DiffMatch {
   end: number;
 }
 
-interface PatchLine {
-  left: number | null;
-  right: number | null;
-  text: string;
-}
-
 export interface DiffSearch {
   matches: DiffMatch[];
   /** Where a cursor sits in the order of the matches; a header sits before its file's lines. Null outside the searched files. */
   locate: (cursor: Cursor) => { fileIndex: number; row: number } | null;
-}
-
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
-
-/** A unified patch's lines with their numbers, walked as `patchRows` walks them. */
-function patchLines(patch: string): PatchLine[] {
-  const lines: PatchLine[] = [];
-  let oldLine = 0;
-  let newLine = 0;
-  let oldLeft = 0;
-  let newLeft = 0;
-  for (const text of patch.split("\n")) {
-    const header = HUNK_HEADER.exec(text);
-    if (header !== null) {
-      oldLine = Number(header[1]);
-      oldLeft = header[2] === undefined ? 1 : Number(header[2]);
-      newLine = Number(header[3]);
-      newLeft = header[4] === undefined ? 1 : Number(header[4]);
-      continue;
-    }
-    if (oldLeft <= 0 && newLeft <= 0) continue;
-    const mark = text[0];
-    if (mark === "-") {
-      lines.push({ left: oldLine++, right: null, text: text.slice(1) });
-      oldLeft -= 1;
-    } else if (mark === "+") {
-      lines.push({ left: null, right: newLine++, text: text.slice(1) });
-      newLeft -= 1;
-    } else if (mark === " " || text === "") {
-      lines.push({ left: oldLine++, right: newLine++, text: text.slice(1) });
-      oldLeft -= 1;
-      newLeft -= 1;
-    }
-  }
-  return lines;
 }
 
 /** Every hit of `pattern` in the files' patch lines (old and new side), in file order and then display order. */
@@ -82,7 +42,7 @@ export function searchDiff(files: readonly SearchedFile[], pattern: RegExp): Dif
     linesByPath.set(file.path, { fileIndex, lines });
     lines.forEach((line, row) => {
       matchOffsets(line.text, pattern).forEach(([start, end], occurrence) => {
-        matches.push({ path: file.path, fileIndex, row, left: line.left, right: line.right, occurrence, start, end });
+        matches.push({ path: file.path, fileIndex, row, left: line.old, right: line.new, occurrence, start, end });
       });
     });
   });
@@ -93,7 +53,7 @@ export function searchDiff(files: readonly SearchedFile[], pattern: RegExp): Dif
       return fileIndex === -1 ? null : { fileIndex, row: -0.5 };
     }
     if (cursor.line === null) return { fileIndex: file.fileIndex, row: -0.5 };
-    const number = (line: PatchLine) => (cursor.side === "LEFT" ? line.left : line.right);
+    const number = (line: PatchLine) => (cursor.side === "LEFT" ? line.old : line.new);
     const row = file.lines.findIndex((line) => number(line) === cursor.line);
     if (row !== -1) return { fileIndex: file.fileIndex, row };
     // A line the patch leaves out (unfolded context in a structural diff) sits between the patch lines around it.

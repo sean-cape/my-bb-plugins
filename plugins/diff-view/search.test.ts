@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { compileSearch, keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
+import { compileSearch } from "../vim-mode/lib/index.ts";
 import { cursorOnMatch, searchDiff, stepMatch, type SearchedFile } from "./lib/app/search/diff-search";
-import { FILE_TREE_KEYMAP, KEY_HELP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
-import { NARRATIVE_KEY_HELP, NARRATIVE_KEYMAP } from "./lib/app/narrative/narrative-keymap";
+import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
 import type { Cursor } from "./lib/app/keys/nav";
+import { reviewEnv } from "./test-helpers";
 
 const lines = (...rows: string[]) => rows.join("\n");
 
@@ -83,37 +83,30 @@ describe("stepMatch", () => {
 });
 
 describe("search keys", () => {
-  it("binds / to the text search and f to the file finder, every key in the sheets", () => {
+  it("binds / to the text search and f to the file finder", () => {
     expect(REVIEW_KEYMAP["/"]).toEqual({ kind: "searchText" });
     expect(REVIEW_KEYMAP.f).toEqual({ kind: "findFile" });
-    expect(keymapConflicts(REVIEW_KEYMAP)).toEqual([]);
-    expect(keymapConflicts(NARRATIVE_KEYMAP)).toEqual([]);
-    expect(unboundHelpKeys(KEY_HELP, [REVIEW_KEYMAP, FILE_TREE_KEYMAP], ["⌘↩"])).toEqual([]);
-    expect(unboundHelpKeys(NARRATIVE_KEY_HELP, [NARRATIVE_KEYMAP, FILE_TREE_KEYMAP], ["Tab", "⌘↩"])).toEqual([]);
   });
 
   const run = (command: Parameters<typeof runReviewCommand>[0], overrides: Partial<ReviewEnv> = {}, cursor: Cursor | null = null) => {
-    let state = { cursor, visual: null, pending: "", focused: null } as ReturnType<ReviewEnv["keys"]["get"]>;
     const calls: string[] = [];
-    const env = {
-      keys: { get: () => state, set: (patch: Partial<typeof state>) => (state = { ...state, ...patch }), models: new Map(), threads: new Map(), findings: new Map() },
-      files: [],
-      threads: [],
-      findings: [],
-      search: null,
-      seat: () => cursor,
-      onScreen: () => true,
-      reveal: (next: Cursor) => calls.push(`reveal:${next.path}:${next.side}:${next.line}`),
-      setCollapsed: (paths: readonly string[], collapsed: boolean) => calls.push(`collapsed:${paths.join(",")}:${collapsed}`),
-      openOverlay: (overlay: string) => calls.push(`overlay:${overlay}`),
-      focusSendBar: () => false,
-      leaveSendBar: () => false,
-      closeEmptyComposer: () => false,
-      notify: (message: string) => calls.push(message),
-      ...overrides,
-    } as unknown as ReviewEnv;
+    const { env, state } = reviewEnv(
+      {
+        search: null,
+        seat: () => cursor,
+        reveal: (next: Cursor) => calls.push(`reveal:${next.path}:${next.side}:${next.line}`),
+        setCollapsed: (paths: readonly string[], collapsed: boolean) => calls.push(`collapsed:${paths.join(",")}:${collapsed}`),
+        openOverlay: (overlay: string) => calls.push(`overlay:${overlay}`),
+        focusSendBar: () => false,
+        leaveSendBar: () => false,
+        closeEmptyComposer: () => false,
+        notify: (message: string) => calls.push(message),
+        ...overrides,
+      },
+      { cursor },
+    );
     runReviewCommand(command, 1, env);
-    return { calls, state };
+    return { calls, state: state() };
   };
 
   it("opens the search box once there is a diff to search", () => {
