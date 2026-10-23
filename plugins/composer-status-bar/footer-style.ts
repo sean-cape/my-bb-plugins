@@ -218,6 +218,7 @@ ${COMPOSER} *:has(> [${ANCHOR_ATTRIBUTE}]) {
    badge takes the slack so the merge-base picker stays at the right. */
 [${LANDED_HOST_ATTRIBUTE}] {
   flex: 0 1 auto !important;
+  padding-right: 0.25rem !important;
 }
 [${LANDED_ATTRIBUTE}] {
   display: flex;
