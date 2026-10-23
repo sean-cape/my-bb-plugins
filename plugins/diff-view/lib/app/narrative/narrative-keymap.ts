@@ -19,7 +19,7 @@ export type NarrativeCommand = ReviewCommand | NarrativeOnlyCommand;
  * The review keys, so the cursor, comments and findings work over a step's excerpts exactly as over the files, plus
  * the step keys. `h` and `l` turn pages, the surface's main motion; the arrows keep the old and new side (← past the
  * old side reaches the outline, as `h` does in the files view). `/`, `n`, `N` search steps, `t` shows the outline,
- * and `S` returns to the files.
+ * and `S` goes on to the next view.
  */
 export const NARRATIVE_KEYMAP: Keymap<NarrativeCommand> = {
   ...REVIEW_KEYMAP,
@@ -57,7 +57,7 @@ const SHARED_HELP = KEY_HELP.filter((section) => section.title !== "File list").
     zr: "Show 20 more of the lines the excerpt leaves out either side of the cursor's run (Enter on a band shows its lines)",
     gd: "Not in excerpts: they are line diffs",
     gl: "Split or unified, for the excerpts (remembered apart from the files view's)",
-    S: "Back to the files view, cursor where it was (S there comes back)",
+    S: "Next view: the conversation, or the files when there is none",
   }),
 );
 

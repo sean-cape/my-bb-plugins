@@ -79,8 +79,7 @@ plugins embed.
   whitespace when the comment is saved. Suggestions also read a file whose
   patch came through "Load diff".
 - **Conversation view**: a third reading mode beside Files (and Narrative),
-  read like GitHub's Conversation tab, or `gc` (again to return where you
-  were). A summary heads it: the pull request's state, what it merges into
+  read like GitHub's Conversation tab; `S` reaches it (see Views below). A summary heads it: the pull request's state, what it merges into
   what, its reviewers and their verdicts, assignees, labels, milestone and
   the issues it closes. Then, oldest first on one rule: the description,
   commits (a run of them together, each with its verified mark and checks),
@@ -244,11 +243,12 @@ plugins embed.
   the outdated, resolved, pre-existing and filtered list above the diff (`j`/`k` move, Enter
   opens one or makes a card, Escape returns), `gn` turns "Only new" on or
   off,
-  `K` asks for an explanation of the hunk, `S` switches to the narrative
-  review where the host has one (see below),
+  `K` asks for an explanation of the hunk, `S` goes on to the next view
+  (Files, Narrative, Conversation, and round again, skipping the ones a diff
+  doesn't have; leaving the conversation puts the cursor back where it was),
   `gd` peeks at a symbol on the line (Escape closes it), `gl` switches every file between
   split and unified, `W` hides or shows whitespace changes, `R` refreshes,
-  `gc` opens the conversation (see above), `H` hides or shows the threads in
+  `H` hides or shows the threads in
   the diff, `I` suggests a change to the line or selection, `A` applies the
   suggestion in the thread or review finding under the cursor, `B` adds it to
   the batch (or takes it out) and `gB` applies the batch (see Suggested
@@ -287,8 +287,8 @@ plugins embed.
   view) clears the filter. Each view keeps its filter for the session.
 
 - **Narrative review** (hosts whose source serves a story, such as kanban): a
-  **Files | Narrative** switch (with Comments once there is a thread) at the
-  left of the summary bar, or `S`, swaps
+  **Files | Narrative | Conversation** switch at the left of the summary bar,
+  or `S`, swaps
   the file list for the agent's walk through the change. Each page is one
   step: its explanation over just the lines it covers, as excerpts of the
   diff drawn by the same renderer as the files view, so the cursor, comments
@@ -310,8 +310,9 @@ plugins embed.
   `n`/`N` search steps, `f` finds a file by name and opens it in the files
   view, `gl` switches the excerpts between split (the
   default) and unified, `U` writes a narrative (or an update once the code
-  moved, which the switch flags with a dot), `S` returns to the files with
-  the cursor where it was. Steps of an earlier narrative or a revision show
+  moved, which the switch flags with a dot), `S` goes on to the conversation
+  (or back to the files when there is none), the files keeping the cursor
+  where it was. Steps of an earlier narrative or a revision show
   their lines without comments, since those are not today's lines; comment
   from the current narrative's steps or the files view. Where a step's
   excerpt skips lines (other steps' changes, or unchanged lines between

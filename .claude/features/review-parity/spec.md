@@ -35,7 +35,7 @@ Goal: GitHub's review feature set, with this view's own keys and workflows. Skip
 | `W` | Hide / show whitespace changes (default: hidden) | 02 |
 | Enter on a large file's placeholder | Load its diff | 03 |
 | `gl` | Split / unified, now for structural files too | 04 |
-| `gc` | Conversation view (GitHub's Conversation tab: description, commits, comments, reviews and their threads); `gc` again returns | 05 |
+| `S` | Next view: Files, Narrative, Conversation (GitHub's Conversation tab), and round again, skipping those a diff lacks; replaced `gc` and the Files/Narrative toggle on 2026-10-23 | 05 |
 | `H` | Hide / show comment threads inline | 05 |
 | `gf` | File filter menu (files view; the narrative keeps its own `gf`) | 06 |
 | `yp`, `yl` | Copy the file's path / a link to the line (or selection) | 07 |

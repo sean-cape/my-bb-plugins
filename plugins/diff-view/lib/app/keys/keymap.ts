@@ -41,7 +41,8 @@ export type ReviewCommand =
   | { kind: "searchNext"; direction: 1 | -1 }
   | { kind: "peek" }
   | { kind: "help" }
-  | { kind: "narrative" }
+  /** The next of the views this diff has: files, narrative, conversation, and round to files again. */
+  | { kind: "nextView" }
   | { kind: "escape" }
   /** No key: the reader scrolled by hand, and the cursor moves to the line now in the middle. */
   | { kind: "follow" }
@@ -50,8 +51,6 @@ export type ReviewCommand =
   | { kind: "copyLink" }
   | { kind: "openFile" }
   | { kind: "blame" }
-  /** The conversation, from the files or the narrative; again, back where the reader was. */
-  | { kind: "conversation" }
   | { kind: "hideThreads" }
   /** A comment on the line or selection holding its text in a suggestion block. */
   | { kind: "suggest" }
@@ -131,7 +130,7 @@ export const REVIEW_KEYMAP: Keymap<ReviewCommand> = {
   n: { kind: "searchNext", direction: 1 },
   N: { kind: "searchNext", direction: -1 },
   gd: { kind: "peek" },
-  S: { kind: "narrative" },
+  S: { kind: "nextView" },
   "?": { kind: "help" },
   "<Esc>": { kind: "escape" },
   W: { kind: "whitespace" },
@@ -139,7 +138,6 @@ export const REVIEW_KEYMAP: Keymap<ReviewCommand> = {
   yl: { kind: "copyLink" },
   gO: { kind: "openFile" },
   gb: { kind: "blame" },
-  gc: { kind: "conversation" },
   H: { kind: "hideThreads" },
   I: { kind: "suggest" },
   A: { kind: "applySuggestion" },
@@ -209,7 +207,6 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["s"], action: "Go to the send bar (Enter or i opens its review box: type a comment, j / k pick how the review concludes, ⌘↩ submits, Esc closes; Esc on the bar goes back)" },
       { keys: ["⌘↩"], action: "In a comment box: add it; editing a finding: save" },
       { keys: ["Esc"], action: "In a comment box: back to the diff (an empty one closes); editing a comment or finding: cancel the edit" },
-      { keys: ["gc"], action: "The conversation, as on GitHub: the description, commits, comments and reviews in the order they happened, resolved and outdated threads too (gc again comes back)" },
       { keys: ["H"], action: "Hide or show the comment threads in the diff" },
     ],
   },
@@ -240,7 +237,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["K"], action: "Ask an agent to explain the hunk" },
       { keys: ["gd"], action: "Peek a symbol on the line: its definition and uses (structural)" },
       { keys: ["gl"], action: "Split or unified, for every file (structural and line diffs; remembered)" },
-      { keys: ["S"], action: "Switch to the narrative review, where the same keys work over each step's code (S there comes back)" },
+      { keys: ["S"], action: "Next view: files, then the narrative review (the same keys over each step's code), then the conversation (as on GitHub), and round again; views this diff lacks are skipped" },
       { keys: ["R"], action: "Refresh the diff" },
       { keys: ["Esc"], action: "Close a symbol peek, or leave line selection" },
       { keys: ["?"], action: "This sheet" },

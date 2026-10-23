@@ -6,6 +6,7 @@ import { setDiffPreferences } from "./state";
 import { FINDING_FILTER_LABEL, nextFindingFilter, type FindingFilter } from "./findings/findings";
 import { PRESS, TRANSFORM_TRANSITION, enter } from "./ui/motion";
 import { CommitsButton } from "./commits/commit-picker";
+import type { DiffViewMode } from "./view-mode";
 
 /** Totals, with what the diff is against and what it leaves out in the tooltip. */
 function DiffStats({ diff }: { diff: DiffResult }) {
@@ -58,7 +59,7 @@ function CommentTargetSwitch({ target, onChange }: { target: DiffCommentTarget; 
   );
 }
 
-export type DiffViewMode = "files" | "narrative" | "conversation";
+export type { DiffViewMode };
 
 /** Files, the narrative review or the conversation: the ways of reading the same change. */
 function ModeSwitch({ mode, stale, onChange, narrative = true, conversation = false }: { mode: DiffViewMode; stale: boolean; onChange: (mode: DiffViewMode) => void; narrative?: boolean; conversation?: boolean }) {
@@ -77,9 +78,9 @@ function ModeSwitch({ mode, stale, onChange, narrative = true, conversation = fa
   );
   return (
     <span role="radiogroup" aria-label="How to read the change" className="inline-flex items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5 text-xs">
-      {option("files", "Files", "Every changed file in one scroll (S switches)")}
-      {narrative ? option("narrative", "Narrative", stale ? "The agent's step-by-step walk through the change; the code moved since it was written (S switches)" : "The agent's step-by-step walk through the change, the same keys on each step's lines (S switches)") : null}
-      {conversation ? option("conversation", "Conversation", "The description, commits, comments and reviews in the order they happened, as on GitHub (gc switches)") : null}
+      {option("files", "Files", "Every changed file in one scroll (S cycles the views)")}
+      {narrative ? option("narrative", "Narrative", stale ? "The agent's step-by-step walk through the change; the code moved since it was written (S cycles the views)" : "The agent's step-by-step walk through the change, the same keys on each step's lines (S cycles the views)") : null}
+      {conversation ? option("conversation", "Conversation", "The description, commits, comments and reviews in the order they happened, as on GitHub (S cycles the views)") : null}
     </span>
   );
 }
@@ -188,7 +189,7 @@ export function SummaryBar({
           </button>
         ) : null}
         {threads !== null && threads.resolved + threads.outdated > 0 ? (
-          <button type="button" className={cn("rounded-md px-2 py-0.5 text-xs tabular-nums hover:bg-state-hover hover:text-foreground", PRESS)} title="Threads left out of the diff. Click or gc for the conversation, which lists every thread." onClick={threads.onOpen}>
+          <button type="button" className={cn("rounded-md px-2 py-0.5 text-xs tabular-nums hover:bg-state-hover hover:text-foreground", PRESS)} title="Threads left out of the diff. Click (or S) for the conversation, which lists every thread." onClick={threads.onOpen}>
             {[threads.resolved > 0 ? `${threads.resolved} resolved` : null, threads.outdated > 0 ? `${threads.outdated} outdated` : null].filter((part) => part !== null).join(" · ")}
           </button>
         ) : null}

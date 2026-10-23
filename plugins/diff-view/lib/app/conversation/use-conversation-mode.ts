@@ -1,4 +1,4 @@
-// The conversation as a mode of the changes view: entering and leaving it (`gc`), the cursor over its rows, and what
+// The conversation as a mode of the changes view: entering and leaving it (`S` cycles to it), the cursor over its rows, and what
 // the keys do there. The thread keys act on the thread under the cursor as they do on a line's in the diff.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CommentMeta, ConversationData, DiffCommentTarget, LineRange, PullRequestSummary } from "../../types";
@@ -28,8 +28,8 @@ export interface ConversationModeOptions {
   pullRequest: PullRequestSummary | null;
   data: ConversationData | null;
   writer: ReturnType<typeof useConversationWriting>;
-  narrativeAvailable: boolean;
-  enterNarrative: () => void;
+  /** `S`: on to the next view, which from here is the files. */
+  nextView: () => void;
   threadById: ReadonlyMap<string, DiffThread>;
   files: readonly NarrativePatchFile[];
   currentPaths: ReadonlySet<string>;
@@ -125,27 +125,22 @@ export function useConversationMode(options: ConversationModeOptions) {
     reveal(stop.key, block);
   };
 
-  /** Where `gc` returns to: the view it was pressed in, and the cursor there. */
-  const back = useRef<{ mode: "files" | "narrative"; cursor: Cursor | null } | null>(null);
+  /** The files' or narrative's cursor when the conversation opened, which the view going back puts back. */
+  const back = useRef<Cursor | null>(null);
   const enter = () => {
     if (!options.available) {
       notify("Nothing to show yet: no commits, comments or reviews");
       return;
     }
-    back.current = { mode: mode === "narrative" ? "narrative" : "files", cursor: keys.get().cursor };
+    back.current = keys.get().cursor;
     options.setMode("conversation");
     options.focusRoot();
   };
-  const leave = () => {
-    const to = back.current ?? { mode: "files" as const, cursor: null };
+  /** The cursor to leave for; the caller switches the view. */
+  const leave = (): Cursor | null => {
+    const cursor = back.current;
     back.current = null;
-    if (to.mode === "narrative" && options.narrativeAvailable) {
-      keys.set({ cursor: to.cursor, visual: null, focused: null });
-      options.setMode("narrative");
-      options.focusRoot();
-      return;
-    }
-    options.showInFiles(to.cursor, null);
+    return cursor;
   };
   useEffect(() => {
     if (mode !== "conversation") return;
@@ -194,11 +189,8 @@ export function useConversationMode(options: ConversationModeOptions) {
 
   const run = (command: ConversationCommand, count: number) => {
     switch (command.kind) {
-      case "conversation":
-        leave();
-        return;
-      case "narrative":
-        options.enterNarrative();
+      case "nextView":
+        options.nextView();
         return;
       case "line":
         moveTo(index === -1 ? 0 : index + command.direction * count);
@@ -339,6 +331,7 @@ export function useConversationMode(options: ConversationModeOptions) {
 
   return {
     enter,
+    leave,
     run,
     cursorKey: current?.key ?? null,
     folded,

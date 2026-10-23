@@ -4,6 +4,8 @@ import { recountHunk, shownInline, threadCode, threadCounts, threadStatus } from
 import { conversationItems, conversationStops, threadStartsFolded } from "./lib/app/conversation/conversation";
 import { CONVERSATION_KEY_HELP, CONVERSATION_KEYMAP } from "./lib/app/conversation/conversation-keymap";
 import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
+import { NARRATIVE_KEYMAP } from "./lib/app/narrative/narrative-keymap";
+import { nextViewMode } from "./lib/app/view-mode";
 import type { ConversationEvent, DiffCommit, PullRequestSummary } from "./lib/types";
 import { keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
 import { githubComment as github, localComment as local } from "./test-helpers";
@@ -174,10 +176,20 @@ describe("conversation keys", () => {
     expect(unboundHelpKeys(CONVERSATION_KEY_HELP, [CONVERSATION_KEYMAP])).toEqual([]);
   });
 
-  it("maps gc and H in the files view, and gf to the conversation's own command", () => {
-    expect(REVIEW_KEYMAP.gc).toEqual({ kind: "conversation" });
+  it("cycles the views with S everywhere, with no gc left over, and keeps gf for the conversation's own command", () => {
+    for (const keymap of [REVIEW_KEYMAP, NARRATIVE_KEYMAP, CONVERSATION_KEYMAP]) {
+      expect(keymap.S).toEqual({ kind: "nextView" });
+      expect(keymap.gc).toBeUndefined();
+    }
     expect(REVIEW_KEYMAP.H).toEqual({ kind: "hideThreads" });
-    expect(CONVERSATION_KEYMAP.gc).toEqual({ kind: "conversation" });
     expect(CONVERSATION_KEYMAP.gf).toEqual({ kind: "openInFiles" });
+  });
+
+  it("goes files, narrative, conversation and round again, skipping views the diff lacks", () => {
+    const all = { narrative: true, conversation: true };
+    expect([nextViewMode("files", all), nextViewMode("narrative", all), nextViewMode("conversation", all)]).toEqual(["narrative", "conversation", "files"]);
+    expect(nextViewMode("files", { narrative: false, conversation: true })).toBe("conversation");
+    expect(nextViewMode("narrative", { narrative: true, conversation: false })).toBe("files");
+    expect(nextViewMode("files", { narrative: false, conversation: false })).toBeNull();
   });
 });

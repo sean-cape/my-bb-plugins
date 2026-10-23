@@ -240,7 +240,7 @@ function runViewCommand(command: ReviewCommand, env: ReviewEnv): boolean {
       env.toggleWhitespace();
       return true;
     case "hideThreads":
-      env.notify(env.toggleThreadsHidden() ? "Comment threads hidden (H shows them, gc lists them)" : "Comment threads shown");
+      env.notify(env.toggleThreadsHidden() ? "Comment threads hidden (H shows them; the conversation, S, lists them)" : "Comment threads shown");
       return true;
     case "commitSuggestions": {
       const { apply, batch, busy } = env.suggestions;
@@ -566,8 +566,7 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       return;
     }
     // The view switches modes before these reach here.
-    case "narrative":
-    case "conversation":
+    case "nextView":
       return;
     case "copyPath":
       env.fileActions.copyPath(cursor.path);

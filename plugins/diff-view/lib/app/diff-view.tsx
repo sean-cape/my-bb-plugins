@@ -23,7 +23,8 @@ import { WHOLE_FILE, type ComposerAnchor, type PatchAnnotationProps } from "./pa
 import { riskByPath } from "./risk";
 import { STICKY_HEADER_PX, cursorLineY } from "./scroll";
 import { ScrollMarkers, useScrollMarkers } from "./scroll-markers";
-import { SummaryBar, type DiffViewMode } from "./summary-bar";
+import { SummaryBar } from "./summary-bar";
+import { nextViewMode, type DiffViewMode } from "./view-mode";
 import { useDiffResult } from "./use-diff-result";
 import { useFileMarks } from "./use-file-marks";
 import { useReviewKeys } from "./use-review-keys";
@@ -751,15 +752,34 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     resolveFinding,
   });
   const runFilesCommand = (command: ReviewCommand, count: number) => {
-    if (command.kind === "narrative") {
-      enterNarrative();
-      return;
-    }
-    if (command.kind === "conversation") {
-      conversationMode.enter();
+    if (command.kind === "nextView") {
+      nextView();
       return;
     }
     runReviewCommand(command, count, filesEnv());
+  };
+
+  /**
+   * One way between the views, for `S` and the mode switch alike. The files and the narrative share a cursor; the
+   * conversation keeps the one it was opened from and hands it back to whichever comes next.
+   */
+  const switchView = (next: DiffViewMode) => {
+    if (next === mode) return;
+    if (next === "conversation") {
+      conversationMode.enter();
+      return;
+    }
+    const cursor = mode === "conversation" ? conversationMode.leave() : keys.get().cursor;
+    if (next === "narrative") {
+      if (mode === "conversation") keys.set({ cursor, visual: null, focused: null });
+      enterNarrative();
+    } else showInFiles(cursor, mode === "conversation" ? null : undefined);
+  };
+  /** `S`: files, narrative, conversation, and round again, leaving out the views this diff lacks. */
+  const nextView = () => {
+    const next = nextViewMode(mode, { narrative: narrativeAvailable, conversation: conversationAvailable });
+    if (next === null) notify(!gate.whole && source.tour?.story !== undefined ? `The narrative covers all the changes; ${SWITCH_TO_ALL_FIRST}` : "This diff has only the files view");
+    else switchView(next);
   };
 
   const conversationData = useConversationData(source, refreshSignal, mode === "conversation");
@@ -779,8 +799,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     pullRequest: conversationData.data?.pullRequest ?? null,
     data: conversationData.data,
     writer: conversationWriter,
-    narrativeAvailable,
-    enterNarrative,
+    nextView,
     threadById,
     files: diff?.files ?? NO_FILES,
     currentPaths,
@@ -975,8 +994,8 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
       case "generate":
         startGenerate();
         return;
-      case "narrative":
-        leaveToFiles();
+      case "nextView":
+        nextView();
         return;
       case "findFile":
         if (diff === null || diff.files.length === 0) notify("No changed files to search");
@@ -998,9 +1017,6 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
       }
       case "fileTree":
         narrativeEnv().toggleFileTree();
-        return;
-      case "conversation":
-        conversationMode.enter();
         return;
       case "side":
         // Past the old side, or from an excerpt header, the next step left is the outline.
@@ -1187,7 +1203,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                         stale,
                         narrative: narrativeAvailable,
                         conversation: conversationAvailable,
-                        onChange: (next) => (next === mode ? undefined : next === "conversation" ? conversationMode.enter() : next === "narrative" ? enterNarrative() : leaveToFiles()),
+                        onChange: switchView,
                       }
                     : null
                 }

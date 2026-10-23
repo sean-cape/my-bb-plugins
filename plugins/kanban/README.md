@@ -451,8 +451,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
     appear in several.
 
   Before finishing, the agent runs `bb kanban narrative-check` on its draft,
-  which lists any line its steps skip. The **Files | Narrative** switch in
-  the changes view's summary bar (or `S`) opens the narrative view:
+  which lists any line its steps skip. The **Files | Narrative | Conversation**
+  switch in the changes view's summary bar (or `S`, which cycles the three)
+  opens the narrative view:
   - one step at a time, the explanation over just its lines, drawn by the
     same diff renderer as the files view, so the cursor, comments, findings
     and viewed marks take the same keys there; `j` reads on through a step
@@ -593,7 +594,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
   board's own comments. An open GitHub thread has Resolve (`r`) beside Reply.
   Resolved threads, and threads whose line the latest push changed
   (outdated), leave the diff unless you have an unsent reply in one; the
-  summary bar counts them and the Conversation view (`gc`) lists every thread
+  summary bar counts them and the Conversation view (`S` cycles to it) lists every thread
   under the review it was submitted in, between the PR's summary,
   description, commits, comments, reviews, events and merge status as on
   GitHub's Conversation tab (read with one GraphQL query as the view opens;

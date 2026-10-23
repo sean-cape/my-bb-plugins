@@ -4,7 +4,7 @@ import { REVIEW_KEYMAP, type ReviewCommand } from "../keys/keymap";
 /** The review keys that mean the same over the conversation's rows as over the diff's lines. */
 const SHARED_KEYS = [
   "j", "<Down>", "k", "<Up>", "gg", "G", "<C-d>", "<C-u>", "<C-f>", "<C-b>", "c", "C", "zz", "zt", "zb", "za", "<CR>",
-  "a", "r", "e", "dd", "M", "gx", "go", "i", "A", "B", "gB", "T", "R", "s", "S", "?", "<Esc>", "gc", "H", "gr", "gl",
+  "a", "r", "e", "dd", "M", "gx", "go", "i", "A", "B", "gB", "T", "R", "s", "S", "?", "<Esc>", "H", "gr", "gl",
 ];
 
 export type ConversationCommand =
@@ -36,8 +36,7 @@ export const CONVERSATION_KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["gf"], action: "Open the files view at the thread's line, or at the commit's changes" },
       { keys: ["gx"], action: "Open the entry on GitHub: the pull request, a comment, a commit, a force-push's compare, a check's run" },
       { keys: ["gr"], action: "Pick commits to read in the files view" },
-      { keys: ["gc"], action: "Back to the files or the narrative, where you were" },
-      { keys: ["S"], action: "Switch to the narrative review" },
+      { keys: ["S"], action: "Next view: back to the files, where you were" },
     ],
   },
   {
