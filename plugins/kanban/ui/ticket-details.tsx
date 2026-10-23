@@ -18,7 +18,7 @@ import { ExternalLink, ThreadStatusDot, Select, HEADER_ICON_BUTTON, COMPACT, Gro
 import { ProjectSelect } from "./project-select";
 import { TagEditor } from "./tags";
 import { ReviewPanel } from "./review-panel";
-import { HandoffBrief, LeftOpenMinors, PlanApproval } from "./brief-panel";
+import { HandoffBrief, LeftOpenFindings, PlanApproval } from "./brief-panel";
 import { LoopSection } from "./loop-section";
 import { ChecksMark, JiraStatusGlyph, PrStateGlyph, checksHref } from "./badges";
 import { jiraStatusMark } from "./source-marks";
@@ -240,7 +240,7 @@ function TicketDetails({
 
       <HandoffBrief ticket={ticket} rpc={rpc} run={run} pending={pending} onOpenThread={onOpenThread} />
       <PlanApproval ticket={ticket} rpc={rpc} run={run} pending={pending} />
-      <LeftOpenMinors ticket={ticket} rpc={rpc} run={run} pending={pending} />
+      <LeftOpenFindings ticket={ticket} rpc={rpc} run={run} pending={pending} />
 
       {/* A PR card is read for its review: findings, PR comments and the PR's own description come before the card's properties. */}
       {reviewFirst ? (

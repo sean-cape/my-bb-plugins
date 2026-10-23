@@ -11,7 +11,7 @@ import {
 import type { PluginThreadEventPayloads, PluginTurnFailedEvent } from "@get-bb/plugin-sdk";
 import type { ReadingPlan } from "./shared/reading-plan";
 import plugin, { adfToText, defaultSelected, githubRepoFromRemote, newLineRangesFromPatch, parseNarrative, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CodeReviewThread, type CommentApply, type DiffComment, type Dump, type Finding, type Narrative, type NarrativeStory, type PrComment, type Review, type StructuralDiff, type SymbolLookup, type Ticket, type TicketDiff } from "./server";
-import { loopStateSchema, openMinorsClause, phaseChip } from "./shared/loop";
+import { loopStateSchema, openFindingsClause, phaseChip } from "./shared/loop";
 
 type Host = ReturnType<typeof createFakePluginHost>;
 type ThreadResponse = ReturnType<typeof makeThreadResponse>;
@@ -2541,7 +2541,7 @@ describe("monitored review loop", () => {
   });
 });
 
-describe("ready chip open minors", () => {
+describe("open findings in the loop chips", () => {
   const minors = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `F${index + 1}`, severity: "minor" as const, title: `Nit ${index + 1}` }));
   const readyTitle = (count: number) =>
     phaseChip(loopStateSchema.parse({ monitored: true, phase: "needs-you", reason: "clean", commit: "abc1234def", openFindings: minors(count) }))!.title;
@@ -2559,7 +2559,19 @@ describe("ready chip open minors", () => {
   });
 
   it("gives the loop status line the same capped clause", () => {
-    expect(openMinorsClause(minors(5))).toBe("5 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3, +2 more");
+    expect(openFindingsClause(minors(5))).toBe("5 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3, +2 more");
+    expect(openFindingsClause(minors(1))).toBe("1 minor finding left open: F1 Nit 1");
+  });
+
+  it("counts a finding deselected at the findings gate by its severity, and lists it ahead of the minors", () => {
+    const open = [...minors(3), { id: "F9", severity: "important" as const, title: "Unbounded cache" }];
+    expect(openFindingsClause(open)).toBe("4 findings (1 important, 3 minor) left open: F9 Unbounded cache, F1 Nit 1, F2 Nit 2, +1 more");
+  });
+
+  it("caps the accepted and landed chips the same way", () => {
+    const chip = (phase: "accepted" | "landed") => phaseChip(loopStateSchema.parse({ monitored: true, phase, commit: "abc1234def", openFindings: minors(5) }))!.title;
+    expect(chip("accepted")).toBe("Monitored; accepted; 5 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3, +2 more");
+    expect(chip("landed")).toBe("Monitored; accepted and landed; 5 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3, +2 more");
   });
 });
 

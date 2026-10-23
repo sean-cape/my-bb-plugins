@@ -256,13 +256,26 @@ export function parseLoopState(raw: string | null): LoopState {
   }
 }
 
-const OPEN_MINORS_SHOWN = 3;
+const OPEN_FINDINGS_SHOWN = 3;
+const SEVERITY_ORDER = findingSeveritySchema.options;
 
-/** How many minor findings are left open and which, by id and title: the first three and then how many more. */
-export function openMinorsClause(findings: LoopFinding[]): string {
-  const list = findings.slice(0, OPEN_MINORS_SHOWN).map((finding) => `${finding.id} ${finding.title}`).join(", ");
-  const more = findings.length - OPEN_MINORS_SHOWN;
-  return `${findings.length} minor finding${findings.length === 1 ? "" : "s"} left open: ${more > 0 ? `${list}, +${more} more` : list}`;
+/**
+ * How many findings are left open, by severity unless all are minor: `3 minor findings`, `2 findings (1 important,
+ * 1 minor)`. Usually they are the minors the loop ended with, but a finding deselected at the findings gate can be any.
+ */
+export function openFindingsCount(findings: LoopFinding[]): string {
+  const noun = `finding${findings.length === 1 ? "" : "s"}`;
+  const counts = SEVERITY_ORDER.map((severity) => ({ severity, count: findings.filter((finding) => finding.severity === severity).length })).filter(({ count }) => count > 0);
+  if (counts.every(({ severity }) => severity === "minor")) return `${findings.length} minor ${noun}`;
+  return `${findings.length} ${noun} (${counts.map(({ severity, count }) => `${count} ${severity}`).join(", ")})`;
+}
+
+/** The findings left open, most severe first, by id and title: the first three and then how many more. */
+export function openFindingsClause(findings: LoopFinding[]): string {
+  const ordered = [...findings].sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity));
+  const list = ordered.slice(0, OPEN_FINDINGS_SHOWN).map((finding) => `${finding.id} ${finding.title}`).join(", ");
+  const more = findings.length - OPEN_FINDINGS_SHOWN;
+  return `${openFindingsCount(findings)} left open: ${more > 0 ? `${list}, +${more} more` : list}`;
 }
 
 /** The chip a monitored card shows on the board: the loop's phase, or why it needs you. */
@@ -287,12 +300,12 @@ export function phaseChip(loop: LoopState): { label: string; tone: "neutral" | "
       return { label: `fixing r${loop.round}`, tone: "accent", title: `The card's thread is fixing round ${loop.round}'s findings` };
     case "needs-you":
       if (loop.reason === "clean" || loop.reason === null) {
-        const minors = loop.openFindings.length === 0 ? "" : `; ${openMinorsClause(loop.openFindings)}`;
+        const open = loop.openFindings.length === 0 ? "" : `; ${openFindingsClause(loop.openFindings)}`;
         const effective = effectiveLevel(loop);
         const level = effective === null ? "" : ` · ${ATTENTION_LEVEL_LABEL[effective]}`;
         const why = loop.levelOverride === null ? (loop.attention?.reasons ?? []) : [`you set it: ${loop.levelOverride.reason}`];
         const reasons = effective === null || why.length === 0 ? "" : `. ${ATTENTION_LEVEL_LABEL[effective]}: ${why.join("; ")}`;
-        return { label: `ready${level}`, tone: "success", title: `Checked and reviewed clean at${commit}${minors}; needs you${reasons}` };
+        return { label: `ready${level}`, tone: "success", title: `Checked and reviewed clean at${commit}${open}; needs you${reasons}` };
       }
       if (loop.reason === "loop-error") return { label: "stuck · loop error", tone: "danger", title: `Needs you: ${loop.failure ?? "a checks or review thread failed twice"}; open it from the card` };
       if (loop.reason === "findings") {
@@ -307,8 +320,8 @@ export function phaseChip(loop: LoopState): { label: string; tone: "neutral" | "
         : { label: "approve plan", tone: "warning", title: "Needs you: approve or edit the plan the card's thread proposed" };
     case "accepted":
     case "landed": {
-      const minors = loop.openFindings.length === 0 ? "" : `; minor findings left open: ${loop.openFindings.map((finding) => `${finding.id} ${finding.title}`).join(", ")}`;
-      return { label: loop.phase === "accepted" && loop.autoAccepted ? "auto-accepted" : loop.phase, tone: "success", title: `Monitored; ${loop.autoAccepted ? "auto-accepted at Glance" : "accepted"}${loop.phase === "landed" ? " and landed" : ""}${minors}` };
+      const open = loop.openFindings.length === 0 ? "" : `; ${openFindingsClause(loop.openFindings)}`;
+      return { label: loop.phase === "accepted" && loop.autoAccepted ? "auto-accepted" : loop.phase, tone: "success", title: `Monitored; ${loop.autoAccepted ? "auto-accepted at Glance" : "accepted"}${loop.phase === "landed" ? " and landed" : ""}${open}` };
     }
     case "idle":
     case "building":

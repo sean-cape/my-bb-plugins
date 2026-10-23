@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { ATTENTION_LEVEL_LABEL, attentionLevelSchema, type AttentionLevel } from "../shared/loop";
+import { ATTENTION_LEVEL_LABEL, attentionLevelSchema, openFindingsCount, type AttentionLevel } from "../shared/loop";
 import type { PlanFile, ReadingPlan } from "../shared/reading-plan";
 import type { Ticket } from "../shared/board";
 import type { FindingSeverity, Review } from "../shared/review";
@@ -251,7 +251,7 @@ function LeftOutBody({ section, decide }: { section: Extract<BriefSection, { kin
         ))}
       {section.leftOpen.length > 0 ? (
         <div className="flex flex-col gap-1">
-          <Subhead>Minor, left open</Subhead>
+          <Subhead>Left open</Subhead>
           <Items>
             {section.leftOpen.map((finding) => (
               <FindingItem key={finding.id} {...finding} />
@@ -618,13 +618,13 @@ export function PlanApproval({ ticket, rpc, run, pending }: { ticket: Ticket; rp
   );
 }
 
-/** Minor findings an accepted card left open, each with a card of its own to make. */
-export function LeftOpenMinors({ ticket, rpc, run, pending }: { ticket: Ticket; rpc: Rpc; run: RunAction; pending: boolean }) {
+/** Findings an accepted card left open, each with a card of its own to make. */
+export function LeftOpenFindings({ ticket, rpc, run, pending }: { ticket: Ticket; rpc: Rpc; run: RunAction; pending: boolean }) {
   const loop = ticket.loop;
   if (loop === null || (loop.phase !== "accepted" && loop.phase !== "landed") || loop.openFindings.length === 0 || loop.reviewId === null) return null;
   const reviewId = loop.reviewId;
   return (
-    <Group title="Left open" summary={<span className="text-xs text-muted-foreground">{loop.openFindings.length} minor</span>} defaultOpen>
+    <Group title="Left open" summary={<span className="text-xs text-muted-foreground">{openFindingsCount(loop.openFindings)}</span>} defaultOpen>
       <Items>
         {loop.openFindings.map((finding) => (
           <FindingItem
