@@ -217,7 +217,7 @@ flowchart LR
 - **Attention level** is computed by a pure function from:
   - the highest per-file risk from the classify pass;
   - per-project path rules;
-  - loop signals: rounds used, accepted or open disputes, check failures, and whether "not covered" is non-empty;
+  - loop signals: rounds used, accepted or open disputes, check failures, and whether "not covered" lists an untested path (`UI only:` and `Unverified:` entries are shown but don't raise the level, since nearly every review has some);
   - scope signals: open scope findings, and deferred critical findings;
   - diff size.
 

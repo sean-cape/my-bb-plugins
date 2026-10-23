@@ -11,7 +11,7 @@ const quiet: AttentionSignals = {
   rounds: 0,
   disputes: 0,
   checkFailures: 0,
-  notCovered: 0,
+  untested: 0,
   openScopeFindings: 0,
   deferredCritical: 0,
 };
@@ -45,7 +45,7 @@ describe("attention level", () => {
     expect(attentionLevel({ ...quiet, rounds: 3 })).toMatchObject({ level: "read", reasons: expect.arrayContaining(["took 3 rounds"]) });
     expect(attentionLevel({ ...quiet, disputes: 1 })).toMatchObject({ level: "read", reasons: expect.arrayContaining(["1 disputed finding"]) });
     expect(attentionLevel({ ...quiet, checkFailures: 2 })).toMatchObject({ level: "read", reasons: expect.arrayContaining(["checks failed 2 times"]) });
-    expect(attentionLevel({ ...quiet, notCovered: 2 })).toMatchObject({ level: "read", reasons: expect.arrayContaining(["2 things the checks don't cover"]) });
+    expect(attentionLevel({ ...quiet, untested: 2 })).toMatchObject({ level: "read", reasons: expect.arrayContaining(["2 changed paths no test exercises"]) });
     expect(attentionLevel({ ...quiet, openScopeFindings: 1 })).toMatchObject({ level: "read", reasons: expect.arrayContaining(["1 open scope finding"]) });
     expect(attentionLevel({ ...quiet, deferredCritical: 1 })).toMatchObject({ level: "read", reasons: expect.arrayContaining(["1 deferred critical finding"]) });
     // Signals only raise: a Scrutinize path rule stays Scrutinize.

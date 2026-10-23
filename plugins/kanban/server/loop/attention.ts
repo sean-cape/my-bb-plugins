@@ -8,8 +8,11 @@ export interface AttentionSignals {
   rounds: number;
   disputes: number;
   checkFailures: number;
-  /** What the final review says neither the checks nor it could check. */
-  notCovered: number;
+  /**
+   * The final review's `Untested:` not-covered entries. Its `UI only:` and `Unverified:` ones are listed for the
+   * reader but don't raise the level: nearly every review has some, so they would put every card at Read.
+   */
+  untested: number;
   openScopeFindings: number;
   deferredCritical: number;
 }
@@ -64,7 +67,7 @@ export function attentionLevel(signals: AttentionSignals): Attention {
   if (signals.rounds >= 2) raised.push({ level: "read", reason: `took ${signals.rounds} rounds` });
   if (signals.disputes > 0) raised.push({ level: "read", reason: plural(signals.disputes, "disputed finding") });
   if (signals.checkFailures > 0) raised.push({ level: "read", reason: `checks failed ${signals.checkFailures === 1 ? "once" : `${signals.checkFailures} times`}` });
-  if (signals.notCovered > 0) raised.push({ level: "read", reason: `${plural(signals.notCovered, "thing")} the checks don't cover` });
+  if (signals.untested > 0) raised.push({ level: "read", reason: `${plural(signals.untested, "changed path")} no test exercises` });
   if (signals.openScopeFindings > 0) raised.push({ level: "read", reason: plural(signals.openScopeFindings, "open scope finding") });
   if (signals.deferredCritical > 0) raised.push({ level: "read", reason: plural(signals.deferredCritical, "deferred critical finding") });
   const level = raised.reduce<AttentionLevel>((top, entry) => (RANK[entry.level] > RANK[top] ? entry.level : top), "glance");

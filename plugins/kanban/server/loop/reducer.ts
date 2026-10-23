@@ -193,7 +193,7 @@ function retryAction(state: LoopState, event: Extract<LoopEvent, { type: "thread
 
 /** The first round reviews at the depth its attention level picks; without a classification there are no files for path rules to match, so it gets Standard. */
 function classified(state: LoopState, commit: string, classification: Classification | null, pathRules: PathRule[]): LoopStep {
-  const attention = attentionLevel({ ...loopSignals(state), files: classification?.files ?? null, pathRules, notCovered: 0, openScopeFindings: 0, deferredCritical: 0 });
+  const attention = attentionLevel({ ...loopSignals(state), files: classification?.files ?? null, pathRules, untested: 0, openScopeFindings: 0, deferredCritical: 0 });
   const next: LoopState = { ...state, phase: "reviewing", reason: null, retries: 0, reviewId: null, classification, attention, depth: DEPTH_FOR_LEVEL[attention.level] };
   return { state: next, actions: [reviewAction(next, commit)] };
 }
@@ -224,7 +224,7 @@ function reviewCompleted(base: LoopState, event: Extract<LoopEvent, { type: "rev
     ...loopSignals(base),
     files: base.classification?.files ?? null,
     pathRules: event.pathRules,
-    notCovered: event.notCovered.length,
+    untested: event.notCovered.filter((entry) => /^untested:/iu.test(entry.trim())).length,
     openScopeFindings: own.filter((finding) => finding.category === "scope" && finding.triage?.decision !== "drop" && finding.dispute?.outcome !== "accepted").length,
     deferredCritical: own.filter((finding) => finding.severity === "critical" && finding.triage?.decision === "defer").length,
   });

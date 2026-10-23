@@ -199,8 +199,10 @@ its PR is reviewed and its review findings and comments are handed to agents.
   the card's thread waits on you (a question or an approval) the loop pauses
   as `stuck · question` without moving the card, and resumes at its next
   ready. The level is recomputed when the loop stops, from the file scores,
-  the rounds, disputes and check failures, and the last review's not-covered
-  list, open scope findings and deferred critical findings. The check command
+  the rounds, disputes and check failures, and the last review's untested
+  paths (its `Untested:` not-covered entries; `UI only:` and `Unverified:`
+  ones are listed but don't raise it), open scope findings and deferred
+  critical findings. The check command
   and the path rules (`src/auth/** scrutinize, .github/** read`) are set per
   project in the card panel's Checks and Path rules fields; a project without one lets the agent pick, and the board marks
   it as the agent's choice. Monitored cards carry a chip naming the loop's

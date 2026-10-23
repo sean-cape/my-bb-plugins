@@ -95,8 +95,10 @@ describe("loop reducer", () => {
   it("recomputes the level when the loop stops, with what the rounds and the last review showed", () => {
     const quiet = run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(0), classified(2), { type: "review-started", reviewId: "rev1" }, reviewed("rev1", [])]);
     expect(quiet.state).toMatchObject({ phase: "needs-you", reason: "clean", attention: { level: "glance" } });
-    const uncovered = run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(0), classified(2), { type: "review-started", reviewId: "rev1" }, reviewed("rev1", [], ["the drag preview"])]);
-    expect(uncovered.state.attention).toEqual({ level: "read", reasons: ["risk 2: src/a.ts", "1 thing the checks don't cover"] });
+    const uncovered = (notCovered: string[]) => run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(0), classified(2), { type: "review-started", reviewId: "rev1" }, reviewed("rev1", [], notCovered)]);
+    expect(uncovered(["Untested: the retry branch in src/a.ts", "UI only: the drag preview"]).state.attention).toEqual({ level: "read", reasons: ["risk 2: src/a.ts", "1 changed path no test exercises"] });
+    // UI-only and unverified entries are for the reader; nearly every review has some.
+    expect(uncovered(["UI only: the drag preview", "Unverified: the server's rate limit"]).state.attention).toEqual({ level: "glance", reasons: ["risk 2: src/a.ts"] });
   });
 
   it("requests the reading plan's narrative at Needs you only at Read or Scrutinize", () => {
@@ -196,11 +198,11 @@ describe("loop reducer", () => {
   });
 
   it("checks a round of only minor findings and ends without a re-review, leaving the disputed ones open", () => {
-    const polish = run([...reviewing, reviewed("rev1", [finding("F1", "minor"), finding("F2", "minor")], ["the drag preview"])]);
+    const polish = run([...reviewing, reviewed("rev1", [finding("F1", "minor"), finding("F2", "minor")], ["Untested: the drag preview's drop"])]);
     expect(polish.state).toMatchObject({ phase: "fixing", round: 1, rounds: [{ handed: ["F1", "F2"], polish: true }] });
     expect(polish.actions.at(-1)).toContainEqual({ type: "prompt-card", prompt: { kind: "fix", round: 1, reviewId: "rev1", findingIds: ["F1", "F2"], polish: true } });
     // The level the review that found them computed holds, since no later review recomputes it.
-    expect(polish.state.attention?.reasons).toContain("1 thing the checks don't cover");
+    expect(polish.state.attention?.reasons).toContain("1 changed path no test exercises");
     const { state, actions } = run([answer({ F1: fixed, F2: disputed }), ready(fixSha), checks(0, fixSha)], polish.state);
     expect(state).toMatchObject({ phase: "needs-you", reason: "clean", commit: fixSha, openFindings: [{ id: "F2", severity: "minor", title: "Finding F2" }] });
     expect(actions.at(-1)).not.toContainEqual(expect.objectContaining({ type: "spawn-review" }));
