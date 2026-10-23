@@ -127,6 +127,8 @@ const FILE_TREE_MOUNT_MS = 200;
 
 /** The file list and the narrative outline show from the `@3xl` container width (48rem) up. */
 const FILE_TREE_MIN_REM = 48;
+/** How long opening at the new code keeps it at the top while the files above it lay out. */
+const LANDING_SETTLE_MS = 2_000;
 
 /** The vim-style mode and half-typed keys, shown while the view has the keyboard. */
 function ModeLabel() {
@@ -531,6 +533,15 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     // The initial cursor would otherwise go back to the first file once its rows arrive.
     initialCursor.current = { instanceKey: `${instanceKey}|${commitRangeKey(null)}`, placed: null, done: true };
     jumpTo(first.path);
+    const parked = keys.get().cursor;
+    // The files above it still have their estimated height, so it moves as their rows arrive: keep it at the top until
+    // they settle, or until the reader scrolls or moves the cursor.
+    const since = performance.now();
+    const unsubscribe = keys.onModel(() => {
+      if (performance.now() - since > LANDING_SETTLE_MS || lastScrollIntent.current > since || keys.get().cursor !== parked) unsubscribe();
+      else requestAnimationFrame(() => sectionRefs.current.get(first.path)?.scrollIntoView({ block: "start" }));
+    });
+    window.setTimeout(unsubscribe, LANDING_SETTLE_MS);
     notify(`Opened at what changed since ${sinceName(latestDelta, rounds)}: ]n steps through it, gn shows only it`);
   };
   const landOnNewRef = useRef(landOnNew);
