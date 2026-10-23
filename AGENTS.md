@@ -27,6 +27,8 @@ When a plugin change is done, land it and install it locally without waiting to 
 3. Load it with `bb plugin reload <name>`. A new plugin is first listed in `.bb/plugins.json`, then installed with `bb plugin install path:/Users/sean/dev/my-bb-plugins --plugin <name> --yes`.
 4. Check that `bb plugin reload` reports it `running`. Don't push `main` unless asked.
 
+`node scripts/install.mjs --no-pull <name>...` in the main checkout does steps 2 to 4 for the named plugins (dependencies, build, install or reload, the `running` check) and links the Claude config; it doesn't run the typecheck or tests.
+
 New worktrees get their `node_modules` from `.bb-env-setup.sh`, which bb runs on creation: each plugin's entries link to the main checkout's, so don't run `pnpm install` in a worktree. In an older worktree, run `bash .bb-env-setup.sh` from its root.
 
 A change to the skills or subagents under `claude/` is live once it is on `main`: `~/.claude` links to the main checkout's copies. A new skill or subagent needs `node scripts/link-claude-config.mjs` run there (outside the sandbox, which blocks `~/.claude/skills` and `~/.claude/agents`).
