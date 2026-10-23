@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ReactNode } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import { commitRangeKey, type DiffComment, type DiffFile, type SemanticChange, type SymbolLookup } from "../types";
+import { commitRangeKey, type DiffComment, type DiffDelta, type DiffFile, type SemanticChange, type SymbolLookup } from "../types";
 import { otherLayout, readPreference, requestReload, setDiffPreferences, useDiffInstance, useDiffPreferences, writePreference } from "./state";
 import { DEFAULT_LABELS, type DiffSource, type DiffViewLabels } from "./source";
 import { CHANGES_STRIP, ChangesStrip, useDelta } from "./delta-strip";
@@ -185,6 +185,16 @@ function sourceIdentity(source: DiffSource): number {
  * The whole changes view: the files, or the narrative that walks through them, with one keyboard cursor shared by
  * both. Narrow containers (a side panel) drop the file tree and the outline; wide ones show them beside the diff.
  */
+/** The delta cut to the files the diff shows; null when none of them changed. */
+function useChangeDelta(delta: DiffDelta | null, paths: ReadonlySet<string>): DiffDelta | null {
+  return useMemo(() => {
+    if (delta === null) return null;
+    const files = delta.files.filter((file) => paths.has(file.path));
+    if (files.length === 0) return null;
+    return files.length === delta.files.length ? delta : { ...delta, files };
+  }, [delta, paths]);
+}
+
 export function DiffView(props: DiffViewProps) {
   // A new source is new data (kanban rebuilds its source when a ticket gains a PR): the commit range, loaded patches
   // and suggestion batch picked over the old one start afresh rather than being sent to the new one.
@@ -223,15 +233,16 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   const roundsKey = rounds.map((round) => `${round.review.id}:${round.review.commitSha ?? ""}`).join(",");
   // Where new code counts from: the source's default (the last review), unless a round was picked in the strip.
   const [pickedSince, setPickedSince] = useState<string | null>(null);
-  const latestDelta = useDelta(source, diff?.headSha ?? null, null, roundsKey);
-  const pickedDelta = useDelta(source, diff?.headSha ?? null, pickedSince, roundsKey, pickedSince !== null);
+  const currentPaths = useMemo(() => new Set(diff?.files.map((file) => file.path) ?? []), [diff]);
+  // A merge of the base branch since the point brings in files the change doesn't touch; they are not its new code.
+  const latestDelta = useChangeDelta(useDelta(source, diff?.headSha ?? null, null, roundsKey), currentPaths);
+  const pickedDelta = useChangeDelta(useDelta(source, diff?.headSha ?? null, pickedSince, roundsKey, pickedSince !== null), currentPaths);
   const delta = pickedSince === null ? latestDelta : pickedDelta;
   const sinceLabel = delta === null ? "" : sinceName(delta, rounds);
   const preferences = useDiffPreferences();
   const { findingFilter, hideWhitespace } = preferences;
   const { rawPatches, whitespaceOnly, loadedPatchOf, rememberLoadedPatch } = useLoadedPatches(diff, commitRange);
   const { viewed, collapsed, markViewed: markFileViewed, toggleCollapsed, expand, setCollapsedPaths } = useFileMarks(source, diff, (file) => hideWhitespace && whitespaceOnly.has(file.path));
-  const currentPaths = useMemo(() => new Set(diff?.files.map((file) => file.path) ?? []), [diff]);
   const reader = useNarrativeReader({ story: narrative.story, instanceKey, currentPaths, viewed });
   const [keys] = useState(createReviewKeys);
   const [overlay, setOverlay] = useState<{ kind: "help" } | { kind: "files" } | { kind: "steps" } | { kind: "symbols"; names: string[]; pick: (name: string) => void } | { kind: "blame"; path: string; span: LineSpan; anchor: DOMRect | null } | { kind: "commits" } | { kind: "search" } | { kind: "fileFilter"; anchor: DOMRect } | null>(null);
@@ -278,8 +289,9 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   const findingsByPath = useMemo(() => (gate.findings ? filterFindings(allFindingsByPath, findingFilter) : new Map<string, PlacedFinding[]>()), [allFindingsByPath, findingFilter, gate]);
   const allFindings = useMemo(() => distinctFindings([...allFindingsByPath.values()].flat()), [allFindingsByPath]);
   const shownFindingCount = useMemo(() => distinctFindings([...findingsByPath.values()].flat()).length, [findingsByPath]);
-  const latestRound = rounds.at(-1)?.number ?? null;
-  const newFindings = allFindings.filter((item) => item.newIn !== null && item.newIn === latestRound);
+  // Findings a review reported after the round new code counts from; none for the latest, which nothing came after.
+  const countingFrom = delta?.since?.kind === "review" ? (rounds.find((round) => round.review.id === delta.since!.reviewId)?.number ?? null) : null;
+  const newFindings = countingFrom === null ? [] : allFindings.filter((item) => item.newIn !== null && item.newIn > countingFrom);
   const touchedFindings = allFindings.filter((item) => item.touched);
   const semanticsByPath = useMemo(() => tourSemanticsByPath(tour), [tour]);
   const risk = useMemo(() => riskByPath(tour, allFindingsByPath), [tour, allFindingsByPath]);

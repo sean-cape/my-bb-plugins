@@ -56,7 +56,8 @@ function lineLook(context: RowContext, side: DiffSide, line: number, rowChanged:
   return {
     tint: selected ? "bg-amber-400/20" : neutral ? "bg-violet-500/10" : rowChanged && (side === "LEFT" ? "bg-red-500/10" : "bg-emerald-500/10"),
     gutterTint: selected ? "bg-amber-400/35" : neutral ? "bg-violet-500/20" : rowChanged && (side === "LEFT" ? "bg-red-500/20" : "bg-emerald-500/20"),
-    changedSince: side === "RIGHT" && rangesOverlap(line, line, context.changedRanges),
+    // A line the change doesn't touch (one a merge of the base brought in) is not new, whatever the delta says.
+    changedSince: side === "RIGHT" && rowChanged && rangesOverlap(line, line, context.changedRanges),
   };
 }
 

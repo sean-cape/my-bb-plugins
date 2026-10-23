@@ -179,7 +179,8 @@ export function FileTree({
   return (
     <Tooltip.Provider>
       <ul ref={listRef} onKeyDown={onKeyDown}>
-        {changedSince !== null && changed.length > 0 ? (
+        {/* Every file changed since is the tree itself again; the rows' "new" marks say it. */}
+        {changedSince !== null && changed.length > 0 && changed.length < files.length ? (
           <li key={NEW_GROUP} data-nav-group="" className="mb-1 border-b border-border/60 pb-1">
             <button
               type="button"

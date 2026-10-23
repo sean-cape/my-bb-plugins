@@ -24,9 +24,9 @@ export function structuralRows(diff: StructuralDiff): StructuralRow[] {
 }
 
 /**
- * The rows new since a point in the change's history, from the new-side line ranges that changed since it: a row whose
- * new line is in one (changed against the base or not: a line put back as it was is still new since the point), and a
- * deleted row whose next new line is, where a pure deletion's range sits.
+ * The changed rows new since a point in the change's history, from the new-side line ranges that changed since it: a
+ * row whose new line is in one, and a deleted row whose next new line is, where a pure deletion's range sits. Rows the
+ * change leaves as they were are never new, though a merge of the base branch since the point puts them in a range.
  */
 export function newRows(rows: readonly StructuralRow[], ranges: Array<[number, number]>): Set<number> {
   const fresh = new Set<number>();
@@ -36,7 +36,7 @@ export function newRows(rows: readonly StructuralRow[], ranges: Array<[number, n
     const row = rows[index]!;
     if (row.rhs !== null) nextNew = row.rhs;
     const line = row.rhs ?? nextNew;
-    if (line !== null && rangesOverlap(line, line, ranges)) fresh.add(index);
+    if (row.changed && line !== null && rangesOverlap(line, line, ranges)) fresh.add(index);
   }
   return fresh;
 }
@@ -44,8 +44,8 @@ export function newRows(rows: readonly StructuralRow[], ranges: Array<[number, n
 /**
  * The rows left unfolded: changes and their context, rows the user expanded, and the context around every finding
  * (new-side lines) and comment thread, which can sit on lines this view would otherwise fold away because GitHub's
- * hunks carry more context than difftastic's. A thread on a range unfolds all of it. With `onlyChanges`, those rows
- * stay open in place of the changes ("Only new"), and the other changes fold like unchanged lines.
+ * hunks carry more context than difftastic's. A thread on a range unfolds all of it. With `onlyChanges`, only those
+ * changes stay open ("Only new"); the others fold like unchanged lines.
  */
 export function visibleRows(
   rows: readonly StructuralRow[],
@@ -60,7 +60,7 @@ export function visibleRows(
   const showAround = (index: number) => {
     for (let i = Math.max(0, index - CONTEXT_LINES); i <= Math.min(rows.length - 1, index + CONTEXT_LINES); i++) visible.add(i);
   };
-  for (const row of rows) if (onlyChanges === null ? row.changed : onlyChanges.has(row.index)) showAround(row.index);
+  for (const row of rows) if (row.changed && (onlyChanges === null || onlyChanges.has(row.index))) showAround(row.index);
   const rowByOldLine = new Map<number, number>();
   const rowByNewLine = new Map<number, number>();
   for (const row of rows) {

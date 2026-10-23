@@ -153,11 +153,15 @@ plugins embed.
   "uncommitted changes since r2"), and a review running on it ("r3
   reviewing…"), with the host's controls (kanban's "Re-review what's new") at
   the end. Under it, the files changed since that round as chips and "Only
-  new", and the findings the latest round found fixed, each a jump to its file.
+  new", and the findings the latest round found fixed (folded under their
+  count), each a jump to its file.
   Every line changed since the round is marked in the gutter in blue (the
   structural view and the line diff's added lines), its hunk header says "new
   since r2", its file header and its file tree row say so too, and the file
-  tree lists those files again in a "Changed since r2" group at the top.
+  tree lists those files again in a "Changed since r2" group at the top (when
+  some files did not change). A file the change doesn't touch, and a line it
+  leaves as it was, are never new, though a merge of the base branch since the
+  round changed them.
   Picking another round in the strip (or `gh`, then `h`/`l` and Enter) counts
   from its commit instead. "Only new" (`gn`, or the file filter's "Only new
   since r2") leaves out the other files and, in the structural view, folds the

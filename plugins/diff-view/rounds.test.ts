@@ -82,9 +82,10 @@ describe("new since a review", () => {
     { index: 4, lhs: 4, rhs: 4, changed: false },
   ];
 
-  it("takes a row on a changed new line, and a deletion whose next new line is the range's insertion point", () => {
-    expect([...newRows(rows, [[2, 2]])].sort()).toEqual([1, 2]);
-    expect([...newRows(rows, [[3, 4]])].sort()).toEqual([3, 4]);
+  it("takes a changed row on a new line in a range, and a deletion whose next new line is the range's insertion point", () => {
+    expect([...newRows(rows, [[2, 2]])]).toEqual([1]);
+    // Line 4 is in the range but unchanged in the diff: brought in by a merge of the base, not new.
+    expect([...newRows(rows, [[3, 4]])]).toEqual([3]);
     expect(newRows(rows, []).size).toBe(0);
   });
 

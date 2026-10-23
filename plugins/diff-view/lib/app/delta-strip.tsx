@@ -7,7 +7,8 @@ import type { DiffSource } from "./source";
 import { passesFindingFilter, type FindingFilter, type InlineFinding } from "./findings/findings";
 import { commitsAfter, roundName, roundOf, sameSha, sinceName, type ReviewRound } from "./rounds";
 import { cn } from "./utils";
-import { FAST, PRESS, STAGGER, enter, stagger } from "./ui/motion";
+import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { CHEVRON, FAST, PRESS, STAGGER, enter, stagger } from "./ui/motion";
 import { runListMotion, useKeyHandler } from "./ui/vim-keys";
 import { OUTSIDE_FINDINGS_KEYMAP, type OutsideFindingsCommand } from "./keys/keymap";
 
@@ -70,8 +71,9 @@ function unreviewedLabel(commits: DiffCommits | null, round: ReviewRound): strin
   return `+${plural(committed, "commit")}${uncommitted ? " and uncommitted changes" : ""} since`;
 }
 
-/** An earlier finding a round found fixed, as the strip lists it: where it was, when its review is still loaded. */
+/** An earlier finding a round found fixed, as the strip lists it: its round and id ("r2 F1"), and where it was, when its review is still loaded. */
 interface FixedFinding {
+  key: string;
   id: string;
   title: string;
   path: string | null;
@@ -82,7 +84,8 @@ function fixedFindings(round: ReviewRound, rounds: readonly ReviewRound[]): Fixe
     const at = entry.id.lastIndexOf("/");
     const earlier = roundOf(rounds, entry.id.slice(0, at));
     const finding = earlier?.review.report?.findings.find((candidate) => candidate.id === entry.id.slice(at + 1));
-    return { id: entry.id.slice(at + 1), title: entry.title || finding?.title || "", path: finding?.locations[0]?.file ?? null };
+    const id = entry.id.slice(at + 1);
+    return { key: entry.id, id: earlier === undefined ? id : `${roundName(earlier.number)} ${id}`, title: entry.title || finding?.title || "", path: finding?.locations[0]?.file ?? null };
   });
 }
 
@@ -129,6 +132,7 @@ export function ChangesStrip({
   onLeave: () => void;
 }) {
   const sectionRef = useRef<HTMLElement | null>(null);
+  const [fixedOpen, setFixedOpen] = useState(false);
   // Before the review keys, so j and k move here; Enter is the focused button's own click.
   const onKeyDown = useKeyHandler<OutsideFindingsCommand>({
     keymap: OUTSIDE_FINDINGS_KEYMAP,
@@ -202,7 +206,7 @@ export function ChangesStrip({
         <div data-nav-row="toolbar" className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-muted-foreground">
             <span className="font-medium text-sky-700 dark:text-sky-300">Changed since {since}</span> · {plural(files.length, "file")}
-            {findingCount(newFindings, findingFilter, (count) => `new finding${count === 1 ? "" : "s"}`)}
+            {findingCount(newFindings, findingFilter, (count) => `finding${count === 1 ? "" : "s"} reported since`)}
             {findingCount(touchedFindings, findingFilter, (count) => `finding${count === 1 ? "" : "s"} on changed lines`)}
           </span>
           {files.slice(0, NAMED_FILES).map((file, index) => (
@@ -231,15 +235,23 @@ export function ChangesStrip({
       ) : null}
       {fixed.length > 0 && latest !== null ? (
         <div data-nav-row="toolbar" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
-          <span>
-            Fixed by {roundName(latest.number)}: {fixed.length}
-          </span>
-          {fixed.map((entry) => {
+          <button
+            type="button"
+            className={cn(CHIP, "border-border hover:bg-state-hover hover:text-foreground")}
+            aria-expanded={fixedOpen}
+            data-bbm-open={fixedOpen}
+            title={`The earlier findings ${roundName(latest.number)} found fixed`}
+            onClick={() => setFixedOpen(!fixedOpen)}
+          >
+            <Icon name="ChevronRight" className={cn("size-3", CHEVRON)} />
+            <span className="tabular-nums text-emerald-700 dark:text-emerald-300">{fixed.length}</span> fixed by {roundName(latest.number)}
+          </button>
+          {(fixedOpen ? fixed : []).map((entry) => {
             const path = entry.path;
             const reachable = path !== null && inDiff(path);
             return (
               <button
-                key={entry.id}
+                key={entry.key}
                 type="button"
                 className={cn(CHIP, "border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-60 dark:text-emerald-300")}
                 disabled={!reachable}
