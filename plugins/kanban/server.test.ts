@@ -2267,6 +2267,10 @@ describe("monitored review loop", () => {
     await ready();
     await cardIdle();
     expect(marked("threads.markRead")).toEqual(["thr_1"]);
+    // A later turn, such as one the user started while the board works, didn't hand anything off.
+    await current().harness.behavior.emitThreadEvent("thread.active", { thread: makeThreadResponse({ id: "thr_1", projectId: "proj_acme" }) });
+    await cardIdle();
+    expect(marked("threads.markRead")).toEqual(["thr_1"]);
 
     await recordChecks("thr_2", 0);
     await classify("thr_3", 3);

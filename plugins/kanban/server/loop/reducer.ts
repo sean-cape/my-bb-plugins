@@ -158,7 +158,7 @@ const waiting = (state: LoopState): boolean => state.monitored && state.phase ==
 
 const running = (state: LoopState): boolean => state.phase === "checking" || state.phase === "classifying" || state.phase === "reviewing";
 
-/** The card's thread ended its turn handing the work to the board, or after landing it, so the turn needs nothing from the user. */
+/** The board has the work, or the change landed, so the card thread's turn that handed it over needs nothing from the user. */
 export const passiveIdle = (state: LoopState): boolean => state.monitored && (running(state) || state.phase === "landed");
 
 function failuresInARow(state: LoopState): number {

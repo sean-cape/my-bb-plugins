@@ -69,6 +69,8 @@ export function createLoop(
   const { getTicket } = board;
   const pathRules = (ticketId: string) => projectSettings.projectSettings(getTicket(ticketId).projectId).pathRules;
   const awaitingReport = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Card threads whose current turn reported ready or landed, which is all that makes the turn passive. */
+  const handedOff = new Set<string>();
   bb.onDispose(() => {
     for (const timer of awaitingReport.values()) clearTimeout(timer);
     awaitingReport.clear();
@@ -170,11 +172,18 @@ export function createLoop(
   /**
    * A card thread's turn that handed the work to the board needs nothing from the user, so it is marked read: that
    * keeps it out of the unread list, and the push plugin, which waits two seconds before sending, skips a read thread.
+   * Any other turn, such as one the user started, is left as it ends.
    */
   function quietIdle(threadId: string): void {
+    if (!handedOff.delete(threadId)) return;
     const row = stmts.byThread.get(threadId);
     if (row === undefined || !passiveIdle(parseLoopState(row.loop_state))) return;
     bb.sdk.threads.markRead({ threadId }).catch((error: unknown) => bb.log.warn(`could not mark card thread ${threadId} read: ${errorMessage(error)}`));
+  }
+
+  /** A turn that failed after handing off leaves no mark for the next one. */
+  function turnStarted(threadId: string): void {
+    handedOff.delete(threadId);
   }
 
   async function promptCard(ticketId: string, prompt: CardPrompt): Promise<void> {
@@ -368,6 +377,7 @@ export function createLoop(
     if (unanswered.length > 0) throw new FindingAnswerError(`Answer every finding of this round first; ${unanswered.join(", ")} ${unanswered.length === 1 ? "has" : "have"} no answer.`);
     const checkCommand = resolveCheckCommand(ticket, report.checkCommand);
     await dispatch(ticket.id, { type: "ready", commit: report.commit, evidence: report.evidence, checkCommand });
+    if (ticket.threadId !== null) handedOff.add(ticket.threadId);
     const apply = ticket.threadId === null ? undefined : stmts.commentApplyByThread.get(ticket.threadId);
     if (apply !== undefined && apply.completed_at === null) prComments.completeApply(apply, report.commit, false);
     return { ticket: getTicket(ticket.id), checkCommand };
@@ -432,7 +442,9 @@ export function createLoop(
     const state = parseLoopState(stmts.byId.get(ticket.id)!.loop_state);
     if (ticket.pr !== null) throw new LoopTurnError("A PR card lands when its pull request merges; the board moves it then");
     if (state.phase !== "accepted") throw new LoopTurnError(`Ticket ${ticket.id} hasn't been accepted, so there's nothing to land yet`);
-    return decide(ticket.id, { type: "landed" });
+    const landed = await decide(ticket.id, { type: "landed" });
+    if (ticket.threadId !== null) handedOff.add(ticket.threadId);
+    return landed;
   }
 
   async function sendBack(ticketId: string): Promise<Ticket> {
@@ -588,7 +600,7 @@ export function createLoop(
     }
   }
 
-  return { reconcileOnLoad, setMonitored, setGates, proposePlan, approvePlan, approveFindings, answerFindings, reportReady, recordChecks, handleIdle, quietIdle, threadFailed, questionAsked, reviewFinished, accept, reportLanded, sendBack, rethink, pullIn, decideDispute, setLevel, readingPlan };
+  return { reconcileOnLoad, setMonitored, setGates, proposePlan, approvePlan, approveFindings, answerFindings, reportReady, recordChecks, handleIdle, quietIdle, turnStarted, threadFailed, questionAsked, reviewFinished, accept, reportLanded, sendBack, rethink, pullIn, decideDispute, setLevel, readingPlan };
 }
 
 export type Loop = ReturnType<typeof createLoop>;

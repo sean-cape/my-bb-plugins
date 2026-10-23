@@ -14,6 +14,7 @@ export function registerThreadLifecycle(ctx: KanbanContext, { board, dumps, tour
 
   bb.events.on("thread.active", async ({ thread }) => {
     reviewResume.threadActive(thread.id);
+    loop.turnStarted(thread.id);
     const { autoMoveOnActivity } = await settings.get();
     if (!autoMoveOnActivity) return;
     const row = stmts.byThread.get(thread.id);
