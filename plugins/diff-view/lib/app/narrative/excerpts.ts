@@ -1,5 +1,5 @@
 // A step's code, cut from the chapter's patches, and the view's annotations cut to those lines. Pure, for the tests.
-import { excerptPatch, fileForRef, type NarrativePatchFile, type NarrativeRef } from "../../narrative";
+import { excerptCut, fileForRef, type ExcerptGap, type NarrativePatchFile, type NarrativeRef } from "../../narrative";
 import type { DiffThread } from "../comments/threads";
 import type { PlacedFinding } from "../findings/findings";
 import type { ComposerAnchor } from "../patch-annotations";
@@ -12,13 +12,16 @@ export interface StepExcerpt {
   refs: NarrativeRef[];
   file: NarrativePatchFile | null;
   patch: string | null;
+  /** What the cut leaves out between its rows, which the reader can open. */
+  gaps: ExcerptGap[];
 }
 
 /**
  * With `hideWhitespace`, each file's whitespace pairs become context before the step's lines are cut, as cutting first
- * can split a pair. A hunk holding a line the step names is kept even when only its whitespace changed.
+ * can split a pair. A hunk holding a line the step names is kept even when only its whitespace changed. `revealed` holds,
+ * by path, the rows the reader opened beyond the step's lines.
  */
-export function stepExcerpts(refs: readonly NarrativeRef[], files: readonly NarrativePatchFile[], hideWhitespace = false): StepExcerpt[] {
+export function stepExcerpts(refs: readonly NarrativeRef[], files: readonly NarrativePatchFile[], hideWhitespace = false, revealed: ReadonlyMap<string, ReadonlySet<string>> = new Map()): StepExcerpt[] {
   // Keyed by the file a ref resolves to, so a renamed file's old and new names make one excerpt.
   const byPath = new Map<string, { file: NarrativePatchFile | null; refs: NarrativeRef[] }>();
   for (const ref of refs) {
@@ -34,7 +37,8 @@ export function stepExcerpts(refs: readonly NarrativeRef[], files: readonly Narr
   };
   return [...byPath].map(([path, { file, refs: mine }]) => {
     const patch = file?.patch == null ? null : shown(file.patch, mine);
-    return { path, refs: mine, file, patch: patch === null ? null : excerptPatch(patch, mine) };
+    const cut = patch === null ? { patch: null, gaps: [] } : excerptCut(patch, mine, { revealed: revealed.get(path) });
+    return { path, refs: mine, file, ...cut };
   });
 }
 

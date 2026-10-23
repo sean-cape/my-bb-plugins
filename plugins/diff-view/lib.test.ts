@@ -12,6 +12,7 @@ import { detectMoves } from "./lib/app/structural/moves";
 import { hunkSpan, structuralRows, visibleRows } from "./lib/app/structural/rows";
 import { buildLineAnnotations } from "./lib/app/text/line-annotations";
 import { navRows, patchRows, selectionRange } from "./lib/app/text/patch-rows";
+import { gapEnter, gapPart, navWithGaps } from "./lib/app/text/patch-gaps";
 import { FILE_TREE_KEYMAP, KEY_HELP, OUTSIDE_FINDINGS_KEYMAP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import { createKeyReader, keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
 import { anchorsAtCursor, hunkSpanAt, moveChange, moveFile, moveHunk, moveLines, nextAnchor, visualRange, type Cursor, type NavFile } from "./lib/app/keys/nav";
@@ -19,7 +20,7 @@ import { rankFiles } from "./lib/app/keys/rank-files";
 import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
 import type { FileNavModel } from "./lib/app/keys/review-keys-context";
 import { checkedLineRange, locationLabel, longLineLabel, shortLineLabel } from "./lib/line-range";
-import { changedLines, excerptPatch, narrativeCoverage, refsForUncovered, uncoveredText } from "./lib/narrative";
+import { changedLines, excerptCut, excerptPatch, narrativeCoverage, patchLineKey, refsForUncovered, uncoveredText, type NarrativeRef } from "./lib/narrative";
 import { UNCOVERED_STEP_ID, affectedAddress, buildChapters, initialAddress, moveChapter, movePage, narratedFiles } from "./lib/app/narrative/chapters";
 import { NARRATIVE_KEY_HELP, NARRATIVE_KEYMAP } from "./lib/app/narrative/narrative-keymap";
 import { excerptAnnotations, stepExcerpts } from "./lib/app/narrative/excerpts";
@@ -968,6 +969,85 @@ describe("narrative coverage", () => {
   it("gives a pure insertion an old count of zero after the line it follows", () => {
     const insertion = ["@@ -3,2 +3,4 @@", " x", "+y", "+z", " w"].join("\n");
     expect(excerptPatch(insertion, [{ path: "a", side: "new", startLine: 4, endLine: 5 }], 0)).toBe(["@@ -3,0 +4,2 @@", "+y", "+z"].join("\n"));
+  });
+
+  it("reports the rows a cut leaves out between two runs, and keeps the ones the reader reveals", () => {
+    // Three context lines, then 26 added lines (new 66–91); the step names 66–70 and 86–91.
+    const added = Array.from({ length: 26 }, (_, index) => `+line ${66 + index}`);
+    const insertion = ["@@ -63,3 +63,29 @@", " a", " b", " c", ...added].join("\n");
+    const refs: NarrativeRef[] = [
+      { path: "a", side: "new", startLine: 66, endLine: 70 },
+      { path: "a", side: "new", startLine: 86, endLine: 91 },
+    ];
+    const hidden = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) => ({ old: null, new: from + index }));
+    const cut = excerptCut(insertion, refs);
+    expect(cut.patch?.split("\n").filter((line) => line.startsWith("@@"))).toEqual(["@@ -63,3 +63,8 @@", "@@ -65,0 +86,6 @@"]);
+    expect(cut.gaps).toEqual([{ after: { old: null, new: 70 }, before: { old: null, new: 86 }, hidden: hidden(71, 85), unchanged: 0 }]);
+    const some = excerptCut(insertion, refs, { revealed: new Set(hidden(71, 75).map(patchLineKey)) });
+    expect(some.gaps).toEqual([{ after: { old: null, new: 75 }, before: { old: null, new: 86 }, hidden: hidden(76, 85), unchanged: 0 }]);
+    const all = excerptCut(insertion, refs, { revealed: new Set(hidden(71, 85).map(patchLineKey)) });
+    expect(all.gaps).toEqual([]);
+    expect(all.patch?.split("\n")[0]).toBe("@@ -63,3 +63,29 @@");
+  });
+
+  it("counts the unchanged lines between two hunks, and leaves a gap at either end only when it hides rows", () => {
+    const twoHunks = ["@@ -1,2 +1,2 @@", "-a", "+A", " b", "@@ -10,2 +10,2 @@", " c", "-d", "+D"].join("\n");
+    expect(excerptCut(twoHunks, [{ path: "a", side: "new", startLine: null, endLine: null }]).gaps).toEqual([
+      { after: { old: 2, new: 2 }, before: { old: 10, new: 10 }, hidden: [], unchanged: 7 },
+    ]);
+    expect(excerptCut(patch, [{ path: "x.go", side: "old", startLine: 13, endLine: 13 }], { context: 0 }).gaps).toEqual([
+      {
+        after: null,
+        before: { old: 13, new: null },
+        hidden: [
+          { old: 10, new: 10 },
+          { old: 11, new: null },
+          { old: null, new: 11 },
+          { old: null, new: 12 },
+          { old: 12, new: 13 },
+        ],
+        unchanged: 0,
+      },
+      { after: { old: 13, new: null }, before: null, hidden: [{ old: 14, new: 14 }], unchanged: 0 },
+    ]);
+  });
+});
+
+describe("excerpt gaps", () => {
+  const lines = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) => ({ old: null, new: from + index }));
+  const row = (right: number, hunk: number) => ({ left: null, right, hunk, changed: true });
+
+  it("puts a fold after the row the gap follows, at the top for a leading one, on the line it opens first", () => {
+    const rows = [row(66, 0), row(70, 0), row(86, 1)];
+    const gaps = [
+      { after: null, before: { old: null, new: 66 }, hidden: lines(60, 65), unchanged: 0 },
+      { after: { old: null, new: 70 }, before: { old: null, new: 86 }, hidden: lines(71, 85), unchanged: 0 },
+      // Lines between hunks only: a band with nothing to open, so no fold.
+      { after: { old: null, new: 86 }, before: { old: 100, new: 100 }, hidden: [], unchanged: 13 },
+    ];
+    const { rows: nav, gapAt } = navWithGaps(rows, gaps);
+    expect(nav.map((entry) => [entry.right, entry.hunk, entry.expander === true])).toEqual([
+      [65, -1, true],
+      [66, 0, false],
+      [70, 0, false],
+      [71, 0, true],
+      [86, 1, false],
+    ]);
+    expect([...gapAt]).toEqual([
+      [0, 0],
+      [3, 1],
+    ]);
+    // The fold keeps the hunk above it, so the hunk below still starts at its first row.
+    expect(moveHunk([{ path: "a", collapsed: false, rows: nav }], { path: "a", side: "RIGHT", line: 66, want: "RIGHT" }, 1, 1)).toMatchObject({ line: 86 });
+  });
+
+  it("opens a short gap whole and a long one a step at a time toward the code", () => {
+    const short = { after: { old: null, new: 70 }, before: { old: null, new: 86 }, hidden: lines(71, 85), unchanged: 0 };
+    expect(gapEnter(short)).toEqual({ reveal: lines(71, 85), cursor: { old: null, new: 71 } });
+    const long = { ...short, hidden: lines(71, 100) };
+    expect(gapEnter(long)).toEqual({ reveal: lines(71, 90), cursor: { old: null, new: 91 } });
+    expect(gapEnter({ ...long, after: null })).toEqual({ reveal: lines(81, 100), cursor: { old: null, new: 80 } });
+    expect(gapPart(long, "last")).toEqual(lines(81, 100));
   });
 });
 

@@ -3,12 +3,14 @@ import type { DiffSide, SemanticChange, StructuralDiff } from "../../types";
 import { cn } from "../utils";
 import { FAST, PRESS, enter } from "../ui/motion";
 import { rangesOverlap } from "../ranges";
-import { CURSOR_GUTTER, CURSOR_RING, CURSOR_SHOWN, useCursorSide } from "../keys/review-keys-context";
+import { CURSOR_GUTTER, CURSOR_RING, useCursorSide } from "../keys/review-keys-context";
 import type { MovedRow } from "./moves";
 import type { StructuralRow } from "./rows";
 import { StructuralLine } from "./structural-line";
 import type { LineTokens } from "./syntax";
 import { hangingIndent } from "../text/hanging-indent";
+import { FOLD_BAND, FoldControls } from "../text/fold-controls";
+import { EXPAND_STEP_LINES, type FoldPart } from "../text/patch-gaps";
 
 type LineChanges = StructuralDiff["oldChanges"][number];
 
@@ -196,44 +198,18 @@ export const UnifiedRowView = memo(function UnifiedRowView({
   );
 });
 
-/** Folded runs up to this long expand in one click; longer ones expand this many lines per click. */
-export const EXPAND_STEP_LINES = 20;
-
-function ExpanderButton({ label, title, onClick }: { label: string; title: string; onClick: () => void }) {
-  return (
-    <button type="button" title={title} aria-label={title} className={cn("rounded px-1.5 py-0.5 text-primary hover:bg-state-hover", PRESS)} onClick={onClick}>
-      {label}
-    </button>
-  );
-}
-
 /** A fold of unchanged rows `from` up to `to`; `at` is the hidden row whose lines the cursor takes on it. */
 export const GapRow = memo(function GapRow({ path, from, to, total, first, last, at, onReveal, columns = 4 }: { path: string; from: number; to: number; total: number; first: StructuralRow; last: StructuralRow; at: StructuralRow; onReveal: (from: number, to: number) => void; columns?: number }) {
   const atCursor = useCursorSide(path, at.lhs, at.rhs) !== null;
   const count = to - from;
-  const leading = from === 0;
-  const trailing = to === total;
   const range = `${first.rhs ?? first.lhs}–${last.rhs ?? last.lhs}`;
+  const reveal = (part: FoldPart) => (part === "all" ? onReveal(from, to) : part === "first" ? onReveal(from, from + EXPAND_STEP_LINES) : onReveal(to - EXPAND_STEP_LINES, to));
   return (
-    // A neutral band lighter than a file's header, since these lines did not change: nothing about them is coloured
-    // but the way to show them.
-    <tr data-gap={from} className="bg-muted/20 text-[11px] text-muted-foreground">
+    <tr data-gap={from} className={FOLD_BAND}>
       <td colSpan={columns} className={cn("px-2 py-0.5", atCursor && CURSOR_RING)} data-cursor={atCursor ? "" : undefined}>
-        <div className="flex items-center gap-1">
-          {count <= EXPAND_STEP_LINES ? (
-            <ExpanderButton label="↕" title={`Show ${count} unchanged lines`} onClick={() => onReveal(from, to)} />
-          ) : (
-            <>
-              {!leading ? <ExpanderButton label="↓" title={`Show ${EXPAND_STEP_LINES} lines below`} onClick={() => onReveal(from, from + EXPAND_STEP_LINES)} /> : null}
-              {!trailing ? <ExpanderButton label="↑" title={`Show ${EXPAND_STEP_LINES} lines above`} onClick={() => onReveal(to - EXPAND_STEP_LINES, to)} /> : null}
-            </>
-          )}
-          <span className="ml-2 font-sans">
-            {count} unchanged {count === 1 ? "line" : "lines"} ({range})
-          </span>
-          {/* Hidden rather than unmounted: inserting an element as the cursor passes restyles the whole page under bb themes with broad :has() rules. */}
-          <span className={cn("ml-auto hidden font-mono text-[10px]", enter.fade, FAST, atCursor && `${CURSOR_SHOWN}inline`)}>↩ show {count <= EXPAND_STEP_LINES ? "them" : `${EXPAND_STEP_LINES} more`}</span>
-        </div>
+        <FoldControls count={count} leading={from === 0} trailing={to === total} noun="unchanged lines" atCursor={atCursor} onReveal={reveal}>
+          {count} unchanged {count === 1 ? "line" : "lines"} ({range})
+        </FoldControls>
       </td>
     </tr>
   );

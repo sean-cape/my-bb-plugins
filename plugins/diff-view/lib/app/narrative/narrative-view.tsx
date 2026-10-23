@@ -136,6 +136,7 @@ export function NarrativeView({
                     onMarkViewed={(isViewed) => onMarkViewed(excerpt.path, isViewed)}
                     onCommentOnFile={() => onCommentOnFile(excerpt.path)}
                     onOpen={() => onOpenExcerpt(excerpt.path)}
+                    onReveal={reader.reveal}
                   />
                 ))}
               </StepPage>

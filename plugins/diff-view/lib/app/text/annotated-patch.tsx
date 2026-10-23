@@ -11,9 +11,12 @@ import { FindingAnnotation } from "../findings/finding-annotation";
 import { visualRange, type NavRow } from "../keys/nav";
 import { useCursorShown, useFileCursor, usePublishNavModel, type FileNavModel } from "../keys/review-keys-context";
 import type { DiffSide, LineRange } from "../../types";
+import type { ExcerptGap } from "../../narrative";
 import { buildLineAnnotations, fromPierreSide, toPierreSide, type AnnotationMeta, type PierreSide } from "./line-annotations";
 import { navRows, patchRows, selectionRange } from "./patch-rows";
 import { SearchHighlightCss } from "../search/use-diff-search";
+import { GapBand } from "./gap-band";
+import { gapEnter, gapPart, navWithGaps, type PatchGaps } from "./patch-gaps";
 
 /**
  * Pierre sizes each code column `1fr`, which cannot shrink below its widest unbreakable content: a long token or an
@@ -32,6 +35,19 @@ interface PierreSelection {
 function toSelection(range: LineRange): PierreSelection | null {
   if (range.line === null) return null;
   return { start: range.startLine ?? range.line, side: toPierreSide(range.startSide ?? range.side), end: range.line, endSide: toPierreSide(range.side) };
+}
+
+const NO_GAPS: readonly ExcerptGap[] = [];
+const NO_REVEAL = () => {};
+
+/** A band under the last row before each gap between two of the excerpt's rows. */
+function gapAnnotations(gaps: readonly ExcerptGap[]): DiffLineAnnotation<AnnotationMeta>[] {
+  return gaps.flatMap((gap, index) => {
+    const { after } = gap;
+    if (after === null || gap.before === null) return [];
+    const anchor = after.new !== null ? { side: "additions" as const, lineNumber: after.new } : { side: "deletions" as const, lineNumber: after.old! };
+    return [{ ...anchor, metadata: { key: `gap:${index}`, kind: "gap" as const, index } }];
+  });
 }
 
 /**
@@ -71,12 +87,15 @@ export function AnnotatedPatch({
   onSubmitComposer,
   layout: layoutOverride,
   hunkSeparators,
+  gaps,
 }: PatchAnnotationProps & {
   patch: string;
   /** Split or unified; the view's line-diff layout preference when absent. */
   layout?: "unified" | "split";
   /** How the gap before a hunk is drawn; Pierre's default (the count of hidden lines) when absent. */
   hunkSeparators?: "simple" | "metadata" | "line-info" | "line-info-basic";
+  /** An excerpt's gaps, drawn as bands the reader opens; the cursor stops on each one that hides rows. */
+  gaps?: PatchGaps;
 }) {
   const { layout: preferredLayout } = useDiffPreferences();
   const layout = layoutOverride ?? preferredLayout;
@@ -91,19 +110,53 @@ export function AnnotatedPatch({
   );
   const rows = useMemo(() => patchRows(fullPatch), [fullPatch]);
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const nav = useMemo(() => navRows(rows, layout), [rows, layout]);
-  const element = useCallback((row: number, side: DiffSide) => (nav[row] === undefined ? null : pierreLine(hostRef.current, nav[row], side)), [nav]);
-  const navModel = useMemo<FileNavModel>(() => ({ rows: nav, cutToHunk: true, element }), [nav, element]);
+  const gapList = gaps?.list ?? NO_GAPS;
+  const revealGap = gaps?.reveal;
+  const { rows: nav, gapAt } = useMemo(() => navWithGaps(navRows(rows, layout), gapList), [rows, layout, gapList]);
+  const element = useCallback(
+    (row: number, side: DiffSide) => {
+      const gap = gapAt.get(row);
+      if (gap !== undefined) return hostRef.current?.querySelector(`[data-excerpt-gap="${gap}"]`) ?? null;
+      return nav[row] === undefined ? null : pierreLine(hostRef.current, nav[row], side);
+    },
+    [nav, gapAt],
+  );
+  const navModel = useMemo<FileNavModel>(() => {
+    if (revealGap === undefined) return { rows: nav, cutToHunk: true, element };
+    return {
+      rows: nav,
+      cutToHunk: true,
+      element,
+      expand: (row) => {
+        const gap = gapAt.get(row);
+        if (gap === undefined) return null;
+        const { reveal, cursor } = gapEnter(gapList[gap]!);
+        revealGap(reveal);
+        return cursor === null ? null : { left: cursor.old, right: cursor.new };
+      },
+      // The gaps either side of the cursor's run of rows each open a step toward it.
+      moreContext: (row) => {
+        let above: number | undefined;
+        let below: number | undefined;
+        for (let at = row - 1; at >= 0 && above === undefined; at--) above = gapAt.get(at);
+        for (let at = row + 1; at < nav.length && below === undefined; at++) below = gapAt.get(at);
+        revealGap([...(above === undefined ? [] : gapPart(gapList[above]!, "last")), ...(below === undefined ? [] : gapPart(gapList[below]!, "first"))]);
+      },
+    };
+  }, [nav, gapAt, gapList, revealGap, element]);
   usePublishNavModel(path, navModel);
   const fileCursor = useFileCursor(path);
   const cursorShown = useCursorShown();
   const cursorSelection = useMemo<PierreSelection | null>(() => {
     if (fileCursor === null) return null;
     const { cursor, visual } = fileCursor;
+    // A cursor on a gap stands on a line Pierre does not draw.
+    if (visual === null && cursor.line !== null && nav.some((row, index) => gapAt.has(index) && (cursor.side === "LEFT" ? row.left : row.right) === cursor.line)) return null;
     const range = visual === null ? null : visualRange(nav, visual, cursor, true);
     return toSelection(range ?? { line: cursor.line, side: cursor.side, startLine: null, startSide: null });
-  }, [fileCursor, nav]);
-  const annotations = useMemo(() => buildLineAnnotations(threads, composer, findings), [threads, composer, findings]);
+  }, [fileCursor, nav, gapAt]);
+  // Gaps go last, so opening one shifts no other annotation's slot.
+  const annotations = useMemo(() => [...buildLineAnnotations(threads, composer, findings), ...gapAnnotations(gapList)], [threads, composer, findings, gapList]);
   // A key already on screen at the last commit that mounts again was shifted to another slot, not added.
   const committedKeys = useRef<ReadonlySet<string>>(new Set());
   useEffect(() => {
@@ -164,10 +217,15 @@ export function AnnotatedPatch({
         const item = metadata.finding;
         return <FindingAnnotation key={metadata.key} item={item} anchorId={metadata.anchorId} entrance={!committedKeys.current.has(metadata.key)} onToggle={(selected) => onToggleFinding(item, selected)} onEdit={(edit) => onEditFinding(item, edit)} />;
       }
+      if (metadata.kind === "gap") return <GapBand key={metadata.key} path={path} gap={gapList[metadata.index]!} index={metadata.index} onReveal={revealGap ?? NO_REVEAL} />;
       return <DiffThreadView key={metadata.key} thread={metadata.thread} />;
     },
-    [path, composer, onSubmitComposer, onCancelComposer, onToggleFinding, onEditFinding],
+    [path, composer, onSubmitComposer, onCancelComposer, onToggleFinding, onEditFinding, gapList, revealGap],
   );
+  // The bands at the top and bottom have no line to hang under, so they sit outside the diff, across both sides.
+  const edgeBand = (index: number) => <GapBand key={index} path={path} gap={gapList[index]!} index={index} onReveal={revealGap ?? NO_REVEAL} />;
+  const leadingGap = gapList.findIndex((gap) => gap.after === null);
+  const trailingGap = gapList.findIndex((gap) => gap.after !== null && gap.before === null);
   return (
     <div ref={hostRef}>
       <FileLevelComments
@@ -179,6 +237,7 @@ export function AnnotatedPatch({
       />
       {/* bb's thread page provides a virtualizer for its own scroller; under it Pierre re-renders these diffs on every
           scroll of ours, which flickers. Each file here is mounted near the viewport by LazyMount instead. */}
+      {leadingGap === -1 ? null : edgeBand(leadingGap)}
       <VirtualizerContext.Provider value={undefined}>
         <PatchDiff<AnnotationMeta>
           patch={fullPatch}
@@ -190,6 +249,7 @@ export function AnnotatedPatch({
           renderAnnotation={renderAnnotation}
         />
       </VirtualizerContext.Provider>
+      {trailingGap === -1 ? null : edgeBand(trailingGap)}
     </div>
   );
 }

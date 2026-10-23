@@ -186,23 +186,57 @@ export function refLabel(ref: NarrativeRef): string {
   return end === ref.startLine ? `${prefix}L${ref.startLine}` : `${prefix}L${Math.min(ref.startLine, end)}–${Math.max(ref.startLine, end)}`;
 }
 
+/** One row of a patch by its old and new line (one of them null on a change). */
+export interface PatchLine {
+  old: number | null;
+  new: number | null;
+}
+
+/** The key a revealed row is held under. */
+export function patchLineKey(line: PatchLine): string {
+  return `${line.old ?? ""}:${line.new ?? ""}`;
+}
+
+/**
+ * Lines of the file's patch an excerpt leaves out, between two rows it shows (or before the first, or after the last).
+ * `hidden` are patch rows the reader can reveal, which may be other steps' changes; `unchanged` counts the lines between
+ * the patch's hunks inside the gap, which no patch holds.
+ */
+export interface ExcerptGap {
+  /** The shown row the gap follows; null before the excerpt's first row. */
+  after: PatchLine | null;
+  /** The shown row after the gap; null after the last. */
+  before: PatchLine | null;
+  hidden: PatchLine[];
+  unchanged: number;
+}
+
 /**
  * The part of a file's patch that `refs` point at, as a patch of its own: every row on a referenced line, plus up to
- * `context` unchanged rows around each run, with hunk headers recounted. Null when no ref touches the patch.
- * A whole-file ref returns the patch itself. A ref to an unchanged line inside a hunk keeps that line, so a step
- * can point at context it talks about.
+ * `context` unchanged rows around each run, with hunk headers recounted, and every row in `revealed` (by
+ * `patchLineKey`). Null when nothing is kept. A whole-file ref keeps the patch itself. A ref to an unchanged line
+ * inside a hunk keeps that line, so a step can point at context it talks about.
  */
-export function excerptPatch(patch: string, refs: readonly NarrativeRef[], context = 3): string | null {
-  if (refs.length === 0) return null;
-  if (refs.some((ref) => ref.startLine === null)) return patch;
+export function excerptCut(patch: string, refs: readonly NarrativeRef[], { context = 3, revealed = new Set() }: { context?: number; revealed?: ReadonlySet<string> } = {}): { patch: string | null; gaps: ExcerptGap[] } {
+  if (refs.length === 0) return { patch: null, gaps: [] };
+  const whole = refs.some((ref) => ref.startLine === null);
   const hunks = parseHunks(patch);
   const out: string[] = [];
+  const gaps: ExcerptGap[] = [];
+  let shown: PatchLine | null = null;
+  let gap: { hidden: PatchLine[]; unchanged: number } = { hidden: [], unchanged: 0 };
+  let previousEnd: number | null = null;
   for (const hunk of hunks) {
-    const hit = hunk.rows.map((row) =>
-      refs.some((ref) => {
-        const line = ref.side === "old" ? row.old : row.new;
-        return line !== null && inRef(ref, line);
-      }),
+    if (previousEnd !== null && shown !== null) gap.unchanged += hunk.oldBase - previousEnd;
+    previousEnd = hunk.oldBase + hunk.rows.filter((row) => row.kind !== "add").length;
+    const hit = hunk.rows.map(
+      (row) =>
+        whole ||
+        revealed.has(patchLineKey(row)) ||
+        refs.some((ref) => {
+          const line = ref.side === "old" ? row.old : row.new;
+          return line !== null && inRef(ref, line);
+        }),
     );
     // Unreferenced changes nearby are left out, splitting the excerpt, so a step never shows a line it does not cover.
     const keep = hit.map((value, index) => {
@@ -216,12 +250,18 @@ export function excerptPatch(patch: string, refs: readonly NarrativeRef[], conte
     let index = 0;
     while (index < hunk.rows.length) {
       if (!keep[index]) {
+        const row = hunk.rows[index]!;
+        gap.hidden.push({ old: row.old, new: row.new });
         index += 1;
         continue;
       }
       const start = index;
       while (index < hunk.rows.length && keep[index]) index += 1;
       const rows = hunk.rows.slice(start, index);
+      const first = { old: rows[0]!.old, new: rows[0]!.new };
+      if (gap.hidden.length > 0 || (shown !== null && gap.unchanged > 0)) gaps.push({ after: shown, before: first, ...gap });
+      gap = { hidden: [], unchanged: 0 };
+      shown = { old: rows.at(-1)!.old, new: rows.at(-1)!.new };
       const firstOld = rows.find((row) => row.old !== null)?.old ?? lastBefore(hunk.rows, start, "old", hunk.oldBase) + 1;
       const firstNew = rows.find((row) => row.new !== null)?.new ?? lastBefore(hunk.rows, start, "new", hunk.newBase) + 1;
       const oldCount = rows.filter((row) => row.kind !== "add").length;
@@ -230,7 +270,13 @@ export function excerptPatch(patch: string, refs: readonly NarrativeRef[], conte
       for (const row of rows) out.push(row.text);
     }
   }
-  return out.length === 0 ? null : out.join("\n");
+  if (out.length === 0) return { patch: null, gaps: [] };
+  if (gap.hidden.length > 0) gaps.push({ after: shown, before: null, hidden: gap.hidden, unchanged: 0 });
+  return { patch: whole ? patch : out.join("\n"), gaps };
+}
+
+export function excerptPatch(patch: string, refs: readonly NarrativeRef[], context = 3): string | null {
+  return excerptCut(patch, refs, { context }).patch;
 }
 
 function lastBefore(rows: readonly Row[], index: number, side: "old" | "new", base: number): number {

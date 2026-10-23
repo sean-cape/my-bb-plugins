@@ -718,7 +718,8 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     if (!reader.describesCurrentDiff || !reader.excerpts.some((excerpt) => excerpt.path === path)) return false;
     if (line === null) return true;
     const rows = keys.models.get(path)?.rows;
-    return rows !== undefined && rowIndexOf(rows, side, line) !== -1;
+    const row = rows === undefined ? -1 : rowIndexOf(rows, side, line);
+    return row !== -1 && rows![row]!.expander !== true;
   };
   const narrativeEnv = (): ReviewEnv => ({
     ...filesEnv(),

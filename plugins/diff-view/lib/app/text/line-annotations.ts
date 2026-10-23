@@ -4,7 +4,13 @@ import type { DiffThread } from "../comments/threads";
 import { findingAnchorId, type InlineFinding, type PlacedFinding } from "../findings/findings";
 import type { ComposerAnchor } from "../patch-annotations";
 
-export type AnnotationMeta = { key: string } & ({ kind: "thread"; thread: DiffThread } | { kind: "composer" } | { kind: "finding"; finding: InlineFinding; anchorId: string });
+export type AnnotationMeta = { key: string } & (
+  | { kind: "thread"; thread: DiffThread }
+  | { kind: "composer" }
+  | { kind: "finding"; finding: InlineFinding; anchorId: string }
+  /** An excerpt's band between two runs of rows, by its index in the excerpt's gaps. */
+  | { kind: "gap"; index: number }
+);
 export type PierreSide = "deletions" | "additions";
 
 export function toPierreSide(side: DiffSide): PierreSide {

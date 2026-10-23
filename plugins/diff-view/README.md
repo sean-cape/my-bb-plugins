@@ -252,8 +252,13 @@ plugins embed.
   moved, which the switch flags with a dot), `S` returns to the files with
   the cursor where it was. Steps of an earlier narrative or a revision show
   their lines without comments, since those are not today's lines; comment
-  from the current narrative's steps or the files view. Excerpts are line
-  diffs, so `gd` and `zr` do nothing there.
+  from the current narrative's steps or the files view. Where a step's
+  excerpt skips lines (other steps' changes, or unchanged lines between
+  hunks), a band says what it leaves out; as on GitHub its buttons, or
+  Enter on it, show the skipped rows of the patch, a long run 20 at a
+  time, and `zr` opens 20 more on either side of the cursor's run. Lines
+  outside the diff's hunks only show their count. Excerpts are line diffs,
+  so `gd` does nothing there.
 
 Settings: hide vendored files (default on) and the `difft` path. Comments and
 viewed marks live in this plugin's database and are deleted with their thread.

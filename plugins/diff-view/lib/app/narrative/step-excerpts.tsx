@@ -1,5 +1,6 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { refLabel } from "../../narrative";
+import { useCallback } from "react";
+import { refLabel, type PatchLine } from "../../narrative";
 import { cn } from "../utils";
 import { Button, COMPACT } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -31,6 +32,7 @@ export function ExcerptSection({
   onMarkViewed,
   onCommentOnFile,
   onOpen,
+  onReveal,
 }: {
   excerpt: StepExcerpt;
   sectionRef: (node: HTMLElement | null) => void;
@@ -41,8 +43,11 @@ export function ExcerptSection({
   onMarkViewed: (viewed: boolean) => void;
   onCommentOnFile: () => void;
   onOpen: () => void;
+  /** Open rows of the file's patch the step's cut leaves out. */
+  onReveal: (path: string, lines: readonly PatchLine[]) => void;
 }) {
   const onHeader = useCursorOnHeader(excerpt.path);
+  const reveal = useCallback((lines: readonly PatchLine[]) => onReveal(excerpt.path, lines), [onReveal, excerpt.path]);
   const { narrativeLayout } = useDiffPreferences();
   const inert = annotations === null;
   return (
@@ -73,7 +78,7 @@ export function ExcerptSection({
         <NoRows path={excerpt.path} />
       ) : excerpt.patch !== null ? (
         <DiffErrorBoundary fallback={<NoRows path={excerpt.path} />}>
-          <AnnotatedPatch key={excerpt.path} {...(annotations ?? INERT)} path={excerpt.path} patch={excerpt.patch} layout={narrativeLayout} hunkSeparators="simple" />
+          <AnnotatedPatch key={excerpt.path} {...(annotations ?? INERT)} path={excerpt.path} patch={excerpt.patch} layout={narrativeLayout} hunkSeparators="simple" gaps={{ list: excerpt.gaps, reveal }} />
         </DiffErrorBoundary>
       ) : (
         <>

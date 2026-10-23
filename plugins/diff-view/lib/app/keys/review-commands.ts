@@ -424,7 +424,7 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
           go(env, header);
           return;
         case "moreContext":
-          if (model?.moreContext === undefined) env.notify("Only the structural view folds unchanged lines");
+          if (model?.moreContext === undefined) env.notify("Only the structural view and the narrative's excerpts fold lines");
           else if (row !== -1) model.moreContext(row);
           return;
       }

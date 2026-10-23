@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { patchLineKey, type PatchLine } from "../../narrative";
 import type { NarrativeStory } from "../../types";
 import { withMembers } from "../sets";
 import { readPreference, useDiffPreferences, writePreference } from "../state";
@@ -28,6 +29,8 @@ export function useNarrativeReader({ story, instanceKey, currentPaths, viewed }:
   const [outline, setOutlineState] = useState(() => readPreference("narrativeOutline") !== "false");
   const [lastSearch, setLastSearch] = useState<string | null>(null);
   const [collapsed, setCollapsedState] = useState<ReadonlySet<string>>(new Set());
+  // By path, the rows of each excerpt's gaps the reader opened on this page.
+  const [revealed, setRevealed] = useState<ReadonlyMap<string, ReadonlySet<string>>>(new Map());
   // Bumped by every move to another page, with which end of it the reader arrives at, so the view can place its
   // cursor there once the page has rendered.
   const [arrival, setArrival] = useState<{ count: number; where: "start" | "end" }>({ count: 0, where: "start" });
@@ -50,12 +53,13 @@ export function useNarrativeReader({ story, instanceKey, currentPaths, viewed }:
   const chapter: NarrativeChapter | null = address === null ? null : (chapters[address.chapter] ?? null);
   const step = chapter === null || address === null || address.step < 0 ? null : (chapter.steps[address.step] ?? null);
   const { hideWhitespace } = useDiffPreferences();
-  const excerpts: StepExcerpt[] = useMemo(() => (step === null || chapter === null ? [] : stepExcerpts(step.refs, chapter.files, hideWhitespace)), [step, chapter, hideWhitespace]);
+  const excerpts: StepExcerpt[] = useMemo(() => (step === null || chapter === null ? [] : stepExcerpts(step.refs, chapter.files, hideWhitespace, revealed)), [step, chapter, hideWhitespace, revealed]);
 
   const go = (next: StepAddress | null, where: "start" | "end" = "start"): boolean => {
     if (next === null || address === null || (next.chapter === address.chapter && next.step === address.step)) return false;
     setAddressState(next);
     setCollapsedState(new Set());
+    setRevealed(new Map());
     setArrival((arrival) => ({ count: arrival.count + 1, where }));
     const target = chapters[next.chapter];
     if (target === undefined) return true;
@@ -90,6 +94,13 @@ export function useNarrativeReader({ story, instanceKey, currentPaths, viewed }:
     writePreference("narrativeOutline", String(open));
   };
   const setCollapsed = (paths: readonly string[], isCollapsed: boolean) => setCollapsedState((current) => withMembers(current, paths, isCollapsed));
+  const reveal = useCallback((path: string, lines: readonly PatchLine[]) => {
+    setRevealed((current) => {
+      const before = current.get(path) ?? new Set<string>();
+      const after = withMembers(before, lines.map(patchLineKey), true);
+      return after === before ? current : new Map(current).set(path, after);
+    });
+  }, []);
 
   const all = pages(chapters);
   const position = address === null ? 0 : all.findIndex((page) => page.chapter === address.chapter && page.step === address.step) + 1;
@@ -117,6 +128,7 @@ export function useNarrativeReader({ story, instanceKey, currentPaths, viewed }:
     setLastSearch,
     collapsed,
     setCollapsed,
+    reveal,
     arrival,
     position,
     total: all.length,
