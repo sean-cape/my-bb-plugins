@@ -12,7 +12,7 @@
 // worktree breaks once the worktree is cleaned up. It keeps going past a plugin that fails and lists the failures at
 // the end, exiting 1.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -86,11 +86,8 @@ const failed = (plugin) => failures.includes(plugin.name);
 /** A plugin whose dist/ is committed ships prebuilt, so it has nothing to install or build. */
 const prebuilt = (plugin) => run("git", ["ls-files", "--error-unmatch", join(plugin.dir, "dist")]).ok;
 
-/** npm ci starts from scratch every time, so it only runs when the lockfile is newer than the last install. */
-function npmCurrent(dir) {
-  const installed = join(dir, "node_modules", ".package-lock.json");
-  return existsSync(installed) && statSync(installed).mtimeMs >= statSync(join(dir, "package-lock.json")).mtimeMs;
-}
+/** `npm ci` deletes node_modules before it fetches anything, so a registry failure would leave none; it only sets up a fresh one. */
+const npmArgs = (dir) => (existsSync(join(dir, "node_modules")) ? ["install"] : ["ci"]);
 
 // Every plugin's dependencies go in before any build, those of plugins not asked for too: the shared libraries
 // (`plugins/*/lib`) resolve their own imports through the node_modules of the plugin that holds them.
@@ -100,14 +97,20 @@ for (const plugin of allPlugins) {
   if (existsSync(join(plugin.dir, "pnpm-lock.yaml"))) {
     installed = run("pnpm", ["install", "--frozen-lockfile", ...(registry === null ? [] : [`--config.registry=${registry}`])], { cwd: plugin.dir });
   } else if (existsSync(join(plugin.dir, "package-lock.json"))) {
-    installed = npmCurrent(plugin.dir) ? { ok: true } : run("npm", ["ci", "--no-audit", "--no-fund", ...(registry === null ? [] : [`--registry=${registry}`])], { cwd: plugin.dir });
+    installed = run("npm", [...npmArgs(plugin.dir), "--no-audit", "--no-fund", ...(registry === null ? [] : [`--registry=${registry}`])], { cwd: plugin.dir });
   } else {
     installed = { ok: false, output: "no pnpm-lock.yaml or package-lock.json to install from" };
   }
   if (!installed.ok) fail(plugin, "dependency install", installed.output);
 }
 
-const installedSources = new Map(JSON.parse(run("bb", ["plugin", "list", "--json"]).output || "[]").map((entry) => [entry.id, entry.source]));
+/** bb's installed plugins by id. */
+function installedPlugins() {
+  const listed = run("bb", ["plugin", "list", "--json"]);
+  return new Map((listed.ok ? JSON.parse(listed.output).plugins : []).map((entry) => [entry.id, entry]));
+}
+
+const installedSources = new Map([...installedPlugins()].map(([id, entry]) => [id, entry.source]));
 for (const plugin of plugins) {
   if (failed(plugin)) continue;
   if (!prebuilt(plugin)) {
@@ -127,7 +130,7 @@ const linked = run("node", [join(repo, "scripts", "link-claude-config.mjs")]);
 console.log(linked.ok ? `claude: ${linked.output.split("\n").at(-1)}` : `claude: linking failed\n${tail(linked.output)}`);
 if (!linked.ok) failures.push("claude config");
 
-const statuses = new Map(JSON.parse(run("bb", ["plugin", "list", "--json"]).output || "[]").map((entry) => [entry.id, entry.status]));
+const statuses = new Map([...installedPlugins()].map(([id, entry]) => [id, entry.status]));
 const notRunning = plugins.filter((plugin) => !failed(plugin) && statuses.get(plugin.name) !== "running");
 for (const plugin of notRunning) {
   failures.push(plugin.name);
