@@ -1,7 +1,7 @@
 import { TICKET_TITLE_MAX_LENGTH, type Ticket } from "../../shared/board";
 import { locationLabel } from "../../shared/finding-location";
 import type { FindingAnswer } from "../../shared/loop";
-import type { Finding, FindingEdit, Review, ReviewDepth, ReviewSubject } from "../../shared/review";
+import type { Finding, FindingEdit, Review, ReviewDepth, ReviewSubject, SeverityFloor } from "../../shared/review";
 import { REVIEWED_COMMIT_LINE, parseReviewReport } from "../agent-output";
 import { initialColumn, type BoardStore } from "../board";
 import type { CardThreads, ThreadEnvironment } from "../card-threads";
@@ -25,7 +25,7 @@ export function createReviews(
 ) {
   const { bb, stmts, publish } = ctx;
   const { getTicket } = board;
-  const { freshWorktree, projectHostId } = threads;
+  const { freshWorktree, projectHostId, workerOptions } = threads;
   const { projectForTicket } = projects;
   const { codeReviewThreadVisibility } = codeReviewThreads;
 
@@ -75,6 +75,7 @@ export function createReviews(
    * Review a PR card's pull request, or another card's committed work, in a new hidden thread, running the depth's
    * finders. `commit` pins a local review to that commit instead of the thread's HEAD; a PR review takes the PR's head.
    * `answers` are the card thread's answers to earlier findings, by handle, which a re-review judges.
+   * `severityFloor` leaves a re-review's new findings below it unreported.
    */
   async function startReview(
     ticketId: string,
@@ -83,15 +84,16 @@ export function createReviews(
     depth: ReviewDepth,
     commit: string | null = null,
     answers: Record<string, FindingAnswer> = {},
+    severityFloor: SeverityFloor = null,
   ): Promise<Ticket> {
     const ticket = getTicket(ticketId);
-    if (ticket.pr !== null) return spawnReviewForTicket(ticket.id, await projectForTicket(ticket, explicitProjectId), mode, depth, prSubject(ticket), cardIntent(ticket, null), answers);
+    if (ticket.pr !== null) return spawnReviewForTicket(ticket.id, await projectForTicket(ticket, explicitProjectId), mode, depth, prSubject(ticket), cardIntent(ticket, null), answers, severityFloor);
     const { subject: head, projectId, branch } = await localReviewTarget(ticket);
     const subject = commit === null || head.kind !== "local" ? head : localSubject(commit, head.defaultBranch);
     if (explicitProjectId !== null && explicitProjectId !== projectId) {
       throw new Error(`A local review runs in the project of the card's thread (${projectId}), so it can't run in ${explicitProjectId}`);
     }
-    return spawnReviewForTicket(ticket.id, projectId, mode, depth, subject, cardIntent(ticket, branch), answers);
+    return spawnReviewForTicket(ticket.id, projectId, mode, depth, subject, cardIntent(ticket, branch), answers, severityFloor);
   }
 
   async function spawnReviewForTicket(
@@ -102,6 +104,7 @@ export function createReviews(
     subject: ReviewSubject,
     intent: CardIntent,
     answers: Record<string, FindingAnswer>,
+    severityFloor: SeverityFloor,
   ): Promise<Ticket> {
     const ticket = getTicket(ticketId);
     // A card reviewed both as a PR and locally keeps two chains; a re-review only continues the one of its own kind.
@@ -111,9 +114,9 @@ export function createReviews(
     const thread = await bb.sdk.threads.spawn({
       projectId,
       environment: await freshWorktree(projectId),
-      prompt: reviewPrompt(subject, ticket, previous, standing, intent, depth, answers),
+      prompt: reviewPrompt(subject, ticket, previous, standing, intent, depth, answers, severityFloor),
       title: threadTitle(`${previous === null ? "Review" : "Re-review"} ${subjectLabel(subject)}: ${ticket.title}`),
-      ...(ticket.threadId === null ? {} : { parentThreadId: ticket.threadId }),
+      ...(await workerOptions(ticket)),
       visibility: await codeReviewThreadVisibility(),
       pluginMetadata: { ticketId: ticket.id, role: "review" },
     });

@@ -133,7 +133,30 @@ export function createCardThreads(ctx: KanbanContext, { board }: { board: BoardS
     };
   }
 
-  return { spawnThreadForTicket, promptTicketThread, linkThread, projectHostId, freshWorktree };
+  /**
+   * What a worker thread the board starts for a card (checks, classify, review, narrative) takes from the card's
+   * thread. It isn't that thread's child, because bb posts a child's final message into its parent, and the card's
+   * thread took each one as work to do and reported ready again mid-review. So it is owned by the card's thread
+   * instead, archived and deleted with it, and runs the provider and options a child would have inherited.
+   */
+  async function workerOptions(ticket: Ticket) {
+    if (ticket.threadId === null) return {};
+    const thread = await bb.sdk.threads.get({ threadId: ticket.threadId });
+    let execution: Awaited<ReturnType<typeof bb.sdk.threads.defaultExecutionOptions>> = null;
+    try {
+      execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: thread.id });
+    } catch (error) {
+      bb.log.warn(`could not read the execution options of thread ${thread.id}: ${String(error)}`);
+    }
+    return {
+      providerId: thread.providerId,
+      // Only a live thread can own another.
+      ...(thread.archivedAt === null ? { lifecycleOwnerThreadId: thread.id } : {}),
+      ...(execution === null ? {} : { model: execution.model, permissionMode: execution.permissionMode, reasoningLevel: execution.reasoningLevel, serviceTier: execution.serviceTier }),
+    };
+  }
+
+  return { spawnThreadForTicket, promptTicketThread, linkThread, projectHostId, freshWorktree, workerOptions };
 }
 
 export type CardThreads = ReturnType<typeof createCardThreads>;

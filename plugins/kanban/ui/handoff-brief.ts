@@ -68,7 +68,7 @@ function escalation(loop: LoopState, report: ReviewReport | null): string | null
     case "question":
       return "The card's thread is waiting on your answer; the loop resumes at its next ready";
     case "loop-error":
-      return "A checks or review thread failed twice";
+      return loop.failure === null ? "A checks or review thread failed twice" : `A checks or review thread failed: ${loop.failure}`;
     case "findings":
       return `The findings gate holds round ${loop.round + 1}: approve or deselect its findings before the fix prompt goes out`;
     default:

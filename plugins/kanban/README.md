@@ -158,16 +158,32 @@ its PR is reviewed and its review findings and comments are handed to agents.
   (deferred, dropped and pre-existing ones never do). The thread answers each
   with `bb kanban answer <ids> fixed` or `bb kanban answer <id> disputed
   --reason "<why>"`, and the board refuses its ready report until every one
-  is answered. The fix commit is checked and re-reviewed incrementally, and
-  the re-review judges each dispute: an accepted one closes the finding, a
+  is answered. The fix commit is checked and re-reviewed incrementally, with
+  a severity floor once the first round is done: the re-review only looks for
+  new critical and important findings and leaves the style finder out. It
+  also judges each dispute: an accepted one closes the finding, a
   rejected one stops the loop with reason "dispute" (or, on a minor finding,
   stays open as a minor), and a finding answered fixed that is still there
   stops it with reason "not converging". A clean review moves the card to
-  Needs you. After three fix rounds the loop stops: at Needs you with reason
-  "cap" while a critical or important finding is open, or as clean with the
-  open minors listed. A checks or review thread that fails (after a review's
-  resumes), is deleted, or ends without a result is started again once; a second failure stops the
-  loop as a loop error, with a link to the thread in the card panel. While
+  Needs you. Minor findings start the first round like any other, but after
+  it only a critical or important finding starts another (the open minors go
+  with it); a re-review left with only minors ends clean with them listed.
+  After three fix rounds the loop stops: at Needs you with reason "cap" while
+  a critical or important finding is open, or as clean with the open minors
+  listed. A checks or review thread that fails (after a review's resumes), is
+  deleted, or ends without leaving any message is started again once; a
+  second failure stops the loop as a loop error, with a link to the thread in
+  the card panel. A thread that finished with a message the board can't read
+  (no review-findings report, no classify scores) stops it at once, since a
+  retry would write the same message; a review thread without the
+  `code-review` skill says so, and the card names the fix. A ready at a new
+  commit while the loop is checking, classifying or reviewing an older one
+  stops those threads and starts over at the new commit; a repeated ready of
+  the same commit is ignored. The checks, classify, review and narrative
+  threads are owned by the card's thread (archived and deleted with it) and
+  run its provider and model, but aren't its children: bb would post each
+  one's final message into the card's thread, which took them as work to do.
+  Checks and classify run at low reasoning. While
   the card's thread waits on you (a question or an approval) the loop pauses
   as `stuck · question` without moving the card, and resumes at its next
   ready. The level is recomputed when the loop stops, from the file scores,
@@ -215,7 +231,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   The brief ends with a reading plan: none at Glance (the evidence and
   not-covered list are the plan), key files at Read, key and supporting files
   at Scrutinize, mechanical files collapsed. Reaching Needs you at Read or
-  Scrutinize requests a narrative; Reading plan (`P`) opens its stepper cut
+  Scrutinize requests a narrative, unless it stopped for failing checks or a
+  loop error; Reading plan (`P`) opens its stepper cut
   down to the plan's files, or the changes view when there is none yet. At
   Scrutinize Accept stays disabled, counting the plan files not yet marked
   Viewed. Change level (`L`) sets the level with a reason; it holds until
@@ -227,7 +244,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
   threads), read from Claude Code's transcripts every 30 seconds.
 - **Review PR** button on every PR card: spawns a review thread in a fresh
   worktree of the matching project, checks the PR head out detached, and runs
-  your `code-review` skill (`~/.claude/skills/code-review`) against
+  your `code-review` skill (`~/.claude/skills/code-review`, kept in this
+  repository's `claude/` and linked by `node scripts/link-claude-config.mjs`
+  with the reviewer subagents it spawns) against
   `origin/<base>...HEAD`. Findings land in that thread; nothing is posted to
   GitHub. The card shows the review thread's status and opens it on click.
 - **Review the commits** on any other card (ad hoc, Jira, subtask) whose

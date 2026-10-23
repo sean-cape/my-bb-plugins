@@ -4,6 +4,7 @@ import { COLUMN } from "../../shared/columns";
 import {
   DEPTH_FOR_LEVEL,
   LOOP_ROUND_CAP,
+  MINOR_ROUNDS,
   effectiveLevel,
   fixingRound,
   unansweredFindings,
@@ -19,7 +20,7 @@ import {
   type NeedsYouReason,
   type PathRule,
 } from "../../shared/loop";
-import type { Finding, ReviewDepth } from "../../shared/review";
+import type { Finding, ReviewDepth, SeverityFloor } from "../../shared/review";
 import { attentionLevel } from "./attention";
 
 /** Failing checks in a row that stop the loop rather than go back to the card's thread. */
@@ -52,10 +53,14 @@ export type LoopEvent =
   | { type: "review-completed"; reviewId: string; findings: ReviewedFinding[]; notCovered: string[]; pathRules: PathRule[]; pr: boolean }
   /** The card's thread is waiting on the user: a question, an approval. */
   | { type: "question" }
-  /** A thread the loop started failed, was deleted, or went idle without recording its result; `threadId` is null when it couldn't be started. */
-  | { type: "thread-failed"; role: "checks" | "classify"; commit: string; threadId: string | null }
+  /**
+   * A thread the loop started failed, was deleted, or went idle without recording its result; `threadId` is null when
+   * it couldn't be started. `failure` is set when the thread finished and its output says why it has no result, which
+   * a retry would only repeat.
+   */
+  | { type: "thread-failed"; role: "checks" | "classify"; commit: string; threadId: string | null; failure?: string }
   /** `reviewId` is null for a review that couldn't be started. */
-  | { type: "thread-failed"; role: "review"; reviewId: string | null; threadId: string | null }
+  | { type: "thread-failed"; role: "review"; reviewId: string | null; threadId: string | null; failure?: string }
   /** The user accepts the change at Needs you; a local card's thread then lands it. */
   | { type: "accept"; pr: boolean }
   /** The card's thread landed an accepted change. */
@@ -95,12 +100,14 @@ export type LoopAction =
   | { type: "spawn-checks"; commit: string; checkCommand: CheckCommand }
   | { type: "spawn-classify"; commit: string }
   /** `answers` are the last fix round's, keyed by the `<reviewId>/<findingId>` handle the re-review knows each finding by. */
-  | { type: "spawn-review"; commit: string; mode: "full" | "incremental"; depth: ReviewDepth; answers: Record<string, FindingAnswer> }
+  | { type: "spawn-review"; commit: string; mode: "full" | "incremental"; depth: ReviewDepth; answers: Record<string, FindingAnswer>; severityFloor: SeverityFloor }
   | { type: "prompt-card"; prompt: CardPrompt }
   /** The card's thread committed its answer to a fix round's findings; the disputed ones stay open. */
   | { type: "record-fix"; reviewId: string; commit: string; findingIds: string[]; disputed: string[] }
   /** The fix round ended unfixed, its findings left open. */
   | { type: "end-fix"; reviewId: string; findingIds: string[] }
+  /** A newer ready replaced the commit being checked, classified or reviewed, so the threads still on the old one stop; `reviewId` is the loop's review, null before it started. */
+  | { type: "stop-superseded"; reviewId: string | null }
   /** The narrative the reading plan steps through; the service skips it when one is current. */
   | { type: "spawn-narrative" };
 
@@ -114,13 +121,16 @@ const stay = (state: LoopState): LoopStep => ({ state, actions: [] });
 /** Levels the reading plan needs a narrative for; it costs too much to spawn for a Glance. */
 const narrated = (level: AttentionLevel | null): boolean => level === "read" || level === "scrutinize";
 
+/** Stops whose next step is fixing the setup or the code, not reading the change, so a narrative would be stale before it's read. */
+const UNREAD_STOPS: ReadonlySet<NeedsYouReason> = new Set(["loop-error", "checks"]);
+
 /** Kept so a long-lived card's state stays small. */
 const LEVEL_OVERRIDES_KEPT = 20;
 
 function needsYou(state: LoopState, reason: NeedsYouReason): LoopStep {
   return {
     state: { ...state, phase: "needs-you", reason },
-    actions: [{ type: "move", column: COLUMN.review }, ...(narrated(effectiveLevel(state)) ? [{ type: "spawn-narrative" as const }] : [])],
+    actions: [{ type: "move", column: COLUMN.review }, ...(narrated(effectiveLevel(state)) && !UNREAD_STOPS.has(reason) ? [{ type: "spawn-narrative" as const }] : [])],
   };
 }
 
@@ -168,10 +178,11 @@ function lastRoundAnswers(state: LoopState): Record<string, FindingAnswer> {
   return Object.fromEntries(Object.entries(round.answers).map(([id, answer]) => [`${round.reviewId}/${id}`, answer]));
 }
 
+/** Past the minor rounds a new minor can't start a round, so the re-review doesn't look for one. */
 function reviewAction(state: LoopState, commit: string): LoopAction {
   return state.rounds.length === 0
-    ? { type: "spawn-review", commit, mode: "full", depth: state.depth, answers: {} }
-    : { type: "spawn-review", commit, mode: "incremental", depth: state.depth, answers: lastRoundAnswers(state) };
+    ? { type: "spawn-review", commit, mode: "full", depth: state.depth, answers: {}, severityFloor: null }
+    : { type: "spawn-review", commit, mode: "incremental", depth: state.depth, answers: lastRoundAnswers(state), severityFloor: state.round >= MINOR_ROUNDS ? "important" : null };
 }
 
 function retryAction(state: LoopState, event: Extract<LoopEvent, { type: "thread-failed" }>): LoopAction | null {
@@ -219,15 +230,13 @@ function reviewCompleted(base: LoopState, event: Extract<LoopEvent, { type: "rev
 
 /**
  * Hands `open` to the card's thread as the loop's next round, or stops at Needs you: clean when nothing is open or
- * only minors are left at the cap, and for the findings gate's approval. A round starts from `base`, since the level is
- * only recomputed when the loop stops.
+ * only minors are left after the minor rounds, and for the findings gate's approval. A round starts from `base`, since
+ * the level is only recomputed when the loop stops.
  */
 function route(stopped: LoopState, base: LoopState, reviewId: string, open: LoopFinding[], keptOpen: LoopFinding[], pr: boolean): LoopStep {
   if (open.length === 0) return finish({ ...stopped, openFindings: keptOpen }, pr);
-  if (stopped.round >= LOOP_ROUND_CAP) {
-    if (open.some((finding) => finding.severity !== "minor")) return needsYou(stopped, "cap");
-    return finish({ ...stopped, openFindings: [...open, ...keptOpen] }, pr);
-  }
+  if (stopped.round >= MINOR_ROUNDS && open.every((finding) => finding.severity === "minor")) return finish({ ...stopped, openFindings: [...open, ...keptOpen] }, pr);
+  if (stopped.round >= LOOP_ROUND_CAP) return needsYou(stopped, "cap");
   // No narrative: the user only picks findings here, and the loop carries on once they have.
   if (stopped.gates.findings) {
     return { state: { ...stopped, phase: "needs-you", reason: "findings", reviewId, openFindings: keptOpen, awaitingFindings: open }, actions: [{ type: "move", column: COLUMN.review }] };
@@ -301,6 +310,7 @@ export function reduce(state: LoopState, event: LoopEvent): LoopStep {
           reason: null,
           pausedPhase: null,
           failedThreadId: null,
+          failure: null,
         },
         actions: [{ type: "ensure-columns" }, ...(event.hasThread ? [{ type: "prompt-card" as const, prompt: { kind: "monitoring" as const } }] : [])],
       };
@@ -321,7 +331,7 @@ export function reduce(state: LoopState, event: LoopEvent): LoopStep {
       };
     case "unmonitor": {
       // The loop stops after the current step, so a running check or review keeps its phase until its result arrives.
-      const next = { ...state, monitored: false, phase: running(state) ? state.phase : "idle", reason: null, pausedPhase: null, failedThreadId: null };
+      const next = { ...state, monitored: false, phase: running(state) ? state.phase : "idle", reason: null, pausedPhase: null, failedThreadId: null, failure: null };
       const round = fixingRound(state);
       // The fix round is the review's apply round; ending it gives the review its manual Apply back.
       return round === undefined ? stay(next) : { state: next, actions: [{ type: "end-fix", reviewId: round.reviewId, findingIds: round.handed }] };
@@ -350,7 +360,7 @@ export function reduce(state: LoopState, event: LoopEvent): LoopStep {
     }
     case "ready": {
       if (!state.monitored || state.phase === "accepted" || state.phase === "landed" || state.phase === "planning") return stay(state);
-      if (state.phase === "checking" && state.commit === event.commit) return stay(state);
+      if (running(state) && state.commit === event.commit) return stay(state);
       // The service refuses such a report with the ids; this only keeps the round from completing half-answered.
       if (unansweredFindings(state).length > 0) return stay(state);
       const handed = fixingRound(state);
@@ -362,6 +372,7 @@ export function reduce(state: LoopState, event: LoopEvent): LoopStep {
           pausedPhase: null,
           retries: 0,
           failedThreadId: null,
+          failure: null,
           commit: event.commit,
           evidence: event.evidence,
           checkCommand: event.checkCommand,
@@ -370,6 +381,7 @@ export function reduce(state: LoopState, event: LoopEvent): LoopStep {
           levelOverride: state.levelOverride?.commit === event.commit ? state.levelOverride : null,
         },
         actions: [
+          ...(running(state) ? [{ type: "stop-superseded" as const, reviewId: state.phase === "reviewing" ? state.reviewId : null }] : []),
           ...(handed === undefined
             ? []
             : [
@@ -411,11 +423,11 @@ export function reduce(state: LoopState, event: LoopEvent): LoopStep {
         event.role === "review" ? state.phase === "reviewing" && state.reviewId === event.reviewId : state.phase === (event.role === "checks" ? "checking" : "classifying") && state.commit === event.commit;
       if (!ours) return stay(state);
       if (!state.monitored) return stay({ ...state, phase: "idle" });
-      const retry = state.retries < THREAD_RETRIES ? retryAction(state, event) : null;
+      const retry = event.failure === undefined && state.retries < THREAD_RETRIES ? retryAction(state, event) : null;
       if (retry !== null) return { state: { ...state, retries: state.retries + 1, reviewId: null }, actions: [retry] };
       // Classifying only sets the depth, so the review goes ahead without it rather than stopping the loop.
       if (event.role === "classify") return classified(state, event.commit, null, []);
-      return needsYou({ ...state, failedThreadId: event.threadId }, "loop-error");
+      return needsYou({ ...state, failedThreadId: event.threadId, failure: event.failure ?? null }, "loop-error");
     }
     case "question":
       // A plan gate's own approval will arrive as an interaction too, so only the thread's working phases pause.

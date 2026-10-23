@@ -50,6 +50,9 @@ export type ReviewDepth = z.infer<typeof reviewDepthSchema>;
 export const DEFAULT_REVIEW_DEPTH: ReviewDepth = "standard";
 export const REVIEW_DEPTH_LABEL: Record<ReviewDepth, string> = { quick: "Quick", standard: "Standard", deep: "Deep" };
 
+/** The least severe finding a review reports: `important` leaves minors (style among them) unreported; null reports every one. */
+export type SeverityFloor = "important" | null;
+
 /**
  * The review's call on a finding, by the criteria apply-review's triage shares: apply it in this change, defer it as
  * separate work (wrong scope), or drop it (churn far beyond the benefit, or against the project's conventions).

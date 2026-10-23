@@ -104,6 +104,7 @@ export function prepareStatements(db: KanbanDatabase) {
       `UPDATE checks_runs SET status = 'completed', exit_code = ?, output_tail = ?, completed_at = ? WHERE id = ?`,
     ),
     failChecksRun: db.prepare<[number, string]>(`UPDATE checks_runs SET status = 'failed', completed_at = ? WHERE id = ? AND status = 'running'`),
+    runningChecksRuns: db.prepare<[string], ChecksRunRow>(`SELECT * FROM checks_runs WHERE ticket_id = ? AND status = 'running'`),
     deleteChecksRunsForTicket: db.prepare<[string]>(`DELETE FROM checks_runs WHERE ticket_id = ?`),
     insertClassifyRun: db.prepare<[{ id: string; ticket_id: string; thread_id: string; commit_sha: string; created_at: number }]>(
       `INSERT INTO classify_runs (id, ticket_id, thread_id, commit_sha, status, created_at) VALUES (@id, @ticket_id, @thread_id, @commit_sha, 'running', @created_at)`,
@@ -112,6 +113,7 @@ export function prepareStatements(db: KanbanDatabase) {
     finishClassifyRun: db.prepare<[ClassifyRunRow["status"], string | null, number, string]>(
       `UPDATE classify_runs SET status = ?, body = ?, completed_at = ? WHERE id = ? AND status = 'running'`,
     ),
+    runningClassifyRuns: db.prepare<[string], ClassifyRunRow>(`SELECT * FROM classify_runs WHERE ticket_id = ? AND status = 'running'`),
     deleteClassifyRunsForTicket: db.prepare<[string]>(`DELETE FROM classify_runs WHERE ticket_id = ?`),
     moveColumn: db.prepare<[string, number, number, string]>(
       `UPDATE tickets SET column_id = ?, column_entered_at = ?, updated_at = ? WHERE column_id = ?`,

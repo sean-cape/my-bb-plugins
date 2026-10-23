@@ -28,6 +28,7 @@ export function builderContract(isPr: boolean, checkCommand: string | null, plan
     `When the work is done, ${commit}, ${checks} and fix what fails.`,
     `Then finish with \`bb kanban ready --commit "$(git rev-parse HEAD)"${agentChosen} --evidence-stdin\`, giving on stdin JSON evidence of how you verified the work: \`{"commands":[{"command":"…","exitCode":0,"outputTail":"its last lines"}],"screenshots":["/absolute/path.png"]}\` (screenshots for UI changes).`,
     "Then stop: the board re-runs the checks in a fresh worktree and reviews the commit, and sends failing checks or the findings to fix back to this thread.",
+    "Only those prompts from the board start new work. A notice that some other thread finished is for your information: never fix what it reports or report ready because of it.",
   ].join(" ");
 }
 

@@ -111,6 +111,12 @@ export type LevelOverride = z.infer<typeof levelOverrideSchema>;
 /** Automatic fix rounds before the loop stops for the user. */
 export const LOOP_ROUND_CAP = 3;
 
+/**
+ * Automatic rounds in which minor findings alone start another. Later reviews only start a round for a critical or
+ * important finding, which the open minors ride along with; otherwise the loop ends with them listed.
+ */
+export const MINOR_ROUNDS = 1;
+
 /** A finding the loop handed to the card's thread, or left open when it stopped. */
 export const loopFindingSchema = z.object({ id: z.string(), severity: findingSeveritySchema, title: z.string() });
 export type LoopFinding = z.infer<typeof loopFindingSchema>;
@@ -189,6 +195,8 @@ export const loopStateSchema = z.object({
   retries: z.number().int().default(0),
   /** The thread whose second failure stopped the loop with a loop error. */
   failedThreadId: z.string().nullable().default(null),
+  /** What the failed thread's output says went wrong, when it says; such a failure isn't retried. */
+  failure: z.string().nullable().default(null),
   /** Automatic fix rounds started; the cap counts these. */
   round: z.number().int().default(0),
   /** The depth the loop's reviews run at, picked by the attention level the first round classifies. */
@@ -204,7 +212,7 @@ export const loopStateSchema = z.object({
   /** The review running, or the one the current fix round answers. */
   reviewId: z.string().nullable().default(null),
   rounds: z.array(loopRoundSchema).default([]),
-  /** The minor findings left open when the loop ended clean: at the cap, or disputed and the dispute rejected. */
+  /** The minor findings left open when the loop ended clean: after the minor rounds, or disputed and the dispute rejected. */
   openFindings: z.array(loopFindingSchema).default([]),
   /** The last review's rejected disputes, which the user upholds or closes. */
   disputes: z.array(loopDisputeSchema).default([]),
@@ -272,7 +280,7 @@ export function phaseChip(loop: LoopState): { label: string; tone: "neutral" | "
         const reasons = effective === null || why.length === 0 ? "" : `. ${ATTENTION_LEVEL_LABEL[effective]}: ${why.join("; ")}`;
         return { label: `ready${level}`, tone: "success", title: `Checked and reviewed clean at${commit}${minors}; needs you${reasons}` };
       }
-      if (loop.reason === "loop-error") return { label: "stuck · loop error", tone: "danger", title: "Needs you: a checks or review thread failed twice; open it from the card" };
+      if (loop.reason === "loop-error") return { label: "stuck · loop error", tone: "danger", title: `Needs you: ${loop.failure ?? "a checks or review thread failed twice"}; open it from the card` };
       if (loop.reason === "findings") {
         return { label: `approve r${loop.round + 1}`, tone: "warning", title: `Needs you: approve or deselect the ${loop.awaitingFindings.length} finding${loop.awaitingFindings.length === 1 ? "" : "s"} of the next round before the fix prompt goes out` };
       }

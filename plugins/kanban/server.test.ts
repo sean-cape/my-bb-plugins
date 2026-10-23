@@ -915,7 +915,7 @@ describe("PR review", () => {
         hostId: "host_1",
         workspace: { type: "managed-worktree", baseBranch: { kind: "default" } },
       },
-      parentThreadId: "thr_1",
+      lifecycleOwnerThreadId: "thr_1",
       title: "Review widgets#7: Refactor",
       visibility: "hidden",
       pluginMetadata: { ticketId: card!.id, role: "review" },
@@ -1828,7 +1828,7 @@ describe("local card review", () => {
     expect(spawned[1]).toMatchObject({
       projectId: "proj_acme",
       environment: { type: "host", hostId: "host_1", workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
-      parentThreadId: "thr_1",
+      lifecycleOwnerThreadId: "thr_1",
       title: "Review 0123456: Local work",
       visibility: "hidden",
       pluginMetadata: { ticketId: card.id, role: "review" },
@@ -2073,7 +2073,7 @@ describe("monitored review loop", () => {
     expect(spawned[1]).toMatchObject({
       projectId: "proj_acme",
       environment: { type: "host", hostId: "host_1", workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
-      parentThreadId: "thr_1",
+      lifecycleOwnerThreadId: "thr_1",
       title: "Checks 0123456: Cache lookups",
       visibility: "hidden",
       pluginMetadata: { ticketId: (await card()).id, role: "checks" },
@@ -2088,6 +2088,39 @@ describe("monitored review loop", () => {
     });
   });
 
+  it("starts its worker threads owned by the card's thread rather than as its children, with the card thread's provider and options", async () => {
+    await monitoredCard();
+    current().harness.sdk.stub("threads.defaultExecutionOptions", async () => ({ model: "model-a", permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/thread/start" }));
+    await ready();
+    // bb posts a child's final message into its parent, which the card's thread would take as work to do.
+    expect(spawned[1]).not.toHaveProperty("parentThreadId");
+    // Running a command needs none of the card thread's reasoning.
+    expect(spawned[1]).toMatchObject({ lifecycleOwnerThreadId: "thr_1", providerId: expect.any(String), model: "model-a", permissionMode: "auto", serviceTier: "default", reasoningLevel: "low" });
+  });
+
+  it("stops the checks thread a newer ready supersedes, and ignores its late idle", async () => {
+    await monitoredCard();
+    current().harness.sdk.stub("threads.stop", async () => ({ ok: true }));
+    await ready();
+    await ready(fixSha);
+    expect(current().harness.inspection.sdk.callsTo("threads.stop")).toEqual([[{ threadId: "thr_2" }]]);
+    expect(spawned[2]).toMatchObject({ title: "Checks fedcba9: Cache lookups" });
+    await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }), lastAssistantText: "Stopped." });
+    expect((await card()).loop).toMatchObject({ phase: "checking", commit: fixSha, retries: 0 });
+  });
+
+  it("stops at a loop error, without retrying, when the review thread lacks the skill whose report the board reads", async () => {
+    await monitoredCard();
+    await ready();
+    await recordChecks("thr_2", 0);
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "classifying" }));
+    await classify("thr_3", 3);
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "reviewing", reviewId: expect.any(String) }));
+    await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_4", projectId: "proj_acme" }), lastAssistantText: "Review skill missing." });
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_4", failure: expect.stringContaining("link-claude-config.sh") }));
+    expect(spawned).toHaveLength(4);
+  });
+
   const reviewBody = (commit: string, findings: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) =>
     ["## Review Findings", `Reviewed commit: ${commit}`, "```json review-findings", JSON.stringify({ version: 5, summary: "x", commit, findings, ...extra }), "```"].join("\n");
   async function completeReview(threadId: string, body: string, commit: string): Promise<void> {
@@ -2099,12 +2132,12 @@ describe("monitored review loop", () => {
     await monitoredCard();
     await ready();
     expect((await recordChecks("thr_2", 0, "all green")).exitCode).toBe(0);
-    expect(spawned[2]).toMatchObject({ parentThreadId: "thr_1", title: "Classify 0123456: Cache lookups", visibility: "hidden", pluginMetadata: { role: "classify" } });
+    expect(spawned[2]).toMatchObject({ lifecycleOwnerThreadId: "thr_1", title: "Classify 0123456: Cache lookups", visibility: "hidden", pluginMetadata: { role: "classify" } });
     expect(String(spawned[2]!.prompt)).toContain("git diff --numstat main...HEAD");
     await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "classifying" }));
     await classify("thr_3", 3);
     await vi.waitFor(() => expect(spawned).toHaveLength(4));
-    expect(spawned[3]).toMatchObject({ parentThreadId: "thr_1", pluginMetadata: { role: "review" } });
+    expect(spawned[3]).toMatchObject({ lifecycleOwnerThreadId: "thr_1", pluginMetadata: { role: "review" } });
     expect(String(spawned[3]!.prompt)).toContain(`git checkout --detach ${sha}`);
     expect(String(spawned[3]!.prompt)).toContain("at depth `standard`");
     await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "reviewing", reviewId: expect.any(String) }));
@@ -2550,7 +2583,7 @@ describe("source code reviews", () => {
     await current().harness.behavior.callRpc("sync_now", null);
     const card = (await board()).tickets.find((ticket) => ticket.pr?.number === 2)!;
     expect(reviewThreads()).toEqual([
-      expect.objectContaining({ title: "Review widgets#2: Please review", parentThreadId: card.threadId, visibility: "hidden", pluginMetadata: { ticketId: card.id, role: "review" } }),
+      expect.objectContaining({ title: "Review widgets#2: Please review", lifecycleOwnerThreadId: card.threadId, visibility: "hidden", pluginMetadata: { ticketId: card.id, role: "review" } }),
     ]);
     expect(card.latestReview).toMatchObject({ status: "running", depth: "quick" });
     expect((await board()).sync.lastError).toBeNull();
@@ -2640,7 +2673,7 @@ describe("source narratives", () => {
     await current().harness.behavior.callRpc("sync_now", null);
     const card = (await board()).tickets.find((ticket) => ticket.pr?.number === 2)!;
     expect(narrativeThreads()).toEqual([
-      expect.objectContaining({ title: "Narrative widgets#2: Please review", parentThreadId: card.threadId, pluginMetadata: { ticketId: card.id, role: "narrative" } }),
+      expect.objectContaining({ title: "Narrative widgets#2: Please review", lifecycleOwnerThreadId: card.threadId, pluginMetadata: { ticketId: card.id, role: "narrative" } }),
     ]);
     expect((await board()).sync.lastError).toBeNull();
 

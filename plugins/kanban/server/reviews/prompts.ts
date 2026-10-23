@@ -1,6 +1,6 @@
 import type { Ticket } from "../../shared/board";
 import type { FindingAnswer } from "../../shared/loop";
-import type { PrReviewSubject, Review, ReviewDepth, ReviewSubject } from "../../shared/review";
+import type { PrReviewSubject, Review, ReviewDepth, ReviewSubject, SeverityFloor } from "../../shared/review";
 import { finishSteps } from "../apply-steps";
 import { earlierFindings, earlierNotCovered } from "./findings";
 
@@ -15,6 +15,15 @@ interface ReviewSetup {
   /** Completes "so it reviews exactly …". */
   changesPhrase: string;
 }
+
+/** A review thread's whole final message when the skill the board parses isn't installed where it runs. */
+export const REVIEW_SKILL_MISSING = "Review skill missing.";
+
+/**
+ * Claude Code ships a plugin skill also named code-review, whose report the board can't parse, so without this guard
+ * a machine missing the user's skill reviews with that one and every round fails after spending a full review.
+ */
+const SKILL_GUARD = `This review needs the \`code-review\` skill installed at \`~/.claude/skills/code-review\`, whose report ends with a \`\`\`json review-findings block. Before anything else, check that \`~/.claude/skills/code-review/SKILL.md\` exists. If it doesn't, don't review with another skill or by hand: make your final message exactly \`${REVIEW_SKILL_MISSING}\` and stop.`;
 
 const DISPOSABLE_WORKTREE = "Setup (this worktree is disposable; do not touch any other checkout).";
 const LOCAL_SETUP = `${DISPOSABLE_WORKTREE} Worktrees of this project share one repository, so the commit is already here and nothing needs fetching.`;
@@ -104,6 +113,7 @@ export function reviewPrompt(
   intent: CardIntent,
   depth: ReviewDepth,
   answers: Record<string, FindingAnswer> = {},
+  severityFloor: SeverityFloor = null,
 ): string {
   const setup = reviewSetup(subject, ticket);
   const sinceSha = since?.commitSha ?? null;
@@ -112,6 +122,8 @@ export function reviewPrompt(
     sinceSha === null
       ? `Run a full code review of ${setup.description}.`
       : `Re-review ${setup.description}. The previous review covered commit ${sinceSha}. Review what changed since then, and re-check the earlier findings listed at the end of this prompt so every one still unaddressed carries forward into this review.`,
+    "",
+    SKILL_GUARD,
     "",
     setup.preamble,
     ...setup.steps.map((step, index) => `${index + 1}. ${step}`),
@@ -122,7 +134,7 @@ export function reviewPrompt(
           "",
           "Your final message must be the code-review skill's compiled report verbatim, including its `Reviewed commit:` line and the trailing ```json review-findings block; it is persisted on the card and rendered from that JSON.",
         ]
-      : incrementalSteps(range, setup.fullRange, setup.steps.length + 1, depth)),
+      : incrementalSteps(range, setup.fullRange, setup.steps.length + 1, depth, severityFloor)),
     "Rules: do not change code, and do not post comments or reviews on GitHub; the compiled findings in this thread are the deliverable.",
     `This review belongs to kanban ticket ${ticket.id}.`,
     "",
@@ -134,11 +146,12 @@ export function reviewPrompt(
 /**
  * A re-review is only complete when it also says which earlier findings are still open, so the latest review alone
  * stands for the subject. Its findings are tagged pre-existing against the whole change, since lines an earlier commit
- * of the same change touched are outside the delta but still the change's own.
+ * of the same change touched are outside the delta but still the change's own. The loop's later re-reviews set a
+ * severity floor: a minor can't start a round there on its own, so they don't pay to find and verify one.
  */
-function incrementalSteps(range: string, fullRange: string, reviewStep: number, depth: ReviewDepth): string[] {
+function incrementalSteps(range: string, fullRange: string, reviewStep: number, depth: ReviewDepth, severityFloor: SeverityFloor): string[] {
   return [
-    `${reviewStep}. Review the new commits. If \`git log ${range}\` is empty nothing changed, so skip this step. Otherwise invoke the \`code-review\` skill at depth \`${depth}\` with the range \`${range}\`, the pre-existing range \`${fullRange}\` and the card's intent below, so a finding in lines this change touched in an earlier commit is not tagged pre-existing. Also give it the fix findings: the earlier findings below whose \`applyRound\` says an apply round committed a fix, which the new commits answer, so its scope finder checks each fix commit stays within the findings it answers. Let it spawn its reviewers, verify and triage their findings and compile them; that report is an intermediate result, not your final message.`,
+    `${reviewStep}. Review the new commits. If \`git log ${range}\` is empty nothing changed, so skip this step. Otherwise invoke the \`code-review\` skill at depth \`${depth}\`${severityFloor === null ? " with" : ` with the severity floor \`${severityFloor}\`,`} the range \`${range}\`, the pre-existing range \`${fullRange}\` and the card's intent below, so a finding in lines this change touched in an earlier commit is not tagged pre-existing. Also give it the fix findings: the earlier findings below whose \`applyRound\` says an apply round committed a fix, which the new commits answer, so its scope finder checks each fix commit stays within the findings it answers. Let it spawn its reviewers, verify and triage their findings and compile them; that report is an intermediate result, not your final message.`,
     `${reviewStep + 1}. Re-check the earlier findings at HEAD. Spawn one general-purpose subagent with them and have it read the code at HEAD and classify each as addressed (the problem is gone at every instance) or open (some instance is still present; give the current locations of every one left, since lines may have moved). It also checks each earlier not-covered entry, if any, and says which a check at HEAD now covers. Changed lines or an apply round that targeted a finding do not make it addressed; only the code at HEAD does. When step ${reviewStep} found nothing changed, every earlier finding is open as listed and needs no check. An earlier finding whose \`answer\` is \`disputed\` was left unfixed on purpose: the card's thread gives its reason. Have the subagent judge that reason against the code at HEAD the way the skill's verifier judges a finding, and classify it disputed-accepted when the reason holds (the problem isn't real, or its fix falls outside the card's intent) or disputed-rejected when it doesn't, with a one-sentence note either way.`,
     `${reviewStep + 2}. Compile one merged report in the code-review skill's exact format (the markdown sections, the \`Reviewed commit:\` and \`Range:\` lines, and the trailing \`\`\`json review-findings block), with these additions:`,
     `   - \`findings\` holds the new findings from step ${reviewStep} plus every open earlier finding, merged into one where a new finding is the same problem as an earlier one, ordered by severity and renumbered \`F1\`, \`F2\`, ….`,

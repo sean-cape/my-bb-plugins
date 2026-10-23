@@ -252,7 +252,8 @@ flowchart LR
   Importance and scope fit are still produced, as triage inputs.
 - **Default selection** for manual applies becomes the findings triaged apply. This replaces the importance/scope heuristic. Old reviews without triage keep the heuristic.
 - **Routing**, decided in the reducer:
-  - **Start a fix round:** any finding triaged apply, whatever its severity, unless the cap is reached. Reaching the cap with only minor findings open doesn't escalate; it ends the loop as if clean, with the minors listed. All of a round's findings go in one fix prompt.
+  - **Start a fix round:** in the first round, any finding triaged apply, whatever its severity. After it, only a critical or important finding starts a round, and the open minors go with it; a re-review left with only minors ends the loop as if clean, with the minors listed, as does reaching the cap with only minors open. All of a round's findings go in one fix prompt.
+  - **Severity floor:** the re-reviews after the first round ask the code-review skill for critical and important findings only, skipping the style finder, since a new minor can't start a round there.
   - **Deferred findings:** listed with make-a-card, never routed. A deferred critical finding raises the attention level to at least Read.
   - **Dropped findings:** listed collapsed with their reasons, never routed.
   - **Pulling one back in:** pulling a deferred or dropped finding back in starts a round I own, which doesn't count toward the cap.
@@ -260,7 +261,8 @@ flowchart LR
   - **Disputes the verifier rejects:** on a critical or important finding they go to Needs you. On a minor finding they stay open as a minor and don't escalate.
   - **Not converging:** a finding the agent marked fixed but still open sends the card to Needs you.
 - **Cap.** Three automatic rounds. Rounds I start with Send back, or by pulling a finding back in, are counted apart and never trip the cap.
-- **Failures.** A checks, tour or review thread that goes idle without a record or report is retried once, then escalates as a loop error. The existing idle handling, which waits for background agents, decides when a thread has really finished.
+- **Failures.** A checks, tour or review thread that goes idle without a record or report is retried once, then escalates as a loop error. A thread that finished with a final message the board can't parse escalates at once, with what went wrong, since a retry writes the same message; a review thread missing the code-review skill ends with a fixed line saying so. The existing idle handling, which waits for background agents, decides when a thread has really finished.
+- **Worker threads.** Checks, classify, review and narrative threads are owned by the card's thread (archived and deleted with it) and run its provider and model, but are not its children, since bb posts a child's final message into its parent and the card's thread would act on it. A ready at a new commit while an older one is checked, classified or reviewed stops those threads; a repeated ready of the same commit is ignored. A narrative is only requested when the loop stops for the user to read the change, not for failing checks or a loop error.
 - **Pause.** When the card's thread is waiting on me (bb's needs-input state), the loop pauses. The card shows needs-you with reason "question" without leaving its column, and the loop resumes on the next ready.
 - **Accept.**
   - **Local cards:** the card's thread is prompted to land the change using the project's own finishing steps, and the card moves to Done when that thread reports landed.
@@ -279,7 +281,7 @@ flowchart LR
   - the cap at three rounds;
   - a finding marked fixed that's still open, escalating early;
   - disputes accepted and rejected;
-  - nits and smells triaged apply starting a round like any other finding;
+  - nits and smells triaged apply starting the first round like any other finding, and only riding along with a serious finding after it;
   - deferred and dropped findings never routed;
   - a deferred critical finding raising the level;
   - pulling a finding back in starting a round I own;
@@ -289,7 +291,8 @@ flowchart LR
   - the cap reached with only minors open ending the loop without escalating;
   - human rounds not counting toward the cap;
   - pause on a question and resume;
-  - a thread failure retried once, then a loop error;
+  - a thread failure retried once, then a loop error, and an unparseable result escalating without a retry;
+  - a newer ready stopping the threads on the older commit;
   - unmonitoring partway through.
 - **The attention-level function** is tested through the reducer's outputs, or directly as a pure function with the same inputs. Tests cover path rules raising the level, loop signals raising it, a level I set winning until the head moves, and the reasons listed.
 - **Adapters** get a few integration tests in the plugin's existing server test style, using the bb plugin SDK's fake host:

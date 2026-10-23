@@ -77,10 +77,10 @@ describe("loop reducer", () => {
 
     const glance = run([...start, classified(2)]);
     expect(glance.state).toMatchObject({ phase: "reviewing", depth: "quick", attention: { level: "glance" } });
-    expect(glance.actions[3]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "quick", answers: {} }]);
-    expect(run([...start, classified(3)]).actions[3]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {} }]);
+    expect(glance.actions[3]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "quick", answers: {}, severityFloor: null }]);
+    expect(run([...start, classified(3)]).actions[3]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {}, severityFloor: null }]);
     // A path rule raises a low-risk change to Scrutinize, which adds the security review.
-    expect(run([...start, classified(1, [{ glob: "src/**", level: "scrutinize" }])]).actions[3]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "deep", answers: {} }]);
+    expect(run([...start, classified(1, [{ glob: "src/**", level: "scrutinize" }])]).actions[3]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "deep", answers: {}, severityFloor: null }]);
   });
 
   it("retries a classify thread that failed once, then reviews without the scores at Standard", () => {
@@ -89,7 +89,7 @@ describe("loop reducer", () => {
     const { state, actions } = run([...start, failed("thr_k2")]);
     expect(actions[3]).toEqual([{ type: "spawn-classify", commit: sha }]);
     expect(state).toMatchObject({ phase: "reviewing", classification: null, attention: { level: "read" }, depth: "standard", retries: 0 });
-    expect(actions[4]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {} }]);
+    expect(actions[4]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {}, severityFloor: null }]);
   });
 
   it("recomputes the level when the loop stops, with what the rounds and the last review showed", () => {
@@ -148,7 +148,7 @@ describe("loop reducer", () => {
       { type: "move", column: "checking" },
       { type: "spawn-checks", commit: fixSha, checkCommand: { command: "pnpm check", source: "project" } },
     ]);
-    expect(actions[8]).toEqual([{ type: "spawn-review", commit: fixSha, mode: "incremental", depth: "standard", answers: { "rev1/F1": fixed } }]);
+    expect(actions[8]).toEqual([{ type: "spawn-review", commit: fixSha, mode: "incremental", depth: "standard", answers: { "rev1/F1": fixed }, severityFloor: "important" }]);
     expect(state).toMatchObject({ phase: "needs-you", reason: "clean", round: 1, commit: fixSha });
   });
 
@@ -161,7 +161,7 @@ describe("loop reducer", () => {
     reviewed("rev2", [finding("F1", "important")]),
     answer({ F1: fixed }),
     ...fixedAndReviewing("b".repeat(40), "rev3"),
-    reviewed("rev3", [finding("F1", "minor")]),
+    reviewed("rev3", [finding("F1", "important")]),
     answer({ F1: fixed }),
     ...fixedAndReviewing("c".repeat(40), "rev4"),
     reviewed("rev4", last),
@@ -177,6 +177,22 @@ describe("loop reducer", () => {
   it("ends clean at the cap when only minor findings are open, listing them", () => {
     const { state } = run(threeRounds([finding("F1", "minor"), finding("F2", "important", "defer")]));
     expect(state).toMatchObject({ phase: "needs-you", reason: "clean", round: 3, openFindings: [{ id: "F1", severity: "minor", title: "Finding F1" }] });
+  });
+
+  it("after the first round, ends with only minors open, listing them, and hands minors over only with a serious finding", () => {
+    const afterFirst = (findings: ReviewedFinding[]) => run([...reviewing, reviewed("rev1", [finding("F1", "important")]), answer({ F1: fixed }), ...fixedAndReviewing(fixSha, "rev2"), reviewed("rev2", findings)]);
+    expect(afterFirst([finding("F1", "minor"), finding("F2", "minor")]).state).toMatchObject({
+      phase: "needs-you",
+      reason: "clean",
+      round: 1,
+      openFindings: [
+        { id: "F1", severity: "minor" },
+        { id: "F2", severity: "minor" },
+      ],
+    });
+    expect(afterFirst([finding("F1", "minor"), finding("F2", "important")]).state).toMatchObject({ phase: "fixing", round: 2, rounds: [{}, { reviewId: "rev2", handed: ["F1", "F2"] }] });
+    // The first review's minors still start a round of their own.
+    expect(run([...reviewing, reviewed("rev1", [finding("F1", "minor")])]).state).toMatchObject({ phase: "fixing", round: 1 });
   });
 
   describe("answers and disputes", () => {
@@ -226,9 +242,36 @@ describe("loop reducer", () => {
       { type: "review-started", reviewId: "rev2" },
       { type: "thread-failed", role: "review", reviewId: "rev2", threadId: "thr_r2" },
     ]);
-    expect(actions[5]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {} }]);
-    expect(state).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_r2" });
-    expect(actions[7]).toEqual([{ type: "move", column: "review" }, { type: "spawn-narrative" }]);
+    expect(actions[5]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {}, severityFloor: null }]);
+    expect(state).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_r2", failure: null });
+    // The thread's output is what the user reads next, so no narrative is spent on the change.
+    expect(actions[7]).toEqual([{ type: "move", column: "review" }]);
+  });
+
+  it("stops at a loop error without a retry when the review's output says why it has no report", () => {
+    const { state, actions } = run([...reviewing, { type: "thread-failed", role: "review", reviewId: "rev1", threadId: "thr_r1", failure: "no code-review skill" }]);
+    expect(state).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_r1", failure: "no code-review skill", retries: 0 });
+    expect(actions.at(-1)).toEqual([{ type: "move", column: "review" }]);
+    // The next ready clears it.
+    expect(run([ready(fixSha)], state).state).toMatchObject({ phase: "checking", failure: null, failedThreadId: null });
+  });
+
+  it("ignores a repeated ready of the commit in flight, and stops the threads a newer commit supersedes", () => {
+    const repeated = run([...reviewing, ready()]);
+    expect(repeated.state).toMatchObject({ phase: "reviewing", reviewId: "rev1" });
+    expect(repeated.actions.at(-1)).toEqual([]);
+
+    const newer = run([...reviewing, ready(fixSha)]);
+    expect(newer.state).toMatchObject({ phase: "checking", commit: fixSha });
+    expect(newer.actions.at(-1)).toEqual([
+      { type: "stop-superseded", reviewId: "rev1" },
+      { type: "move", column: "checking" },
+      { type: "spawn-checks", commit: fixSha, checkCommand: { command: "pnpm check", source: "project" } },
+    ]);
+    // The superseded review's result arriving late changes nothing.
+    expect(run([reviewed("rev1", [finding("F1", "critical")])], newer.state).state).toMatchObject({ phase: "checking", commit: fixSha });
+    // While checking there is no review to stop yet, only the checks.
+    expect(run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), ready(fixSha)]).actions.at(-1)![0]).toEqual({ type: "stop-superseded", reviewId: null });
   });
 
   it("sends a single failure back to the card's thread with the output, spending no review", () => {
@@ -271,7 +314,7 @@ describe("loop reducer", () => {
 
     // A retry that succeeds leaves the next step its own retry.
     expect(run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), failed("thr_c1"), checks(0), classified(3), { type: "thread-failed", role: "review", reviewId: null, threadId: null }]).actions[5]).toEqual([
-      { type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {} },
+      { type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {}, severityFloor: null },
     ]);
     // The thread of a commit since superseded failing says nothing about the current one.
     expect(run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), ready(fixSha), failed("thr_c1")]).state).toMatchObject({ phase: "checking", retries: 0 });
@@ -372,7 +415,7 @@ describe("loop reducer", () => {
         { type: "prompt-card", prompt: { kind: "comments" } },
       ]);
       const after = run([ready(fixSha), checks(0, fixSha)], sent.state);
-      expect(after.actions.at(-1)).toEqual([{ type: "spawn-review", commit: fixSha, mode: "incremental", depth: "standard", answers: {} }]);
+      expect(after.actions.at(-1)).toEqual([{ type: "spawn-review", commit: fixSha, mode: "incremental", depth: "standard", answers: {}, severityFloor: null }]);
     });
 
     it("pulls a deferred finding back in as a round of the user's", () => {
@@ -385,7 +428,7 @@ describe("loop reducer", () => {
       // It goes through the round's usual answers and an incremental re-review of the fix.
       const after = run([answer({ F1: fixed }), ...fixedAndReviewing(fixSha, "rev2")], state);
       expect(after.actions[1]![0]).toEqual({ type: "record-fix", reviewId: "rev1", commit: fixSha, findingIds: ["F1"], disputed: [] });
-      expect(after.actions[2]).toEqual([{ type: "spawn-review", commit: fixSha, mode: "incremental", depth: "standard", answers: { "rev1/F1": fixed } }]);
+      expect(after.actions[2]).toEqual([{ type: "spawn-review", commit: fixSha, mode: "incremental", depth: "standard", answers: { "rev1/F1": fixed }, severityFloor: null }]);
     });
 
     it("never trips the cap on the user's rounds", () => {
@@ -421,8 +464,11 @@ describe("loop reducer", () => {
       });
 
       it("closing the last one routes the held findings as the loop's own round, or ends clean", () => {
-        const held = run([{ type: "decide-dispute", findingId: "F1", decision: "close", pr: false }], disputing([rejected("important"), finding("F3", "minor")]).state);
+        const held = run([{ type: "decide-dispute", findingId: "F1", decision: "close", pr: false }], disputing([rejected("important"), finding("F3", "important")]).state);
         expect(held.state).toMatchObject({ phase: "fixing", round: 2, humanRounds: 0, rounds: [{}, { reviewId: "rev2", handed: ["F3"], owner: "loop" }] });
+        // Past the first round a held minor alone doesn't start one.
+        const minor = run([{ type: "decide-dispute", findingId: "F1", decision: "close", pr: false }], disputing([rejected("important"), finding("F3", "minor")]).state);
+        expect(minor.state).toMatchObject({ phase: "needs-you", reason: "clean", openFindings: [{ id: "F3" }] });
         const none = run([{ type: "decide-dispute", findingId: "F1", decision: "close", pr: false }], disputing([rejected("important")]).state);
         expect(none.state).toMatchObject({ phase: "needs-you", reason: "clean", disputes: [{ id: "F1", decision: "closed" }] });
       });

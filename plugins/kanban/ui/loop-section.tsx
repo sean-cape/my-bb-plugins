@@ -166,9 +166,9 @@ function LoopStatus({ ticket, onOpenThread }: { ticket: Ticket; onOpenThread: (t
         : loop.phase === "paused"
           ? "Paused: the card's thread is waiting on you; the loop resumes when it reports ready"
         : loop.phase === "needs-you" && loop.reason !== null && loop.reason !== "clean"
-          ? `Needs you: ${NEEDS_YOU_REASON_LABEL[loop.reason]}${loop.reason === "checks" && last !== undefined ? `, exit code ${last.exitCode}` : ""}`
+          ? `Needs you: ${NEEDS_YOU_REASON_LABEL[loop.reason]}${loop.reason === "checks" && last !== undefined ? `, exit code ${last.exitCode}` : ""}${loop.reason === "loop-error" && loop.failure !== null ? `: ${loop.failure}` : ""}`
           : loop.phase === "needs-you" && loop.openFindings.length > 0
-            ? `Clean at the round cap with ${loop.openFindings.length} minor finding${loop.openFindings.length === 1 ? "" : "s"} open: ${loop.openFindings.map((finding) => `${finding.id} ${finding.title}`).join(", ")}`
+            ? `Clean with ${loop.openFindings.length} minor finding${loop.openFindings.length === 1 ? "" : "s"} left open: ${loop.openFindings.map((finding) => `${finding.id} ${finding.title}`).join(", ")}`
           : loop.phase === "needs-you" && loop.levelOverride !== null
             ? `${ATTENTION_LEVEL_LABEL[loop.levelOverride.level]}: you set it, ${loop.levelOverride.reason}`
           : loop.phase === "needs-you" && loop.attention !== null

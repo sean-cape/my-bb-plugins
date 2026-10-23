@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Ticket } from "../../shared/board";
 import type { Review } from "../../shared/review";
-import { localApplyPrompt, prApplyPrompt, reviewPrompt, type CardIntent } from "./prompts";
+import { REVIEW_SKILL_MISSING, localApplyPrompt, prApplyPrompt, reviewPrompt, type CardIntent } from "./prompts";
 import { localSubject, prSubject, subjectLabel } from "./subject";
 
 const commit = "0123456789abcdef0123456789abcdef01234567";
@@ -179,6 +179,21 @@ describe("review depth", () => {
     const prompt = reviewPrompt(localSubject(commit, "main"), ticket(), review(), [review()], noIntent, "deep");
     expect(prompt).toContain(`invoke the \`code-review\` skill at depth \`deep\` with the range \`${since}..HEAD\``);
     expect(prompt).toContain('`"depth"` is `deep`');
+  });
+
+  it("hands a re-review's severity floor to the skill", () => {
+    expect(reviewPrompt(localSubject(commit, "main"), ticket(), review(), [review()], noIntent, "standard", {}, "important")).toContain(
+      `invoke the \`code-review\` skill at depth \`standard\` with the severity floor \`important\`, the range \`${since}..HEAD\`, the pre-existing range`,
+    );
+  });
+});
+
+describe("review skill guard", () => {
+  it("has every review stop with a fixed line, before any setup, when the skill the board parses is missing", () => {
+    for (const prompt of [reviewPrompt(localSubject(commit, "main"), ticket(), null, [], noIntent, "standard"), reviewPrompt(prSubject(prTicket()), prTicket(), review(), [review()], noIntent, "standard")]) {
+      expect(prompt).toContain(`check that \`~/.claude/skills/code-review/SKILL.md\` exists. If it doesn't, don't review with another skill or by hand: make your final message exactly \`${REVIEW_SKILL_MISSING}\``);
+      expect(prompt.indexOf(REVIEW_SKILL_MISSING)).toBeLessThan(prompt.indexOf("Setup ("));
+    }
   });
 });
 

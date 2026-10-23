@@ -15,8 +15,12 @@ import type { ProjectSettingsStore } from "../project-settings";
 import type { Reviews } from "../reviews/reviews";
 import type { Tour } from "../tour";
 import { errorMessage, shortId, threadTitle } from "../util";
+import { REVIEW_SKILL_MISSING } from "../reviews/prompts";
 import { cardPromptText, checksPrompt, classifyPrompt, commentsPromptText, fixPromptText } from "./prompts";
 import { reduce, type CardPrompt, type LoopAction, type LoopEvent } from "./reducer";
+
+/** Checks only run a command and classify only scores files, so neither needs the card thread's reasoning. */
+const MECHANICAL_REASONING = "low";
 
 /** Thrown when a ready report can't name a check command; the CLI turns it into a hint. */
 export class NoCheckCommandError extends Error {}
@@ -102,7 +106,7 @@ export function createLoop(
       case "spawn-review": {
         let reviewThreadId: string | null;
         try {
-          reviewThreadId = (await reviews.startReview(ticketId, null, action.mode, action.depth, action.commit, action.answers)).reviewThreadId;
+          reviewThreadId = (await reviews.startReview(ticketId, null, action.mode, action.depth, action.commit, action.answers, action.severityFloor)).reviewThreadId;
         } catch (error) {
           bb.log.warn(`could not start a review for ticket ${ticketId}: ${errorMessage(error)}`);
           await dispatch(ticketId, { type: "thread-failed", role: "review", reviewId: null, threadId: null });
@@ -125,6 +129,9 @@ export function createLoop(
         if (row !== undefined) reviews.completeApply(row, null, false, action.findingIds);
         return;
       }
+      case "stop-superseded":
+        await stopSuperseded(ticketId, action.reviewId);
+        return;
       case "spawn-narrative":
         try {
           await tour.ensureNarrative(getTicket(ticketId));
@@ -177,6 +184,33 @@ export function createLoop(
     }
   }
 
+  /** Each run is failed before its thread stops, so the idle the stop brings is a late result the loop ignores, never a report. */
+  async function stopSuperseded(ticketId: string, reviewId: string | null): Promise<void> {
+    const now = Date.now();
+    const threadIds: string[] = [];
+    for (const run of stmts.runningChecksRuns.all(ticketId)) {
+      stmts.failChecksRun.run(now, run.id);
+      threadIds.push(run.thread_id);
+    }
+    for (const run of stmts.runningClassifyRuns.all(ticketId)) {
+      stmts.finishClassifyRun.run("failed", null, now, run.id);
+      threadIds.push(run.thread_id);
+    }
+    const review = reviewId === null ? undefined : stmts.reviewById.get(reviewId);
+    if (review !== undefined && review.status === "running") {
+      stmts.failReview.run("Superseded by a newer commit before it finished.", now, review.id);
+      threadIds.push(review.thread_id);
+    }
+    publish();
+    for (const threadId of threadIds) {
+      try {
+        await bb.sdk.threads.stop({ threadId });
+      } catch (error) {
+        bb.log.warn(`could not stop superseded thread ${threadId} of ticket ${ticketId}: ${errorMessage(error)}`);
+      }
+    }
+  }
+
   async function spawnChecks(ticket: Ticket, commit: string, checkCommand: CheckCommand): Promise<void> {
     const projectId = ticket.projectId;
     if (projectId === null) throw new Error("The card has no project to check its work in");
@@ -185,7 +219,8 @@ export function createLoop(
       environment: await threads.freshWorktree(projectId),
       prompt: checksPrompt(ticket, commit, checkCommand.command),
       title: threadTitle(`Checks ${commit.slice(0, 7)}: ${ticket.title}`),
-      ...(ticket.threadId === null ? {} : { parentThreadId: ticket.threadId }),
+      ...(await threads.workerOptions(ticket)),
+      reasoningLevel: MECHANICAL_REASONING,
       visibility: await codeReviewThreads.codeReviewThreadVisibility(),
       pluginMetadata: { ticketId: ticket.id, role: "checks" },
     });
@@ -210,7 +245,8 @@ export function createLoop(
       environment: await threads.freshWorktree(projectId),
       prompt: classifyPrompt(ticket, commit, target?.subject.kind === "local" ? target.subject.defaultBranch : null),
       title: threadTitle(`Classify ${commit.slice(0, 7)}: ${ticket.title}`),
-      ...(ticket.threadId === null ? {} : { parentThreadId: ticket.threadId }),
+      ...(await threads.workerOptions(ticket)),
+      reasoningLevel: MECHANICAL_REASONING,
       visibility: await codeReviewThreads.codeReviewThreadVisibility(),
       pluginMetadata: { ticketId: ticket.id, role: "classify" },
     });
@@ -420,7 +456,7 @@ export function createLoop(
     void dispatch(
       run.ticket_id,
       classification === null
-        ? { type: "thread-failed", role: "classify", commit: run.commit_sha, threadId: run.thread_id }
+        ? { type: "thread-failed", role: "classify", commit: run.commit_sha, threadId: run.thread_id, ...unparsedFailure(body, "a kanban-classify block") }
         : { type: "classified", commit: run.commit_sha, classification, pathRules: pathRules(run.ticket_id) },
     );
   }
@@ -464,7 +500,8 @@ export function createLoop(
     if (row === undefined || row.status === "running") return;
     const report = row.status === "completed" ? rowToReview(row).report : null;
     if (report === null) {
-      await dispatch(row.ticket_id, { type: "thread-failed", role: "review", reviewId: row.id, threadId });
+      const failure = row.body !== null && row.body.includes(REVIEW_SKILL_MISSING) ? { failure: REVIEW_SKILL_MISSING_FAILURE } : unparsedFailure(row.body, "a review-findings report");
+      await dispatch(row.ticket_id, { type: "thread-failed", role: "review", reviewId: row.id, threadId, ...failure });
       return;
     }
     const findings = report.findings.map(({ id, severity, title, preExisting, triage, carriedFrom, dispute, category }) => ({ id, severity, title, preExisting, triage, carriedFrom, dispute, category }));
@@ -475,3 +512,11 @@ export function createLoop(
 }
 
 export type Loop = ReturnType<typeof createLoop>;
+
+const REVIEW_SKILL_MISSING_FAILURE =
+  "the review thread has no `code-review` skill that writes a review-findings report; link this repository's claude/ skills and agents into ~/.claude with scripts/link-claude-config.sh";
+
+/** A thread that finished with a final message but no parseable `block` would write the same message on a retry; one that left none may have crashed. */
+function unparsedFailure(body: string | null, block: string): { failure?: string } {
+  return body === null || body.trim() === "" ? {} : { failure: `the thread finished without ${block} the board could read` };
+}

@@ -21,7 +21,7 @@ export function createTour(
 ) {
   const { bb, stmts, publish } = ctx;
   const { ticketDiff } = changes;
-  const { freshWorktree } = threads;
+  const { freshWorktree, workerOptions } = threads;
   const { projectForTicket } = projects;
   const { codeReviewThreadVisibility } = codeReviewThreads;
 
@@ -137,7 +137,7 @@ export function createTour(
           ...deliverable,
         ].join("\n"),
         title: threadTitle(`Narrative ${prShortName(subject.pr)}: ${subject.title}`),
-        ...(subject.threadId === null ? {} : { parentThreadId: subject.threadId }),
+        ...(await workerOptions(subject)),
         visibility: await codeReviewThreadVisibility(),
         pluginMetadata: { ticketId: subject.id, role: "narrative" },
       });
@@ -156,7 +156,7 @@ export function createTour(
           ...deliverable,
         ].join("\n"),
         title: threadTitle(`Narrative: ${subject.title}`),
-        parentThreadId: subject.threadId,
+        ...(await workerOptions(subject)),
         visibility: await codeReviewThreadVisibility(),
         pluginMetadata: { ticketId: subject.id, role: "narrative" },
       });
