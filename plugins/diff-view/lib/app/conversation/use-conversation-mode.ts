@@ -65,6 +65,8 @@ function stopUrl(stop: ConversationStop, repo: string | null): string | null {
 export function useConversationMode(options: ConversationModeOptions) {
   const { keys, mode, items, files, threadById, currentPaths, notify } = options;
   const stops = useMemo(() => conversationStops(items), [items]);
+  // Null keeps the cursor on the first entry until the reader moves it: the PR's description and reviews load after
+  // the view opens, and land before what was first until then.
   const [cursorKey, setCursorKey] = useState<string | null>(null);
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -75,7 +77,7 @@ export function useConversationMode(options: ConversationModeOptions) {
   }, [items, files]);
   const codeOf = (thread: DiffThread): ThreadCode => codes.get(thread.id) ?? threadCode(thread, files);
 
-  const index = cursorKey === null ? -1 : stops.findIndex((stop) => stop.key === cursorKey);
+  const index = cursorKey === null ? (stops.length > 0 ? 0 : -1) : stops.findIndex((stop) => stop.key === cursorKey);
   const current = index === -1 ? null : stops[index]!;
   const original = (thread: DiffThread) => threadById.get(thread.id) ?? thread;
 
@@ -116,12 +118,10 @@ export function useConversationMode(options: ConversationModeOptions) {
     }
     options.showInFiles(to.cursor, null);
   };
-  const stopsRef = useRef(stops);
-  stopsRef.current = stops;
   useEffect(() => {
     if (mode !== "conversation") return;
     scrollRef.current?.scrollTo({ top: 0 });
-    setCursorKey(stopsRef.current[0]?.key ?? null);
+    setCursorKey(null);
   }, [mode]);
 
   /** `gf` on a thread: the files view at its line, or at its file when the diff has no line for it today. */
@@ -248,7 +248,7 @@ export function useConversationMode(options: ConversationModeOptions) {
   return {
     enter,
     run,
-    cursorKey,
+    cursorKey: current?.key ?? null,
     folded,
     scrollRef,
     stopRef: (key: string, node: HTMLElement | null) => {
