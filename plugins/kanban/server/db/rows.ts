@@ -131,6 +131,7 @@ export interface ReviewRow {
   apply_finding_ids: string | null;
   apply_push: number | null;
   applied_finding_ids: string | null;
+  resolved_finding_ids: string | null;
   selection_overrides: string | null;
   finding_edits: string | null;
 }
@@ -354,6 +355,7 @@ export function rowToReview(row: ReviewRow): Review {
     selectionOverrides,
     findingEdits,
     appliedFindingIds: row.applied_finding_ids === null ? [] : parseStringArray(row.applied_finding_ids),
+    resolvedFindingIds: row.resolved_finding_ids === null ? [] : parseStringArray(row.resolved_finding_ids),
     createdAt: row.created_at,
     completedAt: row.completed_at,
     apply:

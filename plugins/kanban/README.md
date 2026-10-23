@@ -482,23 +482,29 @@ its PR is reviewed and its review findings and comments are handed to agents.
   collapsible strip under the header and is kept until the PR head moves. The same row shows the tour's semantic labels (rename,
   move, signature, reorder, reformat, extract, inline), and lines inside those
   blocks are tinted violet instead of red/green.
+- **Findings like GitHub threads**: review findings stay inline at their
+  lines while those lines stand, move with code added or removed above them,
+  and turn outdated (listed above the diff) when the code under them changes,
+  until a re-review relocates them or finds them fixed. Resolve one with `r`,
+  its Resolve button, or the card panel's check button: it leaves the diff,
+  the open counts and the apply round, and re-reviews no longer re-check it
+  (`review_set_resolved`); Reopen brings it back. "Re-review what's new" runs
+  the code-review skill incrementally from the last reviewed commit, on PR
+  and local cards alike: it reviews the new commits, re-checks every open
+  finding at the new head (including the ones an apply round fixed), carries
+  the open ones forward at their new lines and lists the fixed ones as
+  resolved.
 - **New since the last review**: the changes view counts new code from the
   card's last completed review (of the diff's own kind: a PR card's PR
   reviews, a local card's local ones), else your last submitted GitHub review
-  of the PR, else the head you last marked files viewed on. A strip above the
-  diff lists the reviews as rounds (r1, r2, …, each with the commit it read
-  and what it found), what came after the latest ("+3 commits since r2"; on
-  a local card, through its uncommitted changes), and a review running now;
-  "Re-review what's new" runs the code-review skill incrementally from the
-  last reviewed commit, on PR and local cards alike. Lines changed since the
-  round are marked blue in the gutter and their hunks and files say "new since
-  r2"; picking an older round counts from it instead; "Only new" (`gn`) folds
-  everything else away and `]n`/`[n` step through what is new. Findings are
-  tagged "new in r2", "since r1" (still open at every review since) or "lines
-  changed" (the code under them changed after their review). The card panel's
-  Code review names its round and the commits it read (`at abc1234`, or
-  `def5678..abc1234` for a re-review). Viewed marks carry over a push for the
-  files it did not touch. See the Diff view plugin's README for the details.
+  of the PR, else the head you last marked files viewed on. A line above the
+  diff says which commit the review read, what came after ("3 commits since,
+  not reviewed yet"; on a local card, through its uncommitted changes) and how
+  many findings are open. Lines changed since are marked blue in the gutter;
+  `]n`/`[n` step through them and "Only new" (`gn`) folds everything else
+  away. The card panel's Code review shows the commits it read (`at abc1234`,
+  or `def5678..abc1234` for a re-review). Viewed marks carry over a push for
+  the files it did not touch. See the Diff view plugin's README for details.
 - **Risk heat**: the narrative scores each file 1–5 for review attention; the file
   tree marks each row with a dot from green to red accordingly (viewed files lose it),
   falling back to the worst finding severity in the file when there is no tour.
@@ -628,8 +634,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   changes view stops showing it, and later rounds never get it again (a
   finding the thread reports as not applied stays open). The board card's
   badge counts what is still open ("2 findings", with the applied count in
-  its tooltip, then "all applied"). The check button on each finding crosses one off by hand or
-  reopens it.
+  its tooltip, then "all applied"). The check button on each finding resolves it by hand ("resolved"
+  chip; re-reviews leave it be) or reopens it, however it was closed.
   The **and push** checkbox beside both apply buttons decides whether the
   thread pushes to the PR branch or only commits in its worktree and reports
   the push command; the choice is remembered per browser.

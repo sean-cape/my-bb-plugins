@@ -6,7 +6,7 @@ import { Checkbox } from "../ui/checkbox";
 import { cn } from "../utils";
 import { CHEVRON, FAST, OPACITY_TRANSITION, PRESS, enter, useOpenedSinceMount } from "../ui/motion";
 import { SEVERITY_DOT, SEVERITY_LABEL, type InlineFinding } from "./findings";
-import { roundName } from "../rounds";
+import { ResolveFindingContext } from "./resolve-context";
 import { useFindingControls, useIsFocused, useIsReading } from "../keys/review-keys-context";
 import { CARD_BODY, CARD_FOOTER, CARD_HEADER, SPANNING_CARD } from "../ui/spanning-card";
 import { Badge } from "../ui/badge";
@@ -19,31 +19,6 @@ import { applicableItem, isInBatch, suggestionKeyHints } from "../suggestions/ac
 /** The rule down the card's left, in the severity's hue. */
 const SEVERITY_RULE: Record<FindingSeverity, string> = { critical: "border-l-red-500/80", important: "border-l-amber-500/80", minor: "border-l-slate-400/70" };
 const SEVERITY_TEXT: Record<FindingSeverity, string> = { critical: "text-red-600 dark:text-red-400", important: "text-amber-700 dark:text-amber-300", minor: "text-muted-foreground" };
-const TAG = "shrink-0 rounded border px-1 text-[10px] leading-4";
-
-/** Which round reported a finding ("new in r2", "since r1") and whether its lines moved after that review read them. */
-function FindingRoundTags({ item }: { item: InlineFinding }) {
-  return (
-    <>
-      {item.newIn !== null ? (
-        <span className={cn(TAG, "border-sky-500/40 text-sky-700 dark:text-sky-300")} title={`First reported by review ${roundName(item.newIn)}`}>
-          new in {roundName(item.newIn)}
-        </span>
-      ) : null}
-      {item.openSince !== null ? (
-        <span className={cn(TAG, "border-border text-muted-foreground")} title={`Reported by ${roundName(item.openSince)} and still open at every review since`}>
-          since {roundName(item.openSince)}
-        </span>
-      ) : null}
-      {item.touched ? (
-        <span className={cn(TAG, "border-amber-500/40 text-amber-700 dark:text-amber-300")} title="The code changed on these lines after the review read it: they may have moved, or the finding may be fixed">
-          lines changed
-        </span>
-      ) : null}
-    </>
-  );
-}
-
 /**
  * A review finding under the line it is about: one quiet strip (checkbox, severity, title) that expands to the details,
  * description and fix, with inline editing of the wording the apply thread will receive. It stays a single line until
@@ -73,6 +48,7 @@ export function FindingAnnotation({
   const [saving, setSaving] = useState(false);
   const suggestions = useContext(SuggestionsContext);
   const suggestion = suggestions.forFinding(item);
+  const resolve = useContext(ResolveFindingContext);
   const applicable = applicableItem(suggestions, suggestion?.item ?? null);
   const inBatch = isInBatch(suggestions.batch, applicable);
   const posted = suggestion !== null && suggestions.posted.has(suggestion.id);
@@ -103,7 +79,7 @@ export function FindingAnnotation({
   const reveal = useOpenedSinceMount(expanded) ? cn(enter.rise, FAST) : undefined;
   const meta = [
     finding.locations.length > 1 ? `${finding.locations.length} instances` : null,
-    item.carriedFrom !== null ? `still open from ${item.openSince === null ? "" : `${roundName(item.openSince)} `}${item.carriedFrom}` : null,
+    item.carriedFrom !== null ? `still open from an earlier review's ${item.carriedFrom}` : null,
     item.edited ? "reworded by you" : null,
     item.overridden ? (item.selected ? "included by you" : "excluded by you") : null,
   ].filter((part) => part !== null);
@@ -122,7 +98,16 @@ export function FindingAnnotation({
           <span className={cn("size-1.5 shrink-0 rounded-full", SEVERITY_DOT[finding.severity])} title={SEVERITY_LABEL[finding.severity]} />
           <span className={cn("min-w-0 flex-1 truncate font-medium", item.selected ? "text-foreground" : "text-muted-foreground")}>{finding.title}</span>
         </button>
-        <FindingRoundTags item={item} />
+        {resolve !== null ? (
+          <button
+            type="button"
+            className={cn("shrink-0 rounded px-1.5 text-[11px] text-muted-foreground hover:bg-state-hover hover:text-foreground", PRESS)}
+            title="Resolve: take it out of the diff and out of the apply round; re-reviews leave it be (r). Resolved findings are listed above the diff, where they can be reopened."
+            onClick={() => resolve(item)}
+          >
+            Resolve
+          </button>
+        ) : null}
         <span className={cn("shrink-0 text-[11px]", SEVERITY_TEXT[finding.severity])}>{SEVERITY_LABEL[finding.severity]}</span>
       </div>
       {/* Mounted while folded: it opens as the cursor passes, and mounting it then restyles the whole page under bb
@@ -196,6 +181,7 @@ export function FindingAnnotation({
           ...suggestionKeyHints(suggestions, applicable),
           canPost ? "gs post to PR" : null,
           item.selected ? "x exclude" : "x include",
+          resolve === null ? null : "r resolve",
           editing ? null : "e edit",
           expanded ? "↩ fold" : "↩ unfold",
           "c next",

@@ -1,7 +1,7 @@
 // A change's completed reviews as numbered rounds (r1, r2, …), and where the rest of its history sits against them:
 // the commits that came after a round, the round that first reported a finding, and what a delta counts from. The
 // strip, the commit picker and the findings all read this one numbering.
-import type { DiffCommits, DiffDelta, Finding, Review } from "../types";
+import type { DiffCommits, DiffDelta, Review } from "../types";
 import { shortSha } from "./format";
 
 export interface ReviewRound {
@@ -48,30 +48,6 @@ export function runningReview(reviews: readonly Review[]): Review | null {
   return reviews.find((review) => review.status === "running") ?? null;
 }
 
-/** `<reviewId>/<findingId>` split at its last slash. */
-function carriedRef(ref: string): { reviewId: string; findingId: string } {
-  const at = ref.lastIndexOf("/");
-  return { reviewId: ref.slice(0, at), findingId: ref.slice(at + 1) };
-}
-
-/**
- * The earlier round that first reported a carried finding, back along its carried-from links; null when the review it
- * was carried from is not a round (failed, or gone).
- */
-export function originRound(rounds: readonly ReviewRound[], reviewId: string, finding: Finding): number | null {
-  let origin: ReviewRound | null = null;
-  let current: Finding | undefined = finding;
-  // Each link points at an earlier round, so the walk ends; the bound guards a malformed chain.
-  for (let step = 0; current !== undefined && (current.carriedFrom ?? null) !== null && step < rounds.length; step++) {
-    const ref = carriedRef(current.carriedFrom!);
-    const earlier = roundOf(rounds, ref.reviewId);
-    if (earlier === undefined || earlier.review.id === reviewId) break;
-    origin = earlier;
-    current = earlier.review.report?.findings.find((entry) => entry.id === ref.findingId);
-  }
-  return origin?.number ?? null;
-}
-
 /** How many of the diff's commits came after `sha` (all of them from its base); null when it is neither. */
 export function commitsAfter(commits: DiffCommits | null, sha: string | null | undefined): number | null {
   if (commits === null || sha == null) return null;
@@ -101,10 +77,8 @@ export function firstUnreviewedCommit(commits: DiffCommits, rounds: readonly Rev
 /** What a delta counts from, as the strip and the summary bar name it: "r2", "your last GitHub review", "abc1234". */
 export function sinceName(delta: DiffDelta, rounds: readonly ReviewRound[]): string {
   switch (delta.since?.kind) {
-    case "review": {
-      const round = roundOf(rounds, delta.since.reviewId);
-      return round === undefined ? "the last review" : roundName(round.number);
-    }
+    case "review":
+      return "the last review";
     case "githubReview":
       return "your last GitHub review";
     case "commit":

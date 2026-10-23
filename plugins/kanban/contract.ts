@@ -382,6 +382,11 @@ export const rpcContract = defineRpcContract({
     input: z.object({ reviewId: z.string(), findingId: z.string(), applied: z.boolean() }).strict(),
     output: reviewSchema,
   },
+  /** Resolves a finding by hand (or reopens it), as a GitHub thread is resolved: out of the diff, the apply round and re-reviews. */
+  review_set_resolved: {
+    input: z.object({ reviewId: z.string(), findingId: z.string(), resolved: z.boolean() }).strict(),
+    output: reviewSchema,
+  },
   review_reset_selection: {
     input: z.object({ reviewId: z.string() }).strict(),
     output: reviewSchema,

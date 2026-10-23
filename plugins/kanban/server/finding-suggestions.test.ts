@@ -34,6 +34,7 @@ function storedReview(overrides: Partial<Review> = {}): Review {
     selectionOverrides: {},
     findingEdits: {},
     appliedFindingIds: [],
+    resolvedFindingIds: [],
     createdAt: 0,
     completedAt: 0,
     apply: null,

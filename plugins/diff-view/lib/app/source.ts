@@ -60,6 +60,8 @@ export interface DiffSource {
     openCard?(cardId: string): void;
     /** Marks a finding fixed (or not), so the diff leaves it out; applying a finding's suggestion marks it. */
     setApplied?(reviewId: string, findingId: string, applied: boolean): Promise<Review>;
+    /** Resolves a finding (or reopens it), as a GitHub thread is resolved: out of the diff, and not raised again. */
+    setResolved?(reviewId: string, findingId: string, resolved: boolean): Promise<Review>;
   };
   /**
    * What changed since `fromSha` (a review round's commit the reader picked), or, null, since the host's default point:

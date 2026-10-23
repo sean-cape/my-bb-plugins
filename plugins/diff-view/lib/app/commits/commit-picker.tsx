@@ -8,7 +8,7 @@ import { FAST, PRESS, enter } from "../ui/motion";
 import { usePopover } from "../ui/use-popover";
 import { usePickerKeys } from "../ui/vim-keys";
 import { cn } from "../utils";
-import { firstUnreviewedCommit, roundName, roundsAt, type ReviewRound } from "../rounds";
+import { firstUnreviewedCommit, roundsAt, type ReviewRound } from "../rounds";
 import { COMMIT_PICKER_KEYMAP, collapsedRangeNote, pickedRange, pickerRows, rangeEndsAtHead, rangeGate, rangeSpan, shortCommit, toggledRangeStart, type CommitRow } from "./commit-range";
 
 /** The part of the history the view shows, for the renderers that fetch a file's diff themselves. */
@@ -203,12 +203,12 @@ function CommitRowLabel({ row, commits, now, rounds, firstNew }: { row: CommitRo
       <span className={cn("min-w-0 flex-1 truncate", commit.sha === WORKTREE_SHA && "italic")}>{commit.summary}</span>
       {firstNew !== null && row.index >= firstNew ? (
         <span className="shrink-0 rounded border border-sky-500/50 px-1 text-[10px] leading-4 text-sky-700 dark:text-sky-300" title="No review has read this commit yet">
-          new
+          not reviewed
         </span>
       ) : null}
       {reviewedHere.length > 0 ? (
-        <span className="shrink-0 rounded border border-border px-1 text-[10px] leading-4" title={`Review ${reviewedHere.map((round) => roundName(round.number)).join(", ")} read the code up to here`}>
-          {reviewedHere.map((round) => roundName(round.number)).join(" ")} reviewed
+        <span className="shrink-0 rounded border border-border px-1 text-[10px] leading-4" title="An AI review read the code up to here">
+          reviewed
         </span>
       ) : null}
       {commit.author !== "" ? <span className="max-w-[10rem] shrink-0 truncate">{commit.author}</span> : null}

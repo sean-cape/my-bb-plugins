@@ -187,6 +187,7 @@ export function prepareStatements(db: KanbanDatabase) {
     ),
     setApplyPushed: db.prepare<[string]>(`UPDATE reviews SET apply_push = 1 WHERE id = ?`),
     setAppliedFindingIds: db.prepare<[string | null, string]>(`UPDATE reviews SET applied_finding_ids = ? WHERE id = ?`),
+    setResolvedFindingIds: db.prepare<[string | null, string]>(`UPDATE reviews SET resolved_finding_ids = ? WHERE id = ?`),
     setCommentApplyPushed: db.prepare<[string]>(`UPDATE comment_applies SET push = 1 WHERE id = ?`),
     deleteReviewsForTicket: db.prepare<[string]>(`DELETE FROM reviews WHERE ticket_id = ?`),
     commentsForTicket: db.prepare<[string], PrCommentRow>(

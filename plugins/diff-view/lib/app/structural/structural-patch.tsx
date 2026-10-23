@@ -377,7 +377,7 @@ export function StructuralPatch({
               </code>
               {isNew ? (
                 <span className="shrink-0 rounded border border-sky-500/50 bg-sky-500/10 px-1.5 py-px font-sans text-[10px] text-sky-700 dark:text-sky-300" title={`Changed since ${newSince.label}: the lines marked blue in the gutter (]n / [n step through them)`}>
-                  new since {newSince.label}
+                  new
                 </span>
               ) : null}
               {labels.map((change, labelIndex) => (

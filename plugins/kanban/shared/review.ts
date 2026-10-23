@@ -207,13 +207,15 @@ export const reviewSchema = z.object({
   findingEdits: findingEditsSchema,
   /** Findings a completed apply round fixed, across every round, plus any the user marked by hand. */
   appliedFindingIds: z.array(z.string()),
+  /** Findings the reviewer resolved by hand: closed like a resolved GitHub thread, never applied or re-checked. */
+  resolvedFindingIds: z.array(z.string()),
   createdAt: z.number(),
   completedAt: z.number().nullable(),
   apply: reviewApplySchema.nullable(),
 });
 export type Review = z.infer<typeof reviewSchema>;
 export const reviewSummarySchema = reviewSchema
-  .omit({ body: true, report: true, selection: true, selectionOverrides: true, findingEdits: true, appliedFindingIds: true })
+  .omit({ body: true, report: true, selection: true, selectionOverrides: true, findingEdits: true, appliedFindingIds: true, resolvedFindingIds: true })
   .extend({
     hasBody: z.boolean(),
     /** Findings no apply round has fixed yet. */
@@ -224,6 +226,11 @@ export const reviewSummarySchema = reviewSchema
     scores: reviewScoresSchema.nullable(),
   });
 export type ReviewSummary = z.infer<typeof reviewSummarySchema>;
+
+/** Findings no longer open: fixed by an apply round (or crossed off as applied), or resolved by the reviewer. */
+export function closedFindingIds(review: Pick<Review, "appliedFindingIds" | "resolvedFindingIds">): Set<string> {
+  return new Set([...review.appliedFindingIds, ...review.resolvedFindingIds]);
+}
 
 /**
  * How a review's findings stand, as the card panel lists them: the change's own (`introduced`, which includes the ones

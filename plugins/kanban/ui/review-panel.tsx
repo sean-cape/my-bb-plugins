@@ -14,6 +14,7 @@ import {
   REVIEW_DEPTH_LABEL,
   TRIAGED_REPORT_VERSION,
   VERIFIED_REPORT_VERSION,
+  closedFindingIds,
   findingTallies,
   reviewDepthSchema,
   type Finding,
@@ -96,9 +97,9 @@ function FindingCard({
   verified,
   selected = null,
   overridden = false,
-  applied = false,
+  closed = null,
   onToggle = null,
-  onApplied = null,
+  onResolve = null,
   action = null,
   kind = "introduced",
 }: {
@@ -109,15 +110,17 @@ function FindingCard({
   verified: boolean;
   selected?: boolean | null;
   overridden?: boolean;
-  /** An apply round fixed it (or the user crossed it off); it is folded to its title and kept out of the next round. */
-  applied?: boolean;
+  /** An apply round fixed it, or the reviewer resolved it: it is folded to its title and kept out of the next round. */
+  closed?: "applied" | "resolved" | null;
   onToggle?: ((selected: boolean) => void) | null;
-  onApplied?: ((applied: boolean) => void) | null;
+  /** Resolves it, or (false) reopens it however it was closed. */
+  onResolve?: ((resolved: boolean) => void) | null;
   /** A button at the end of the header line. */
   action?: ReactNode;
   /** Pre-existing and deferred ones are drawn dashed; filtered ones dimmed, with the verifier's reason. */
   kind?: "introduced" | "deferred" | "pre-existing" | "filtered";
 }) {
+  const applied = closed !== null;
   const appliedPop = usePopOnChange(applied);
   const [open, setOpen] = useState(false);
   const where = whereLabel(finding);
@@ -150,14 +153,18 @@ function FindingCard({
             </code>
           ) : null}
         </button>
-        {applied ? <Badge tone="success">applied</Badge> : null}
-        {onApplied !== null ? (
+        {closed !== null ? <Badge tone="success">{closed}</Badge> : null}
+        {onResolve !== null ? (
           <button
             type="button"
-            aria-label={applied ? `Reopen ${finding.id}` : `Mark ${finding.id} as applied`}
-            title={applied ? "Reopen: show it in the diff again and let its checkbox decide whether the next apply round gets it" : "Mark as applied: cross it off and hide it from the diff"}
+            aria-label={applied ? `Reopen ${finding.id}` : `Resolve ${finding.id}`}
+            title={
+              applied
+                ? "Reopen: show it in the diff again, and in the next apply round and re-review"
+                : "Resolve: take it out of the diff and the apply round, as a GitHub thread is resolved; re-reviews leave it be"
+            }
             className={cn("flex size-6 shrink-0 items-center justify-center rounded hover:bg-state-hover", PRESS, applied ? "text-emerald-600 dark:text-emerald-300" : "text-muted-foreground hover:text-foreground")}
-            onClick={() => onApplied(!applied)}
+            onClick={() => onResolve(!applied)}
           >
             {/* The pop lives on a wrapper so remounting it never takes focus from the button. */}
             <span key={appliedPop.key} onAnimationEnd={appliedPop.onAnimationEnd} className={cn("flex", appliedPop.className)}>
@@ -299,7 +306,7 @@ function StructuredReview({
   review,
   onToggle,
   onReset,
-  onApplied,
+  onResolve,
   onMakeCard,
   onOpenCard,
 }: {
@@ -307,14 +314,15 @@ function StructuredReview({
   /** Null makes the view read-only (old reviews). */
   onToggle: ((findingId: string, selected: boolean) => void) | null;
   onReset: (() => void) | null;
-  onApplied: ((findingId: string, applied: boolean) => void) | null;
+  /** Resolves a finding, or reopens one however it was closed. */
+  onResolve: ((findingId: string, resolved: boolean, closed: "applied" | "resolved" | null) => void) | null;
   /** Resolves to the card made from the finding, new or made before. */
   onMakeCard: ((findingId: string) => Promise<string | null>) | null;
   onOpenCard: (ticketId: string) => void;
 }) {
   const report = review.report!;
   const verified = report.version >= VERIFIED_REPORT_VERSION;
-  const tallies = findingTallies(report, review.selection, review.appliedFindingIds);
+  const tallies = findingTallies(report, review.selection, [...closedFindingIds(review)]);
   const { introduced, deferred, dropped, preExisting } = tallies;
   const [cards, setCards] = useState<Record<string, string>>({});
   const triagedOut = new Set([...deferred, ...dropped]);
@@ -323,6 +331,8 @@ function StructuredReview({
     .filter((group) => group.findings.length > 0);
   const listed = grouped.reduce((sum, group) => sum + group.findings.length, 0);
   const applied = new Set(review.appliedFindingIds);
+  const resolvedByYou = new Set(review.resolvedFindingIds);
+  const closedAs = (id: string) => (resolvedByYou.has(id) ? "resolved" : applied.has(id) ? "applied" : null);
   const overriddenCount = Object.keys(review.selectionOverrides).length;
   const suggested = report.version >= TRIAGED_REPORT_VERSION ? "Suggested: the findings the review's triage applies" : "Suggested: critical, or importance ≥ 3 and scope ≥ 3";
   const ownCard = (finding: Finding, index: number, kind: "introduced" | "deferred" = "introduced", action: ReactNode = null) => (
@@ -334,9 +344,9 @@ function StructuredReview({
       kind={kind}
       selected={review.selection[finding.id] ?? null}
       overridden={finding.id in review.selectionOverrides}
-      applied={applied.has(finding.id)}
+      closed={closedAs(finding.id)}
       onToggle={onToggle === null ? null : (selected) => onToggle(finding.id, selected)}
-      onApplied={onApplied === null ? null : (isApplied) => onApplied(finding.id, isApplied)}
+      onResolve={onResolve === null ? null : (resolved) => onResolve(finding.id, resolved, closedAs(finding.id))}
       action={action}
     />
   );
@@ -361,7 +371,7 @@ function StructuredReview({
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span title={overriddenCount > 0 ? `${overriddenCount} changed by you` : suggested}>
             <span className="font-semibold text-foreground tabular-nums">{tallies.selected}</span> of <span className="tabular-nums">{tallies.open}</span> open selected
-            {tallies.applied > 0 ? <> · <span className="tabular-nums">{tallies.applied}</span> applied</> : null}
+            {tallies.applied > 0 ? <> · <span className="tabular-nums">{tallies.applied}</span> applied or resolved</> : null}
           </span>
           {onReset !== null && overriddenCount > 0 ? (
             <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onReset}>
@@ -560,8 +570,12 @@ export function ReviewPanel({
     rpc.call("review_set_selection", { reviewId, findingId, selected }).then(updateReview, toastError);
   const resetSelection = (reviewId: string) =>
     rpc.call("review_reset_selection", { reviewId }).then(updateReview, toastError);
-  const setApplied = (reviewId: string, findingId: string, applied: boolean) =>
-    rpc.call("review_set_applied", { reviewId, findingId, applied }).then(updateReview, toastError);
+  /** Resolving goes in as the reviewer's; reopening undoes whichever closed it. */
+  const setResolved = (reviewId: string, findingId: string, resolved: boolean, closed: "applied" | "resolved" | null) =>
+    (resolved || closed === "resolved"
+      ? rpc.call("review_set_resolved", { reviewId, findingId, resolved })
+      : rpc.call("review_set_applied", { reviewId, findingId, applied: false })
+    ).then(updateReview, toastError);
   const makeCard = (reviewId: string, findingId: string) =>
     rpc.call("review_make_card", { reviewId, findingId }).then(
       ({ ticket: card, created }) => {
@@ -723,7 +737,7 @@ export function ReviewPanel({
                         review={latest}
                         onToggle={(findingId, selected) => void toggleFinding(latest.id, findingId, selected)}
                         onReset={() => void resetSelection(latest.id)}
-                        onApplied={(findingId, applied) => void setApplied(latest.id, findingId, applied)}
+                        onResolve={(findingId, resolved, closed) => void setResolved(latest.id, findingId, resolved, closed)}
                         onMakeCard={(findingId) => makeCard(latest.id, findingId)}
                         onOpenCard={onOpenTicket}
                       />
@@ -745,7 +759,7 @@ export function ReviewPanel({
                                 {new Date(entry.completedAt ?? entry.createdAt).toLocaleString()}
                               </summary>
                               <div className="mt-2">
-                                {entry.report !== null ? <StructuredReview review={entry} onToggle={null} onReset={null} onApplied={null} onMakeCard={null} onOpenCard={onOpenTicket} /> : <Markdown content={entry.body ?? ""} />}
+                                {entry.report !== null ? <StructuredReview review={entry} onToggle={null} onReset={null} onResolve={null} onMakeCard={null} onOpenCard={onOpenTicket} /> : <Markdown content={entry.body ?? ""} />}
                               </div>
                             </details>
                           ))}

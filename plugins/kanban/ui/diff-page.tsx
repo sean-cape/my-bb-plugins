@@ -116,6 +116,7 @@ function useKanbanDiffSource(subjectId: string, ticket: Ticket | null, plan: boo
               },
               openCard: (cardId) => openTicket.current(cardId),
               setApplied: (reviewId, findingId, applied) => rpc.call("review_set_applied", { reviewId, findingId, applied }),
+              setResolved: (reviewId, findingId, resolved) => rpc.call("review_set_resolved", { reviewId, findingId, resolved }),
             },
           }),
       delta: async (fromSha) => (await rpc.call("diff_delta", { ticketId: subjectId, fromSha })).delta,

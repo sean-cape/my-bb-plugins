@@ -1,5 +1,6 @@
 // Data the diff view renders. Plain TypeScript rather than zod schemas so every plugin that bundles this library keeps
 // its own zod copy; each plugin's RPC schemas must produce values assignable to these.
+import type { ChangeBlock } from "./line-map";
 import type { NarrativePatchFile, NarrativeRef } from "./narrative";
 
 export type DiffSide = "LEFT" | "RIGHT";
@@ -321,8 +322,8 @@ export interface Review {
     findings: Finding[];
     filtered?: Finding[];
     carriesForward?: boolean;
-    /** Earlier findings (`<reviewId>/<findingId>`) a re-review found fixed. */
-    resolved?: Array<{ id: string; title: string }>;
+    /** Earlier findings (`<reviewId>/<findingId>`) a re-review found fixed, and how. */
+    resolved?: Array<{ id: string; title: string; note?: string }>;
   } | null;
   /** Effective per-finding selection for the apply round. */
   selection: Record<string, boolean>;
@@ -332,6 +333,8 @@ export interface Review {
   findingEdits: Record<string, unknown>;
   /** Findings an apply round already fixed; the diff leaves them out. */
   appliedFindingIds?: string[];
+  /** Findings the reviewer resolved, as a GitHub thread is resolved; the diff leaves them out too. */
+  resolvedFindingIds?: string[];
   createdAt: number;
 }
 
@@ -344,7 +347,15 @@ export interface DiffDelta {
   toSha: string;
   /** What `fromSha` is; absent from hosts that don't say, which the view reads as where the reviewer last looked. */
   since?: { kind: DeltaSinceKind; reviewId: string | null };
-  files: Array<{ path: string; status: string; additions: number; deletions: number; ranges: Array<[number, number]> }>;
+  files: Array<{
+    path: string;
+    status: string;
+    additions: number;
+    deletions: number;
+    ranges: Array<[number, number]>;
+    /** The runs of changes since `fromSha`, which move a finding's lines to where they are now; null or absent when unknown. */
+    blocks?: ChangeBlock[] | null;
+  }>;
 }
 
 /** A semantic label for a block of the diff that would otherwise read as a wall of red and green. */

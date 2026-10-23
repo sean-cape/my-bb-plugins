@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DiffCommits, Finding, Review } from "./lib/types";
 import { WORKTREE_SHA } from "./lib/types";
-import { commitsAfter, firstUnreviewedCommit, originRound, reviewRounds, sameSha, sinceName } from "./lib/app/rounds";
+import { commitsAfter, firstUnreviewedCommit, reviewRounds, sameSha, sinceName } from "./lib/app/rounds";
 import { newRows, type StructuralRow } from "./lib/app/structural/rows";
 import { newSinceCss } from "./lib/app/text/new-since-css";
 import { moveNewChange, type Cursor, type NavFile } from "./lib/app/keys/nav";
@@ -39,13 +39,6 @@ describe("review rounds", () => {
     ]);
   });
 
-  it("follows a finding back to the round that first reported it, and gives up on a review that is not a round", () => {
-    const rounds = reviewRounds([review("one", 1, [finding("F1")]), review("two", 2, [finding("F1", { carriedFrom: "one/F1" })])]);
-    expect(originRound(rounds, "two", finding("F1", { carriedFrom: "one/F1" }))).toBe(1);
-    expect(originRound(rounds, "two", finding("F1", { carriedFrom: "gone/F1" }))).toBeNull();
-    expect(originRound(rounds, "two", finding("F9"))).toBeNull();
-  });
-
   it("matches abbreviated shas, and counts the commits after a round's", () => {
     expect(sameSha("aaaaaaa", sha("a"))).toBe(true);
     expect(sameSha("aaaa", sha("a"))).toBe(false);
@@ -66,7 +59,7 @@ describe("review rounds", () => {
   it("names what a delta counts from", () => {
     const rounds = reviewRounds([review("one", 1, []), review("two", 2, [])]);
     const delta = { fromSha: sha("b"), toSha: sha("c"), files: [] };
-    expect(sinceName({ ...delta, since: { kind: "review", reviewId: "two" } }, rounds)).toBe("r2");
+    expect(sinceName({ ...delta, since: { kind: "review", reviewId: "two" } }, rounds)).toBe("the last review");
     expect(sinceName({ ...delta, since: { kind: "githubReview", reviewId: null } }, rounds)).toBe("your last GitHub review");
     expect(sinceName({ ...delta, since: { kind: "commit", reviewId: null } }, rounds)).toBe("bbbbbbb");
     expect(sinceName(delta, rounds)).toBe("you last looked");

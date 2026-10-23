@@ -1,6 +1,7 @@
 // What changed since a point in a card's history, for the changes view to tell new code from code already looked at:
 // since the card's last completed review by default, else the reviewer's last GitHub review, else the head they last
 // marked files viewed on.
+import { changeBlocks } from "bb-diff-view/line-map";
 import { COMMIT_SHA_PATTERN, WORKTREE_SHA } from "bb-diff-view/types";
 import type { Ticket } from "../../shared/board";
 import type { DiffDelta } from "../../shared/diff";
@@ -73,6 +74,7 @@ export function createDiffDelta(ctx: KanbanContext, { changes, viewed }: { chang
         additions: file.additions,
         deletions: file.deletions,
         ranges: file.patch === null ? [] : newLineRangesFromPatch(file.patch),
+        blocks: file.patch === null ? null : changeBlocks(file.patch),
       })),
     };
   }

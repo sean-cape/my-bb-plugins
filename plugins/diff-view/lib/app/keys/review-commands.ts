@@ -103,10 +103,10 @@ export interface ReviewEnv {
   openCommits: (() => void) | null;
   /** Which new-side lines changed since the point new code counts from, and that point's name ("r2"); null when nothing is new. */
   newSince: { isNew: (path: string, line: number) => boolean; label: string } | null;
+  /** Resolves a finding, as a GitHub thread is resolved: it leaves the diff for the resolved list. Null when the source can't. */
+  resolveFinding: ((item: InlineFinding) => void) | null;
   /** Turns "Only new" on or off; null when nothing is new. */
   toggleOnlyNew: (() => void) | null;
-  /** Moves the keyboard into the review rounds above the diff; false when they don't show. */
-  focusChangesStrip: () => boolean;
 }
 
 export interface FileActions {
@@ -211,14 +211,11 @@ function runViewCommand(command: ReviewCommand, env: ReviewEnv): boolean {
       return true;
     }
     case "outsideFindings":
-      if (!env.focusOutsideFindings()) env.notify("No pre-existing or filtered findings");
+      if (!env.focusOutsideFindings()) env.notify("No outdated, resolved, pre-existing or filtered findings");
       return true;
     case "onlyNew":
       if (env.toggleOnlyNew === null) env.notify("Nothing changed since the last review");
       else env.toggleOnlyNew();
-      return true;
-    case "changesStrip":
-      if (!env.focusChangesStrip()) env.notify("No reviews or new changes to show");
       return true;
     case "refresh":
       env.refresh();
@@ -483,6 +480,13 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
     case "move":
     case "openGithub":
     case "openThread": {
+      const annotation = focusedAnnotation(env, cursor);
+      // r on a finding resolves it, as it does a GitHub thread.
+      if (command.kind === "resolve" && annotation?.kind === "finding") {
+        if (env.resolveFinding === null) env.notify("This view can't resolve findings");
+        else env.resolveFinding(annotation.finding.item);
+        return;
+      }
       const thread = focusedThread(env, cursor);
       if (thread !== null) runThreadCommand(command, thread, env);
       else if (focusedAnnotation(env, cursor) === null) env.notify("No comment thread on this line");

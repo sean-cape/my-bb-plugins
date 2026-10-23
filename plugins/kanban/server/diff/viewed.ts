@@ -1,4 +1,5 @@
 import type { Ticket } from "../../shared/board";
+import { changeBlocks } from "bb-diff-view/line-map";
 import type { DiffDelta } from "../../shared/diff";
 
 type HeadsDelta = Omit<DiffDelta, "since">;
@@ -75,6 +76,7 @@ export function createViewedMarks(ctx: KanbanContext, { changes }: { changes: Ch
         additions: file.additions,
         deletions: file.deletions,
         ranges: file.patch === undefined ? [] : newLineRangesFromPatch(file.patch),
+        blocks: file.patch === undefined ? null : changeBlocks(file.patch),
       })),
     };
     deltaCache.set(key, delta);

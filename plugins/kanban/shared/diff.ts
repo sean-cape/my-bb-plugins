@@ -17,6 +17,8 @@ export const diffDeltaSchema = z.object({
       deletions: z.number().int(),
       /** New-side line ranges touched since `fromSha`. */
       ranges: z.array(z.tuple([z.number().int(), z.number().int()])),
+      /** The runs of changes since `fromSha`, for moving a finding's lines to where they are now; null without a patch. */
+      blocks: z.array(z.tuple([z.number().int(), z.number().int(), z.number().int(), z.number().int()])).nullable(),
     }),
   ),
 });

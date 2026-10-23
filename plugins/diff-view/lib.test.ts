@@ -4,7 +4,7 @@ import { shownInline } from "./lib/app/comments/thread-code";
 import { fetchChangeTotals, knownChangeTotals } from "./lib/app/change-totals";
 import { buildFileTree } from "./lib/app/file-tree/build-file-tree";
 import { statusMark } from "./lib/app/file-status";
-import { activeReviews, distinctFindings, filterFindings, findingsOutsideDiff, inlineFindingsByPath, nextFindingFilter, parseFindingFilter } from "./lib/app/findings/findings";
+import { activeReviews, distinctFindings, filterFindings, findingsOutsideDiff, inlineFindingsByPath, nextFindingFilter, parseFindingFilter, resolvedFindings, standingFindings } from "./lib/app/findings/findings";
 import { isGeneratedFile, isLargeFile, startsCollapsed } from "./lib/app/generated";
 import { riskByPath } from "./lib/app/risk";
 import { enclosingDefinition } from "./lib/app/structural/enclosing-definition";
@@ -169,67 +169,102 @@ describe("activeReviews", () => {
 });
 
 describe("inlineFindingsByPath", () => {
-  it("places a finding at each location and marks new and touched ones", () => {
+  it("places a finding at each location with the selection it carries", () => {
     const reviews = [
       review("full", 1, [finding("F1", [{ file: "a.ts", startLine: 5, endLine: 8 }, { file: "b.ts", startLine: null, endLine: null }])], { selection: { F1: true }, selectionOverrides: { F1: true } }),
       review("inc", 2, [finding("F2", [{ file: "a.ts", startLine: 20, endLine: null }])], { sinceCommitSha: "abc", findingEdits: { F2: {} } }),
     ];
-    const byPath = inlineFindingsByPath(reviews, { fromSha: "a", toSha: "b", files: [{ path: "a.ts", status: "modified", additions: 1, deletions: 0, ranges: [[7, 7]] }] });
-    expect(byPath.get("a.ts")!.map((entry) => ({ id: entry.item.finding.id, line: entry.line, newIn: entry.item.newIn, touched: entry.item.touched }))).toEqual([
-      { id: "F1", line: 5, newIn: 1, touched: true },
-      { id: "F2", line: 20, newIn: 2, touched: false },
+    const byPath = inlineFindingsByPath(reviews, null);
+    expect(byPath.get("a.ts")!.map((entry) => ({ id: entry.item.finding.id, line: entry.line }))).toEqual([
+      { id: "F1", line: 5 },
+      { id: "F2", line: 20 },
     ]);
     expect(byPath.get("b.ts")!.map((entry) => entry.line)).toEqual([null]);
-    const f1 = byPath.get("a.ts")![0]!.item;
-    expect(f1).toMatchObject({ selected: true, overridden: true, edited: false });
+    expect(byPath.get("a.ts")![0]!.item).toMatchObject({ selected: true, overridden: true, edited: false });
     expect(byPath.get("a.ts")![1]!.item).toMatchObject({ selected: false, overridden: false, edited: true });
   });
 });
 
 describe("inlineFindingsByPath applied findings", () => {
-  it("leaves out the findings an apply round fixed", () => {
+  it("leaves out the findings an apply round fixed and the ones the reviewer resolved", () => {
     const fixed = finding("F1", [{ file: "a.ts", startLine: 1, endLine: 1 }]);
     const open = finding("F2", [{ file: "a.ts", startLine: 9, endLine: 9 }]);
     const elsewhere = finding("F3", [{ file: "b.ts", startLine: 2, endLine: 2 }]);
-    const byPath = inlineFindingsByPath([review("full", 1, [fixed, open, elsewhere], { appliedFindingIds: ["F1", "F3"] })], null);
+    const mine = finding("F4", [{ file: "a.ts", startLine: 12, endLine: 12 }]);
+    const byPath = inlineFindingsByPath([review("full", 1, [fixed, open, elsewhere, mine], { appliedFindingIds: ["F1", "F3"], resolvedFindingIds: ["F4"] })], null);
     expect(byPath.get("a.ts")!.map(({ item }) => item.finding.id)).toEqual(["F2"]);
     expect(byPath.has("b.ts")).toBe(false);
   });
 });
 
 describe("inlineFindingsByPath carry-over", () => {
-  it("does not call a carried finding new, and names the earlier finding it came from", () => {
+  it("names the earlier finding a carried one came from", () => {
     const carried = { ...finding("F1", [{ file: "a.ts", startLine: 1, endLine: 1 }]), carriedFrom: "r0/F3" };
     const fresh = finding("F2", [{ file: "a.ts", startLine: 9, endLine: 9 }]);
     const byPath = inlineFindingsByPath([review("inc", 2, [carried, fresh], { sinceCommitSha: "a", report: { findings: [carried, fresh], carriesForward: true } })], null);
-    // The only round: nothing in it is "new in" anything, and the review it was carried from is not a round.
-    expect(byPath.get("a.ts")!.map(({ item }) => ({ id: item.finding.id, newIn: item.newIn, carriedFrom: item.carriedFrom, openSince: item.openSince }))).toEqual([
-      { id: "F1", newIn: null, carriedFrom: "F3", openSince: null },
-      { id: "F2", newIn: null, carriedFrom: null, openSince: null },
+    expect(byPath.get("a.ts")!.map(({ item }) => ({ id: item.finding.id, carriedFrom: item.carriedFrom }))).toEqual([
+      { id: "F1", carriedFrom: "F3" },
+      { id: "F2", carriedFrom: null },
     ]);
   });
+});
 
-  it("tags each finding with the round that first reported it, back through every carry", () => {
-    const first = finding("F1", [{ file: "a.ts", startLine: 1, endLine: 1 }]);
-    const again = { ...finding("F1", [{ file: "a.ts", startLine: 2, endLine: 2 }]), carriedFrom: "one/F1" };
-    const third = { ...finding("F3", [{ file: "a.ts", startLine: 3, endLine: 3 }]), carriedFrom: "two/F1" };
-    const fresh = finding("F4", [{ file: "a.ts", startLine: 9, endLine: 9 }]);
-    const reviews = [
-      review("one", 1, [first], { commitSha: "a".repeat(40) }),
-      review("two", 2, [again], { commitSha: "b".repeat(40), sinceCommitSha: "a".repeat(40), report: { findings: [again], carriesForward: true } }),
-      review("three", 3, [third, fresh], { commitSha: "c".repeat(40), sinceCommitSha: "b".repeat(40), report: { findings: [third, fresh], carriesForward: true } }),
+describe("findings across pushes", () => {
+  const reviewed = "a".repeat(40);
+  // Since the review: two lines inserted after line 3 of a.ts, and line 10 changed.
+  const delta = (fromSha: string) => ({
+    fromSha,
+    toSha: "f".repeat(40),
+    files: [{ path: "a.ts", status: "modified", additions: 3, deletions: 1, ranges: [[4, 5], [12, 12]] as Array<[number, number]>, blocks: [[4, 0, 4, 2], [10, 1, 12, 1]] as Array<[number, number, number, number]> }],
+  });
+  const reviews = [
+    review(
+      "one",
+      1,
+      [
+        { ...finding("F1", [{ file: "a.ts", startLine: 2, endLine: 2 }]) },
+        { ...finding("F2", [{ file: "a.ts", startLine: 6, endLine: 7 }]), suggestion: { file: "a.ts", startLine: 6, endLine: 7, replacement: "x" } },
+        finding("F3", [{ file: "a.ts", startLine: 10, endLine: 10 }]),
+        finding("F4", [{ file: "a.ts", startLine: 10, endLine: 10 }, { file: "b.ts", startLine: 3, endLine: 3 }]),
+      ],
+      { commitSha: reviewed },
+    ),
+  ];
+
+  it("moves a finding with the lines added above it, and its suggestion with it", () => {
+    const { inline } = standingFindings(reviews, delta("aaaaaaa"));
+    expect(inline.get("a.ts")!.map(({ item, line }) => `${item.finding.id}:${line}`)).toEqual(["F1:2", "F2:8"]);
+    expect(inline.get("a.ts")![1]!.item.finding.suggestion).toMatchObject({ startLine: 8, endLine: 9 });
+  });
+
+  it("calls a finding outdated when the code under it changed, keeping the locations that still stand", () => {
+    const { inline, outdated } = standingFindings(reviews, delta(reviewed));
+    expect(outdated.map(({ finding: entry }) => entry.id)).toEqual(["F3"]);
+    expect(inline.get("b.ts")!.map(({ item }) => item.finding.id)).toEqual(["F4"]);
+    expect(inline.get("b.ts")![0]!.item.finding.locations).toEqual([{ file: "b.ts", startLine: 3, endLine: 3 }]);
+  });
+
+  it("leaves findings where they were when the delta counts from another commit", () => {
+    const { inline, outdated } = standingFindings(reviews, delta("b".repeat(40)));
+    expect(outdated).toEqual([]);
+    expect(inline.get("a.ts")!.map(({ item, line }) => `${item.finding.id}:${line}`)).toEqual(["F1:2", "F2:6", "F3:10", "F4:10"]);
+  });
+
+  it("lists what closed each resolved finding: the reviewer, an apply round, or a re-review", () => {
+    const history = [
+      review("one", 1, [finding("F1", []), finding("F2", []), finding("F3", [])], { commitSha: reviewed, resolvedFindingIds: ["F1"], appliedFindingIds: ["F2"] }),
+      review("two", 2, [finding("F1", [])], {
+        commitSha: "b".repeat(40),
+        sinceCommitSha: reviewed,
+        appliedFindingIds: ["F1"],
+        report: { findings: [{ ...finding("F1", []), carriedFrom: "one/F3" }], carriesForward: true, resolved: [{ id: "one/F2", title: "", note: "guarded" }] },
+      }),
     ];
-    expect(inlineFindingsByPath(reviews, null).get("a.ts")!.map(({ item }) => ({ id: item.finding.id, newIn: item.newIn, openSince: item.openSince }))).toEqual([
-      { id: "F3", newIn: null, openSince: 1 },
-      { id: "F4", newIn: 3, openSince: null },
+    expect(resolvedFindings(history).map(({ reviewId, findingId, by, note }) => ({ reviewId, findingId, by, note }))).toEqual([
+      { reviewId: "two", findingId: "F1", by: "applied", note: null },
+      { reviewId: "one", findingId: "F2", by: "fixed", note: "guarded" },
+      { reviewId: "one", findingId: "F1", by: "you", note: null },
     ]);
-  });
-
-  it("marks lines changed only from a delta that counts from the finding's own review", () => {
-    const reviews = [review("one", 1, [finding("F1", [{ file: "a.ts", startLine: 5, endLine: 5 }])], { commitSha: "a".repeat(40) })];
-    const since = (fromSha: string) => ({ fromSha, toSha: "f".repeat(40), files: [{ path: "a.ts", status: "modified", additions: 1, deletions: 0, ranges: [[5, 5]] as Array<[number, number]> }] });
-    expect(inlineFindingsByPath(reviews, since("aaaaaaa")).get("a.ts")![0]!.item.touched).toBe(true);
-    expect(inlineFindingsByPath(reviews, since("b".repeat(40))).get("a.ts")![0]!.item.touched).toBe(false);
   });
 });
 
@@ -716,7 +751,7 @@ describe("keys for the findings outside the diff", () => {
   });
 
   it("gp moves into the list, or says there is none", () => {
-    expect(run({ kind: "outsideFindings" }, { focusOutsideFindings: () => false })).toEqual(["No pre-existing or filtered findings"]);
+    expect(run({ kind: "outsideFindings" }, { focusOutsideFindings: () => false })).toEqual(["No outdated, resolved, pre-existing or filtered findings"]);
     expect(run({ kind: "outsideFindings" }, { focusOutsideFindings: () => true })).toEqual([]);
   });
 });
@@ -1174,7 +1209,7 @@ describe("narrative chapters", () => {
 describe("step excerpts", () => {
   const patch = ["@@ -1,4 +1,4 @@", " a", "-b", "+B", " c", " d", "@@ -10,2 +10,3 @@", " x", "+y", " z"].join("\n");
   const thread = (id: string, side: "LEFT" | "RIGHT", line: number | null): DiffThread => ({ id, path: "x.ts", line, side, startLine: null, startSide: null, entries: [], onGithub: false, outdated: false, resolved: null, orphaned: false });
-  const finding = (line: number | null) => ({ line, item: { reviewId: "r", finding: { id: `f${line}` } as never, selected: true, overridden: false, edited: false, newIn: null, carriedFrom: null, openSince: null, touched: false } });
+  const finding = (line: number | null) => ({ line, item: { reviewId: "r", finding: { id: `f${line}` } as never, selected: true, overridden: false, edited: false, carriedFrom: null } });
 
   it("cuts a step's refs to one excerpt per file, with the lines they point at", () => {
     const [excerpt] = stepExcerpts([{ path: "x.ts", side: "old", startLine: 2, endLine: 2 }, { path: "x.ts", side: "new", startLine: 2, endLine: 2 }], [{ path: "x.ts", previousPath: null, patch }]);

@@ -58,10 +58,7 @@ describe("a suggestion that shrinks its range", () => {
       selected: true,
       overridden: false,
       edited: false,
-      newIn: null,
       carriedFrom: null,
-      openSince: null,
-      touched: false,
     };
     const before = fileLines(["one", "foo();", "debug();"]);
     expect(findingSuggestion(finding, before)).toMatchObject({ applied: false, item: { replacement: ["foo();"] } });

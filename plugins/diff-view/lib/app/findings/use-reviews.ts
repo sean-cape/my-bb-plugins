@@ -38,5 +38,15 @@ export function useReviews(source: DiffSource, refreshSignal: unknown) {
       }
     }
   };
-  return { reviews, toggleFinding, editFinding, markApplied };
+  /** Resolves a finding, or reopens one resolved by hand or crossed off as applied. */
+  const setResolved = async (reviewId: string, findingId: string, resolved: boolean, by: "you" | "applied" = "you") => {
+    const set = by === "applied" ? source.reviews?.setApplied : source.reviews?.setResolved;
+    if (set === undefined) return;
+    try {
+      replaceReview(await set(reviewId, findingId, resolved));
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+    }
+  };
+  return { reviews, toggleFinding, editFinding, markApplied, setResolved };
 }

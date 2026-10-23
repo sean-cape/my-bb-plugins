@@ -44,6 +44,7 @@ function review(body: string | null, reviewReport: ReviewReport | null, selectio
     selectionOverrides: {},
     findingEdits: {},
     appliedFindingIds: [],
+    resolvedFindingIds: [],
     createdAt: 0,
     completedAt: 0,
     apply: null,
@@ -199,6 +200,16 @@ describe("standingReviews", () => {
   it("stops at a re-review that already carried every open finding forward", () => {
     const reviews = [at("full", 1), at("carried", 2, { sinceCommitSha: "a", report: { ...report([]), carriesForward: true } }), at("inc", 3, { sinceCommitSha: "b" })];
     expect(standingReviews(reviews).map((entry) => entry.id)).toEqual(["carried", "inc"]);
+  });
+});
+
+describe("resolved findings", () => {
+  it("keeps the ones the reviewer resolved out of the next apply round, the open counts and the re-review's re-check", () => {
+    const entry = review(null, report([finding("F1", "critical"), finding("F2", "important")]), { F1: true, F2: true }, { resolvedFindingIds: ["F1"] });
+    expect(pendingFindings(entry).map((item) => item.id)).toEqual(["F2"]);
+    expect(summarize(entry)).toMatchObject({ counts: { critical: 0, important: 1, minor: 0 }, selectedCount: 1 });
+    expect(summarize(entry)).not.toHaveProperty("resolvedFindingIds");
+    expect(earlierFindings([entry]).map(({ handle }) => handle)).toEqual(["r1/F2"]);
   });
 });
 

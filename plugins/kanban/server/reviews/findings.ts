@@ -1,6 +1,6 @@
 import { locationLabel } from "../../shared/finding-location";
 import type { FindingAnswer } from "../../shared/loop";
-import { findingEditsSchema, selectionSchema, type Finding, type FindingEdit, type FindingSeverity, type Review, type ReviewReport, type ReviewScores, type ReviewSummary, type SeverityCounts } from "../../shared/review";
+import { closedFindingIds, findingEditsSchema, selectionSchema, type Finding, type FindingEdit, type FindingSeverity, type Review, type ReviewReport, type ReviewScores, type ReviewSummary, type SeverityCounts } from "../../shared/review";
 
 /**
  * Pre-selection for the apply round. Never a pre-existing finding, which is not this change's to fix. A triaged finding
@@ -86,16 +86,16 @@ export function applyFindingEdits(report: ReviewReport | null, edits: Record<str
   };
 }
 
-/** The findings the next apply round would get: the change's own, selected, and not already fixed by an earlier one. */
+/** The findings the next apply round would get: the change's own, selected, and neither fixed by an earlier one nor resolved. */
 export function pendingFindings(review: Review): Finding[] {
-  const applied = new Set(review.appliedFindingIds);
-  return (review.report?.findings ?? []).filter((finding) => !finding.preExisting && review.selection[finding.id] === true && !applied.has(finding.id));
+  const closed = closedFindingIds(review);
+  return (review.report?.findings ?? []).filter((finding) => !finding.preExisting && review.selection[finding.id] === true && !closed.has(finding.id));
 }
 
 export function summarize(review: Review): ReviewSummary {
-  const { body, report, selection: _selection, selectionOverrides: _overrides, findingEdits: _edits, appliedFindingIds, ...rest } = review;
-  const applied = new Set(appliedFindingIds);
-  const open = report === null ? null : { ...report, findings: report.findings.filter((finding) => !applied.has(finding.id)) };
+  const { body, report, selection: _selection, selectionOverrides: _overrides, findingEdits: _edits, appliedFindingIds: _applied, resolvedFindingIds: _resolved, ...rest } = review;
+  const closed = closedFindingIds(review);
+  const open = report === null ? null : { ...report, findings: report.findings.filter((finding) => !closed.has(finding.id)) };
   return {
     ...rest,
     hasBody: body !== null && body.trim() !== "",
@@ -127,8 +127,9 @@ export function earlierFindings(
   standing: Review[],
   answers: Record<string, FindingAnswer> = {},
 ): Array<Omit<Finding, "id" | "carriedFrom"> & { handle: string; applyRound: string | null; answer: FindingAnswer | null }> {
+  // A finding the reviewer resolved stays resolved, as a resolved GitHub thread does: it is not re-checked or carried.
   return standing.flatMap((review) =>
-    (review.report?.findings ?? []).map(({ id, carriedFrom: _carriedFrom, ...finding }) => {
+    (review.report?.findings ?? []).filter((finding) => !review.resolvedFindingIds.includes(finding.id)).map(({ id, carriedFrom: _carriedFrom, ...finding }) => {
       const handle = `${review.id}/${id}`;
       const answer = answers[handle] ?? null;
       const apply = review.apply;

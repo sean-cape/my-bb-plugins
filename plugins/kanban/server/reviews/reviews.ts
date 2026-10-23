@@ -307,6 +307,21 @@ export function createReviews(
     return rowToReview(stmts.reviewById.get(reviewId)!);
   }
 
+  function setResolved(reviewId: string, findingId: string, resolved: boolean): Review {
+    const row = stmts.reviewById.get(reviewId);
+    if (row === undefined) throw new Error(`No review with id ${reviewId}`);
+    const review = rowToReview(row);
+    if (review.report === null || !review.report.findings.some((finding) => finding.id === findingId)) {
+      throw new Error(`Review ${reviewId} has no finding ${findingId}`);
+    }
+    const ids = new Set(review.resolvedFindingIds);
+    if (resolved) ids.add(findingId);
+    else ids.delete(findingId);
+    stmts.setResolvedFindingIds.run(ids.size === 0 ? null : JSON.stringify([...ids]), reviewId);
+    publish();
+    return rowToReview(stmts.reviewById.get(reviewId)!);
+  }
+
   function resetSelection(reviewId: string): Review {
     const row = stmts.reviewById.get(reviewId);
     if (row === undefined) throw new Error(`No review with id ${reviewId}`);
@@ -383,7 +398,7 @@ export function createReviews(
     return { ticket: getTicket(ticket.id), created: true };
   }
 
-  return { localReviewTarget, reviewUnavailableReason, startReview, spawnApplyForReview, repairInterimReviewsOnLoad, handleIdle, listReviews, setSelection, resetSelection, editFinding, makeFindingCard, completeApply, setApplied };
+  return { localReviewTarget, reviewUnavailableReason, startReview, spawnApplyForReview, repairInterimReviewsOnLoad, handleIdle, listReviews, setSelection, resetSelection, editFinding, makeFindingCard, completeApply, setApplied, setResolved };
 }
 
 export type Reviews = ReturnType<typeof createReviews>;

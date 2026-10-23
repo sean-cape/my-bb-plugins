@@ -66,9 +66,7 @@ export type ReviewCommand =
   /** A finding's suggestion to the pull request as a draft suggestion comment. */
   | { kind: "postSuggestion" }
   /** Only the files and hunks new since the last review, or everything again. */
-  | { kind: "onlyNew" }
-  /** The keyboard to the review rounds above the diff. */
-  | { kind: "changesStrip" };
+  | { kind: "onlyNew" };
 
 /** Review commands by key sequence; a count typed before one repeats it. */
 export const REVIEW_KEYMAP: Keymap<ReviewCommand> = {
@@ -152,7 +150,6 @@ export const REVIEW_KEYMAP: Keymap<ReviewCommand> = {
   gf: { kind: "fileFilter" },
   gs: { kind: "postSuggestion" },
   gn: { kind: "onlyNew" },
-  gh: { kind: "changesStrip" },
 };
 
 export type FileTreeCommand = { kind: "list"; motion: ListMotion } | { kind: "scroll"; step: 1 | -1 } | { kind: "leave" } | { kind: "hide" };
@@ -182,7 +179,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["j", "k"], action: "Next / previous line, stopping at each comment when a line has several (a count repeats: 5j)" },
       { keys: ["h", "l"], action: "Old / new side; h past the old side (or on a file header) goes to the file list" },
       { keys: ["]c", "[c"], action: "Next / previous change" },
-      { keys: ["]n", "[n"], action: "Next / previous change new since the last review (or the round picked above the diff), marked blue in the gutter" },
+      { keys: ["]n", "[n"], action: "Next / previous change no review has read yet, marked blue in the gutter" },
       { keys: ["}", "{"], action: "Next / previous hunk" },
       { keys: ["]f", "[f"], action: "Next / previous file" },
       { keys: ["c", "C"], action: "Next / previous comment or review finding, one at a time on a shared line" },
@@ -202,7 +199,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["V"], action: "Select lines; move, then i to comment on them" },
       { keys: ["O"], action: "Comment on the file" },
       { keys: ["a"], action: "Reply to the comment thread under the cursor" },
-      { keys: ["r"], action: "Resolve or reopen that thread on GitHub" },
+      { keys: ["r"], action: "Resolve or reopen that thread on GitHub; on a review finding, resolve it (it moves to Resolved above the diff, where it can be reopened)" },
       { keys: ["Enter", "za"], action: "Open or close the comment or finding under the cursor, or open a fold of hidden lines (za on a bare line folds the file); Enter on a large file's header loads its diff" },
       { keys: ["e"], action: "Edit your unsent comment in that thread, or the finding's wording" },
       { keys: ["dd"], action: "Delete your unsent comment in that thread" },
@@ -239,7 +236,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["x"], action: "Include or exclude the review finding under the cursor in the apply round" },
       { keys: ["F"], action: "Which review findings show: all, important and up, critical only, or none" },
       { keys: ["gF"], action: "Show or hide the findings the review's verifier filtered out" },
-      { keys: ["gp"], action: "Go to the findings listed above the diff: pre-existing and filtered (j / k move, h / l across a row, Enter opens one or makes a card, Esc back)" },
+      { keys: ["gp"], action: "Go to the findings listed above the diff: outdated, resolved (Enter on Reopen reopens one), pre-existing and filtered (j / k move, h / l across a row, Enter opens one or makes a card, Esc back)" },
       { keys: ["K"], action: "Ask an agent to explain the hunk" },
       { keys: ["gd"], action: "Peek a symbol on the line: its definition and uses (structural)" },
       { keys: ["gl"], action: "Split or unified, for every file (structural and line diffs; remembered)" },
@@ -250,7 +247,6 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["W"], action: "Hide or show whitespace changes in line diffs (hidden at first: only-whitespace files fold away)" },
       { keys: ["gr"], action: "Pick commits: all changes, since a review, one commit or a range (j / k move, Enter picks, Space or x starts a range, Esc closes)" },
       { keys: ["gn"], action: "Only new: just the files and hunks changed since the last review, the rest folded away; again shows everything" },
-      { keys: ["gh"], action: "Go to the review rounds above the diff, to pick the one new code counts from (h / l across, j / k rows, Enter picks, Esc back)" },
     ],
   },
   {

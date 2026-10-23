@@ -292,5 +292,7 @@ export function migrate(bb: BbPluginApi, db: KanbanDatabase): void {
     // The review an inline comment was submitted in, which the conversation groups threads under; pulled again likewise.
     `ALTER TABLE pr_comments ADD COLUMN review_id INTEGER`,
     `UPDATE tickets SET comments_synced_for = NULL`,
+    // Findings the reviewer resolved by hand, as a GitHub thread is resolved: out of the diff, the apply round and re-reviews.
+    `ALTER TABLE reviews ADD COLUMN resolved_finding_ids TEXT`,
   ]);
 }

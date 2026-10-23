@@ -150,9 +150,9 @@ plugins embed.
 - **Commits**: the summary bar's "Commits: All changes" control, or `gr`,
   opens a picker of All changes, the host's review marks ("Since last
   review"), then every commit, oldest first, each commit a review read up to
-  tagged with its round ("r1 reviewed") and the ones after the latest round
-  tagged "new"; with commits no review has read, the control says so ("All
-  changes · 3 new since r2"): `j`/`k` move, Enter (or a click)
+  tagged "reviewed" and the ones after the latest review "not reviewed"; with
+  commits no review has read, the control says so ("All changes · 3 not
+  reviewed"): `j`/`k` move, Enter (or a click)
   picks one, Space or `x` (or a shift-click) on a commit starts a range and
   Enter on another picks every commit between them (Enter back on the first,
   or across every commit, says it shows one commit or all changes), Escape
@@ -161,40 +161,39 @@ plugins embed.
   "3 commits", a mark). A partial range is for reading: comments and viewed
   marks work only when it ends at the head, and only on new-side lines, where
   existing threads and findings still show; otherwise `i` and `v` say to switch
-  back to All changes. The review rounds strip and the narrative wait
+  back to All changes. The review line above the diff and the narrative wait
   for All changes. A thread's commits come from its local checkout (`git log`
   since the merge base, uncommitted changes as a last "Uncommitted" entry);
   without one there are none.
-- **New since the last review**: when the host serves review rounds (its
-  reviews' commits) and a delta, a strip above the diff tells new code from
-  code a review has read. It lists the completed reviews oldest first as
-  rounds (`r1 abc1234 · 5 findings › r2 def5678 · 2 new · 3 still open · 1
-  fixed`), then what came after the latest one ("+3 commits since r2",
-  "uncommitted changes since r2"), and a review running on it ("r3
-  reviewing…"), with the host's controls (kanban's "Re-review what's new") at
-  the end. Under it, the files changed since that round as chips and "Only
-  new", and the findings the latest round found fixed (folded under their
-  count), each a jump to its file.
-  Every line changed since the round is marked in the gutter in blue (the
-  structural view and the line diff's added lines), its hunk header says "new
-  since r2", its file header and its file tree row say so too, and the file
-  tree lists those files again in a "Changed since r2" group at the top (when
-  some files did not change). A file the change doesn't touch, and a line it
-  leaves as it was, are never new, though a merge of the base branch since the
-  round changed them.
-  Picking another round in the strip (or `gh`, then `h`/`l` and Enter) counts
-  from its commit instead. "Only new" (`gn`, or the file filter's "Only new
-  since r2") leaves out the other files and, in the structural view, folds the
-  older hunks too, into folds that say how many changed lines they hold; `]n`
-  and `[n` step through the new changes either way. Opened after a push or a
-  re-review, the view starts at the first file changed since the latest round,
-  once for each new stretch of code, unless the cursor has already moved.
-  Without review rounds the strip counts from the host's own point (kanban's:
-  your last GitHub review, else the head you last marked files viewed on).
-  Findings say which round they came from: "new in r2", "since r1" for one
-  every review since has found still open, and "lines changed" when the code
-  on their lines changed after their review read it, so they may have moved or
-  been fixed.
+- **Review findings like GitHub threads**: a finding stays inline at its
+  lines for as long as they stand. When the code moves after its review read
+  it, the finding moves with the lines added and removed above it (its
+  suggestion too); when the code under it changes, it is **outdated**, as
+  GitHub calls a comment, and leaves the diff for the "outdated" list above it
+  until the next re-review moves it to where it is now or finds it fixed. `r`
+  on a finding, or its Resolve button, **resolves** it: it leaves the diff and
+  the apply round, and re-reviews leave it be. The "resolved" list above the
+  diff holds every finding no longer open, with what closed it (you, an apply
+  round until a re-review checks it, or a re-review that found it fixed, with
+  its note), and Reopen puts one back. Each re-review re-checks every open
+  finding at the new head: the ones still there are carried forward at their
+  new lines, the fixed ones resolve themselves.
+- **New since the last review**: a line above the diff says where the AI
+  review stands: the commit it last read, what no review has read since ("3
+  commits since, not reviewed yet"), a re-review running, and how many
+  findings are open, with the host's controls (kanban's "Re-review what's
+  new") at the end. Lines changed since that review are marked blue in the
+  gutter (the structural view and the line diff's added lines); their hunks
+  say "new", their file headers and file tree rows say so too, and the file
+  tree lists those files again at the top when only some changed. A file the
+  change doesn't touch, and a line it leaves as it was, are never new, though
+  a merge of the base branch since the review changed them. `]n` and `[n` step
+  through the new changes; "Only new" (`gn`, or the file filter) leaves out the
+  other files and, in the structural view, folds the older hunks too. Opened
+  after a push or a re-review, the view starts at the first new file, once for
+  each new stretch of code, unless the cursor has already moved. Without a
+  review the line counts from the host's own point (kanban's: your last GitHub
+  review, else the head you last marked files viewed on).
 - **Keyboard**: the whole review runs on vim-style keys, sent to the view that
   last had the pointer or focus, never while typing in a text box. "Changes:
   review with the keyboard" (⌘⇧D by default, rebindable in bb's keyboard
@@ -242,10 +241,9 @@ plugins embed.
   `zo`/`zc`/`zR`/`zM` fold files (`za` too on a line with nothing under it),
   `zr` shows more unchanged lines, `F` cycles which review findings show,
   `gF` folds or unfolds the filtered findings, `gp` moves the keyboard into
-  the pre-existing and filtered list above the diff (`j`/`k` move, Enter
-  opens one or makes a card, Escape returns), `gh` into the review rounds
-  strip (`h`/`l` across, Enter picks a round, Escape returns), `gn` turns
-  "Only new" on or off,
+  the outdated, resolved, pre-existing and filtered list above the diff (`j`/`k` move, Enter
+  opens one or makes a card, Escape returns), `gn` turns "Only new" on or
+  off,
   `K` asks for an explanation of the hunk, `S` switches to the narrative
   review where the host has one (see below),
   `gd` peeks at a symbol on the line (Escape closes it), `gl` switches every file between

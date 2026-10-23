@@ -55,7 +55,7 @@ describe("diff delta", () => {
     const { deltas, ticket, ranges, kinds } = setup({ reviews: [{ id: "rev2", commit_sha: sha("b") }, { id: "rev1", commit_sha: sha("a") }] });
     const delta = await deltas.diffDelta(ticket, null);
     expect(delta).toMatchObject({ fromSha: sha("b"), toSha: HEAD, since: { kind: "review", reviewId: "rev2" } });
-    expect(delta!.files).toEqual([{ path: "a.ts", status: "modified", additions: 1, deletions: 0, ranges: [[5, 5]] }]);
+    expect(delta!.files).toEqual([{ path: "a.ts", status: "modified", additions: 1, deletions: 0, ranges: [[5, 5]], blocks: [[5, 0, 5, 1]] }]);
     expect(ranges.at(-1)).toEqual({ from: sha("b"), to: HEAD });
     expect(kinds).toEqual(["pr"]);
   });

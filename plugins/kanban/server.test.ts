@@ -1661,6 +1661,14 @@ describe("persisted reviews", () => {
     [stored] = ((await current().harness.behavior.callRpc("review_list", { ticketId: card.id })) as { reviews: Review[] }).reviews;
     expect(stored!.appliedFindingIds).not.toContain("F2");
     await expect(current().harness.behavior.callRpc("review_set_applied", { reviewId, findingId: "F9", applied: true })).rejects.toThrow(/no finding F9/u);
+
+    // Resolving F2 by hand closes it as a resolved GitHub thread closes: no longer counted or selected.
+    const resolved = (await current().harness.behavior.callRpc("review_set_resolved", { reviewId, findingId: "F2", resolved: true })) as Review;
+    expect(resolved.resolvedFindingIds).toEqual(["F2"]);
+    expect((await board()).tickets[0]!.latestReview).toMatchObject({ selectedCount: 0, counts: { critical: 0, important: 0, minor: 0 } });
+    const unresolved = (await current().harness.behavior.callRpc("review_set_resolved", { reviewId, findingId: "F2", resolved: false })) as Review;
+    expect(unresolved.resolvedFindingIds).toEqual([]);
+    expect((await board()).tickets[0]!.latestReview).toMatchObject({ selectedCount: 1 });
   });
 
   it("makes a backlog card from a pre-existing finding once, in the reviewed card's project, and never pre-selects it", async () => {
