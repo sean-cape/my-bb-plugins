@@ -64,6 +64,18 @@ From GitHub:
 bb plugin install git:github.com/sean-cape/my-bb-plugins@main --plugin <name>
 ```
 
+## Claude Code skills
+
+`claude/` holds the Claude Code skills and subagents the kanban board's review loop runs: `code-review` with the
+`change-reviewer-*` subagents it spawns and the `triage-criteria.md` it reads, `apply-review`, `apply-pr-comments`,
+and the `grill-me` → `to-spec` → `to-tickets` → `implement` flow that writes the specs the reviews hold changes to.
+Link them into `~/.claude` from the main checkout (existing copies are moved to `~/.claude/backups`):
+
+```sh
+node scripts/link-claude-config.mjs           # link
+node scripts/link-claude-config.mjs --check   # list what isn't linked
+```
+
 ## browser-automation-pinned
 
 A frozen copy of bb 0.45.0's built-in browser-automation plugin. It ships only a prebuilt `dist/`, so that directory is committed.

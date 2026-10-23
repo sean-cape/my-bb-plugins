@@ -27,6 +27,8 @@ When a plugin change is done, land it and install it locally without waiting to 
 3. Load it with `bb plugin reload <name>`. A new plugin is first listed in `.bb/plugins.json`, then installed with `bb plugin install path:/Users/sean/dev/my-bb-plugins --plugin <name> --yes`.
 4. Check that `bb plugin reload` reports it `running`. Don't push `main` unless asked.
 
+A change to the skills or subagents under `claude/` is live once it is on `main`: `~/.claude` links to the main checkout's copies. A new skill or subagent needs `node scripts/link-claude-config.mjs` run there (outside the sandbox, which blocks `~/.claude/skills` and `~/.claude/agents`).
+
 Install from the main checkout, never a worktree path: a worktree install breaks once the worktree is cleaned up.
 
 Commits are GPG-signed and the sandbox blocks `~/.gnupg`, so `git commit` and `cherry-pick` run outside it. So do the install, build, and reload in the main checkout, which the sandbox can't write to.
