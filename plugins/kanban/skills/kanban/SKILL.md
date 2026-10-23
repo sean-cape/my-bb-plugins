@@ -18,7 +18,7 @@ page, its Todo list view, and `bb kanban` read and write the same data.
 | --- | --- |
 | `bb kanban columns` | List column ids and names. Agents use the id. |
 | `bb kanban list [--column <id>] [--tag <tag>]` | List cards grouped by column, with ids; `--tag` filters (repeatable). |
-| `bb kanban show [--ticket <id>]` | Show one card. Inside a thread, defaults to that thread's card. |
+| `bb kanban show [<ticket-id> \| --ticket <id>]` | Show one card. Inside a thread, defaults to that thread's card. |
 | `bb kanban move <column-id> [--ticket <id>]` | Move a card. Inside a thread, defaults to that thread's card. |
 | `bb kanban add "<title>" [--tag <tag>] [--description <md>] [--column <id>] [--project <id>] [--start-thread]` | Add a card. Inside a thread it is linked to that thread unless `--no-link`, `--project`, or `--start-thread` is passed. |
 | `bb kanban review [--ticket <id>] [--project <id>] [--full] [--depth quick\|standard\|deep]` | Start a code-review thread for the card's PR, or for a card without one, for the commits its thread made beyond its merge base: a fresh worktree checks the PR head (or the thread's HEAD) out detached and runs the `code-review` skill at the depth (Quick: correctness, CLAUDE.md compliance, scope, style; Standard, the default: adds testing and git history; Deep: adds security). Inside a thread, defaults to that thread's card. |
@@ -28,7 +28,7 @@ page, its Todo list view, and `bb kanban` read and write the same data.
 | `bb kanban ready --commit <sha> --evidence-file <path> [--screenshot <path>] [--check-command "<cmd>"]` | Run from a monitored card's own thread once its work is committed and verified (see below). |
 | `bb kanban landed [--ticket <id>]` | Run from a monitored local card's own thread after the user accepted it and you landed it with the project's finishing steps: the board moves the card to Done. |
 | `bb kanban checks-record --exit-code <n> --output-file <path>` | Run from a checks thread: records the check command's exit code and the tail of its output. |
-| `bb kanban review-show [--ticket <id>]` | Print the latest persisted review (findings + reviewed commit). |
+| `bb kanban review-show [<ticket-id> \| --ticket <id>]` | Print the latest persisted review (findings + reviewed commit). |
 | `bb kanban narrative-check --report-file draft.json` | Run from a narrative thread: checks a draft kanban-narrative report parses and that its steps (and revision steps) cover every changed line; lists what they miss. |
 | `bb kanban narrative-context` | Run from a narrative thread: prints the earlier narrative's steps and the delta a revision chapter must explain. |
 | `bb kanban apply-review [--ticket <id>] [--no-push]` | Apply the selected findings with the `apply-review` skill, all of them without confirmation. A PR review starts a thread that commits and (unless `--no-push`) pushes to the PR branch; a local review is sent to the card's own thread, which commits without pushing. |

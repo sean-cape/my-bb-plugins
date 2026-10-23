@@ -592,6 +592,20 @@ describe("CLI", () => {
     expect((JSON.parse(show.stdout ?? "") as Ticket).columnId).toBe("in-progress");
   });
 
+  it("shows a card given its id as an argument or with --ticket, but not both", async () => {
+    await load();
+    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Positional" })) as Ticket;
+    const positional = await current().harness.behavior.runCli(["show", ticket.id, "--json"]);
+    expect(positional.exitCode).toBe(0);
+    expect((JSON.parse(positional.stdout ?? "") as Ticket).id).toBe(ticket.id);
+    const option = await current().harness.behavior.runCli(["show", "--ticket", ticket.id, "--json"]);
+    expect((JSON.parse(option.stdout ?? "") as Ticket).id).toBe(ticket.id);
+
+    const both = await current().harness.behavior.runCli(["show", ticket.id, "--ticket", ticket.id]);
+    expect(both.exitCode).not.toBe(0);
+    expect(both.stderr).toContain("not both");
+  });
+
   it("explains when a thread has no card", async () => {
     await load();
     const result = await current().harness.behavior.runCli(["move", "done"], {
@@ -1210,6 +1224,12 @@ describe("persisted reviews", () => {
     expect(show.exitCode).toBe(0);
     expect(show.stdout).toContain(sha);
     expect(show.stdout).toContain("x.go:1 Bug");
+    const positional = await current().harness.behavior.runCli(["review-show", card.id]);
+    expect(positional.exitCode).toBe(0);
+    expect(positional.stdout).toContain("x.go:1 Bug");
+    const both = await current().harness.behavior.runCli(["review-show", card.id, "--ticket", card.id]);
+    expect(both.exitCode).not.toBe(0);
+    expect(both.stderr).toContain("not both");
 
     // A second idle (for example after a follow-up question) does not overwrite the completed review.
     await current().harness.behavior.emitThreadEvent("thread.idle", {

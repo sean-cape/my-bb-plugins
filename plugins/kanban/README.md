@@ -668,7 +668,7 @@ bb kanban untag <tags...> [--ticket <id>]
 bb kanban due <YYYY-MM-DD|none> [--ticket <id>]
 bb kanban sources
 bb kanban columns
-bb kanban show [--ticket <id>]
+bb kanban show [<ticket-id> | --ticket <id>]
 bb kanban add "<title>" [--tag <tag>] [--due <YYYY-MM-DD>] [--description <md>] [--column <id>] [--project <id>] [--start-thread] [--parent <id>] [--monitor|--no-monitor]
 bb kanban subtasks [--ticket <id>]
 bb kanban set-parent <ticket-id> <parent-id|none>
@@ -679,7 +679,7 @@ bb kanban plan --plan-file <path>
 bb kanban ready --commit <sha> [--evidence-file <path>] [--screenshot <path>] [--check-command "<cmd>"]
 bb kanban checks-record --exit-code <n> [--output-file <path>]
 bb kanban review [--ticket <id>] [--project <id>] [--full]
-bb kanban review-show [--ticket <id>]
+bb kanban review-show [<ticket-id> | --ticket <id>]
 bb kanban apply-review [--ticket <id>] [--no-push]
 bb kanban comments [--ticket <id>]
 bb kanban apply-comments [--ticket <id>] [--no-push]

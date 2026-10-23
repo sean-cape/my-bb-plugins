@@ -63,6 +63,13 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
     });
   }
 
+  function ticketForArguments(positional: string | undefined, ticketOption: string | undefined, threadId: string | undefined): Ticket {
+    if (positional !== undefined && ticketOption !== undefined) {
+      throw new PluginCliError("Pass the ticket id as an argument or with --ticket, not both.", { code: "conflicting_options" });
+    }
+    return ticketForContext(positional ?? ticketOption, threadId);
+  }
+
   function parseDueDate(raw: string): string {
     const parsed = dueDateSchema.safeParse(raw);
     if (!parsed.success) {
@@ -135,6 +142,8 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
     },
   } as const;
 
+  const ticketPositional = { name: "ticket", description: "Ticket id. Defaults to the card linked to the current thread.", required: false } as const;
+
   bb.cli.register(
     defineCli({
       name: "kanban",
@@ -183,9 +192,10 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
         }),
         show: cliCommand({
           summary: "Show one card",
+          positionals: [ticketPositional],
           options: { ...ticketOption, json: { type: "boolean", description: "Emit JSON" } },
-          async run({ options }, ctx) {
-            const ticket = ticketForContext(options.ticket, ctx.threadId);
+          async run({ positionals, options }, ctx) {
+            const ticket = ticketForArguments(positionals.ticket, options.ticket, ctx.threadId);
             if (options.json) return { exitCode: 0, stdout: JSON.stringify(ticket) };
             const columns = await getColumns();
             const lines = [formatTicket(ticket, columns)];
@@ -522,9 +532,10 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
         }),
         "review-show": cliCommand({
           summary: "Print the latest persisted review of a card",
+          positionals: [ticketPositional],
           options: { ...ticketOption, json: { type: "boolean", description: "Emit JSON" } },
-          async run({ options }, ctx) {
-            const ticket = ticketForContext(options.ticket, ctx.threadId);
+          async run({ positionals, options }, ctx) {
+            const ticket = ticketForArguments(positionals.ticket, options.ticket, ctx.threadId);
             const row = stmts.latestCompletedReview.get(ticket.id);
             if (row === undefined) {
               throw new PluginCliError(`Ticket ${ticket.id} has no completed review.`, {
