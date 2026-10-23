@@ -593,6 +593,7 @@ describe("loop reducer", () => {
         expect(clean({}, 2).state).toMatchObject({ phase: "needs-you", reason: "clean" });
         const deselected = run([{ type: "approve-findings", findingIds: [], pr: false }], clean({ autoAccept: true, findings: true }, 2, [finding("F1", "important")]).state);
         expect(deselected.state).toMatchObject({ phase: "needs-you", reason: "clean", openFindings: [{ id: "F1", severity: "important" }] });
+        expect(deselected.actions[0]).not.toContainEqual({ type: "alert" });
       });
     });
   });

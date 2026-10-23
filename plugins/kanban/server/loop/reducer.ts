@@ -129,10 +129,13 @@ const UNREAD_STOPS: ReadonlySet<NeedsYouReason> = new Set(["loop-error", "checks
 /** Kept so a long-lived card's state stays small. */
 const LEVEL_OVERRIDES_KEPT = 20;
 
+/** A decision the user makes at Needs you can leave the card there, and they are already looking at it. */
+const alertOnEntry = (state: LoopState): LoopAction[] => (state.phase === "needs-you" ? [] : [{ type: "alert" }]);
+
 function needsYou(state: LoopState, reason: NeedsYouReason): LoopStep {
   return {
     state: { ...state, phase: "needs-you", reason },
-    actions: [{ type: "move", column: COLUMN.review }, { type: "alert" }, ...(narrated(effectiveLevel(state)) && !UNREAD_STOPS.has(reason) ? [{ type: "spawn-narrative" as const }] : [])],
+    actions: [{ type: "move", column: COLUMN.review }, ...alertOnEntry(state), ...(narrated(effectiveLevel(state)) && !UNREAD_STOPS.has(reason) ? [{ type: "spawn-narrative" as const }] : [])],
   };
 }
 
@@ -256,7 +259,7 @@ function route(stopped: LoopState, base: LoopState, reviewId: string, open: Loop
   if (stopped.round >= LOOP_ROUND_CAP) return needsYou(stopped, "cap");
   // No narrative: the user only picks findings here, and the loop carries on once they have.
   if (stopped.gates.findings) {
-    return { state: { ...stopped, phase: "needs-you", reason: "findings", reviewId, openFindings: keptOpen, awaitingFindings: open }, actions: [{ type: "move", column: COLUMN.review }, { type: "alert" }] };
+    return { state: { ...stopped, phase: "needs-you", reason: "findings", reviewId, openFindings: keptOpen, awaitingFindings: open }, actions: [{ type: "move", column: COLUMN.review }, ...alertOnEntry(stopped)] };
   }
   return loopRound(stopped, base, reviewId, open, keptOpen);
 }
