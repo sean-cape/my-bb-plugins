@@ -1,5 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { COMMIT_SHA_PATTERN } from "bb-diff-view/types";
 import { TICKET_TITLE_MAX_LENGTH, boardSchema, columnSchema, dueDateSchema, sourceSchema, syncStatusSchema, tagSchema, ticketSchema } from "./shared/board";
 import { commentApplySchema, conversationEventSchema, diffCommentSchema, diffCommentTargetSchema, pendingReviewStateSchema, prCommentSchema, reviewEventSchema } from "./shared/comments";
 import { blameLineSchema, commitRangeSchema, diffCommitsSchema, diffDeltaSchema, diffSideSchema, structuralDiffSchema, suggestionItemSchema, symbolLookupSchema, symbolUsagesSchema, ticketDiffSchema } from "./shared/diff";
@@ -230,9 +231,12 @@ export const rpcContract = defineRpcContract({
     input: z.object({ ticketId: z.string(), path: z.string().min(1), side: z.enum(["old", "new"]).default("new"), startLine: z.number().int().min(1), endLine: z.number().int().min(1) }).strict(),
     output: hunkExplanationSchema,
   },
-  /** Files and line ranges that changed since the reviewer's last viewed head; null when the head has not moved. */
+  /**
+   * Files and line ranges that changed since `fromSha`, or, without it, since the card's last completed review (else
+   * your last GitHub review, else the head you last marked files viewed on); null when nothing changed since.
+   */
   diff_delta: {
-    input: z.object({ ticketId: z.string() }).strict(),
+    input: z.object({ ticketId: z.string(), fromSha: z.string().regex(COMMIT_SHA_PATTERN).nullable().default(null) }).strict(),
     output: z.object({ delta: diffDeltaSchema.nullable() }),
   },
   /** Files the reviewer has ticked as viewed; marks on an older head carry over for files that did not change since. */

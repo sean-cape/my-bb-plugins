@@ -1,4 +1,5 @@
 import type { LineRange, StructuralDiff } from "../../types";
+import { rangesOverlap } from "../ranges";
 
 /** Unchanged lines kept visible on each side of a change, GitHub-style. */
 export const CONTEXT_LINES = 3;
@@ -23,9 +24,28 @@ export function structuralRows(diff: StructuralDiff): StructuralRow[] {
 }
 
 /**
+ * The rows new since a point in the change's history, from the new-side line ranges that changed since it: a row whose
+ * new line is in one (changed against the base or not: a line put back as it was is still new since the point), and a
+ * deleted row whose next new line is, where a pure deletion's range sits.
+ */
+export function newRows(rows: readonly StructuralRow[], ranges: Array<[number, number]>): Set<number> {
+  const fresh = new Set<number>();
+  if (ranges.length === 0) return fresh;
+  let nextNew: number | null = null;
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const row = rows[index]!;
+    if (row.rhs !== null) nextNew = row.rhs;
+    const line = row.rhs ?? nextNew;
+    if (line !== null && rangesOverlap(line, line, ranges)) fresh.add(index);
+  }
+  return fresh;
+}
+
+/**
  * The rows left unfolded: changes and their context, rows the user expanded, and the context around every finding
  * (new-side lines) and comment thread, which can sit on lines this view would otherwise fold away because GitHub's
- * hunks carry more context than difftastic's. A thread on a range unfolds all of it.
+ * hunks carry more context than difftastic's. A thread on a range unfolds all of it. With `onlyChanges`, those rows
+ * stay open in place of the changes ("Only new"), and the other changes fold like unchanged lines.
  */
 export function visibleRows(
   rows: readonly StructuralRow[],
@@ -33,13 +53,14 @@ export function visibleRows(
     revealed,
     findingLines,
     threads,
-  }: { revealed: ReadonlySet<number>; findingLines: ReadonlyArray<number | null>; threads: ReadonlyArray<LineRange> },
+    onlyChanges = null,
+  }: { revealed: ReadonlySet<number>; findingLines: ReadonlyArray<number | null>; threads: ReadonlyArray<LineRange>; onlyChanges?: ReadonlySet<number> | null },
 ): Set<number> {
   const visible = new Set<number>(revealed);
   const showAround = (index: number) => {
     for (let i = Math.max(0, index - CONTEXT_LINES); i <= Math.min(rows.length - 1, index + CONTEXT_LINES); i++) visible.add(i);
   };
-  for (const row of rows) if (row.changed) showAround(row.index);
+  for (const row of rows) if (onlyChanges === null ? row.changed : onlyChanges.has(row.index)) showAround(row.index);
   const rowByOldLine = new Map<number, number>();
   const rowByNewLine = new Map<number, number>();
   for (const row of rows) {

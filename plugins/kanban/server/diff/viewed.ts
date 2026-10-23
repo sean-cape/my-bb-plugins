@@ -1,5 +1,7 @@
 import type { Ticket } from "../../shared/board";
 import type { DiffDelta } from "../../shared/diff";
+
+type HeadsDelta = Omit<DiffDelta, "since">;
 import type { KanbanContext } from "../context";
 import { github, resolveToken } from "../github";
 import type { Changes } from "./changes";
@@ -37,7 +39,7 @@ export function newLineRangesFromPatch(patch: string): Array<[number, number]> {
   return ranges;
 }
 
-/** Files the reviewer ticked as viewed, and what changed since the head they last ticked files on. */
+/** Files the reviewer ticked as viewed, carried over a push for the files it did not touch. */
 export function createViewedMarks(ctx: KanbanContext, { changes }: { changes: Changes }) {
   const { bb, settings, stmts } = ctx;
   const { ticketDiff } = changes;
@@ -47,10 +49,10 @@ export function createViewedMarks(ctx: KanbanContext, { changes }: { changes: Ch
     return (await ticketDiff(ticket, false)).headSha ?? "env";
   }
 
-  const deltaCache = new Map<string, DiffDelta>();
+  const deltaCache = new Map<string, HeadsDelta>();
 
   /** GitHub's compare of two PR heads, reduced to per-file new-side ranges. Null for environment diffs or unknown shas. */
-  async function compareHeads(ticket: Ticket, fromSha: string, toSha: string): Promise<DiffDelta | null> {
+  async function compareHeads(ticket: Ticket, fromSha: string, toSha: string): Promise<HeadsDelta | null> {
     if (ticket.pr === null || fromSha === toSha) return null;
     const key = `${ticket.pr.repo}:${fromSha}..${toSha}`;
     const cached = deltaCache.get(key);
@@ -64,7 +66,7 @@ export function createViewedMarks(ctx: KanbanContext, { changes }: { changes: Ch
       bb.log.warn(`could not compare ${key}: ${String(error)}`);
       return null;
     }
-    const delta: DiffDelta = {
+    const delta: HeadsDelta = {
       fromSha,
       toSha,
       files: (response.files ?? []).map((file) => ({
@@ -83,14 +85,6 @@ export function createViewedMarks(ctx: KanbanContext, { changes }: { changes: Ch
   function lastViewedHead(ticket: Ticket, currentHead: string): string | null {
     const heads = stmts.viewedHeads.all(ticket.id).filter((row) => row.head_sha !== currentHead && row.head_sha !== "env");
     return heads[0]?.head_sha ?? null;
-  }
-
-  async function diffDelta(ticket: Ticket): Promise<DiffDelta | null> {
-    const head = (await ticketDiff(ticket, false)).headSha;
-    if (head === null) return null;
-    const from = lastViewedHead(ticket, head);
-    if (from === null) return null;
-    return compareHeads(ticket, from, head);
   }
 
   /** Marks made on an older head still count for files that did not change since; promote them so the UI and later calls see one head. */
@@ -128,7 +122,7 @@ export function createViewedMarks(ctx: KanbanContext, { changes }: { changes: Ch
     return { paths: stmts.viewedPathsForHead.all(ticket.id, head).map((row) => row.path) };
   }
 
-  return { diffDelta, listViewed, setViewed };
+  return { lastViewedHead, listViewed, setViewed };
 }
 
 export type ViewedMarks = ReturnType<typeof createViewedMarks>;

@@ -102,7 +102,7 @@ describe("a PR card's old side", () => {
     createChanges({
       bb: { log: { warn: () => {} }, sdk: {} },
       settings: { get: async () => ({ githubToken: "token", ghPath: "", hideVendored: false, difftPath: "" }) },
-      stmts: { latestCompletedReview: { get: () => undefined } },
+      stmts: { latestCompletedReviewOfKind: { get: () => undefined } },
       sync: { login: null },
     } as unknown as KanbanContext);
 

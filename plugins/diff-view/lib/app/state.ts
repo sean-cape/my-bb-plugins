@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { parseFindingFilter, type FindingFilter } from "./findings/findings";
 
 /** Every preference the view keeps in localStorage, under `diff-view:<name>`. */
-export type PreferenceName = "findingFilter" | "showFindings" | "tourOpen" | "fileTreeOpen" | "fileTreeWidth" | "viewMode" | "narrativeOutline" | "narrativeLayout" | `narrativeAt:${string}` | `narrativeRead:${string}` | "hideWhitespace" | "hideThreads" | "layout";
+export type PreferenceName = "findingFilter" | "showFindings" | "tourOpen" | "fileTreeOpen" | "fileTreeWidth" | "viewMode" | "narrativeOutline" | "narrativeLayout" | `narrativeAt:${string}` | `narrativeRead:${string}` | `landedOnNew:${string}` | "hideWhitespace" | "hideThreads" | "layout";
 
 /** Reads a preference, falling back to the key kanban stored it under before the diff view became its own plugin. */
 export function readPreference(name: PreferenceName): string | null {

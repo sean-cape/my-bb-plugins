@@ -17,6 +17,8 @@ import { navRows, patchRows, selectionRange } from "./patch-rows";
 import { SearchHighlightCss } from "../search/use-diff-search";
 import { GapBand } from "./gap-band";
 import { gapEnter, gapPart, navWithGaps, type PatchGaps } from "./patch-gaps";
+import type { NewSince } from "../new-since";
+import { newSinceCss } from "./new-since-css";
 
 /**
  * Pierre sizes each code column `1fr`, which cannot shrink below its widest unbreakable content: a long token or an
@@ -88,6 +90,7 @@ export function AnnotatedPatch({
   layout: layoutOverride,
   hunkSeparators,
   gaps,
+  newSince,
 }: PatchAnnotationProps & {
   patch: string;
   /** Split or unified; the view's line-diff layout preference when absent. */
@@ -96,6 +99,8 @@ export function AnnotatedPatch({
   hunkSeparators?: "simple" | "metadata" | "line-info" | "line-info-basic";
   /** An excerpt's gaps, drawn as bands the reader opens; the cursor stops on each one that hides rows. */
   gaps?: PatchGaps;
+  /** The lines to mark new since the last review; none when absent. */
+  newSince?: NewSince;
 }) {
   const { layout: preferredLayout } = useDiffPreferences();
   const layout = layoutOverride ?? preferredLayout;
@@ -103,6 +108,8 @@ export function AnnotatedPatch({
   const themes = useHostPierreThemes();
   const workerPool = useWorkerPool();
   const searchCss = useContext(SearchHighlightCss);
+  const freshRanges = newSince?.ranges;
+  const freshCss = useMemo(() => newSinceCss(freshRanges ?? []), [freshRanges]);
   // GitHub patches lack the `diff --git` header Pierre expects; synthesize one for the file.
   const fullPatch = useMemo(
     () => (patch.startsWith("diff --git") ? patch : `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${patch}`),
@@ -197,7 +204,7 @@ export function AnnotatedPatch({
       themeType: themeMode,
       disableFileHeader: true,
       overflow: "wrap" as const,
-      unsafeCSS: COLUMN_CSS + searchCss,
+      unsafeCSS: COLUMN_CSS + searchCss + freshCss,
       lineHoverHighlight: "both" as const,
       enableGutterUtility: true,
       enableLineSelection: true,
@@ -206,7 +213,7 @@ export function AnnotatedPatch({
       onLineSelectionChange: setDragged,
       onLineSelectionEnd: finish,
     };
-  }, [layout, hunkSeparators, themes, themeMode, rows, searchCss]);
+  }, [layout, hunkSeparators, themes, themeMode, rows, searchCss, freshCss]);
   // Stable across cursor moves, which re-render this file for its selection, so Pierre leaves the annotations alone.
   const renderAnnotation = useCallback(
     ({ metadata }: DiffLineAnnotation<AnnotationMeta>) => {

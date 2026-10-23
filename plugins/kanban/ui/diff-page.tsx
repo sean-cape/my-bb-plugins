@@ -104,7 +104,7 @@ function useKanbanDiffSource(subjectId: string, ticket: Ticket | null, plan: boo
               setApplied: (reviewId, findingId, applied) => rpc.call("review_set_applied", { reviewId, findingId, applied }),
             },
           }),
-      delta: async () => (await rpc.call("diff_delta", { ticketId: subjectId })).delta,
+      delta: async (fromSha) => (await rpc.call("diff_delta", { ticketId: subjectId, fromSha })).delta,
       tour: {
         get: () => rpc.call("narrative_get", { ticketId: subjectId }),
         generate: () => rpc.call("narrative_generate", { ticketId: subjectId }),
@@ -459,6 +459,7 @@ function KanbanSubmitBar({
   );
 }
 
+/** Reviews what no review has read yet, carrying the latest review's open findings forward. */
 function RereviewDeltaButton({ ticket }: { ticket: Ticket }) {
   const rpc = useRpc<typeof rpcContract>();
   const [reviewing, setReviewing] = useState(false);
@@ -478,10 +479,10 @@ function RereviewDeltaButton({ ticket }: { ticket: Ticket }) {
       type="button"
       className={cn("ml-auto rounded border border-border px-1.5 py-0.5 hover:bg-state-hover disabled:opacity-50", PRESS)}
       disabled={reviewing || ticket.latestReview?.status === "running"}
-      title="Review the commits since the last completed review and re-check its open findings"
+      title={ticket.pr === null ? "Review the card thread's commits since the last completed review and re-check its open findings (uncommitted changes wait for a commit)" : "Review the commits since the last completed review and re-check its open findings"}
       onClick={() => void rereview()}
     >
-      {ticket.latestReview?.status === "running" ? "Review running…" : "Re-review the delta"}
+      {ticket.latestReview?.status === "running" ? "Review running…" : "Re-review what's new"}
     </button>
   );
 }
@@ -536,8 +537,7 @@ export function KanbanDiffView({
           {ticket === null ? null : <HandoffStrip ticket={ticket} rpc={rpc} plan={plan} onOpenThread={onOpenThread} />}
         </>
       )}
-      // PR cards only: a local card's diff has no head sha, so it never has a delta to re-review.
-      deltaActions={ticket !== null && ticket.pr !== null ? <RereviewDeltaButton ticket={ticket} /> : null}
+      deltaActions={ticket === null ? null : ({ unreviewed }) => (unreviewed ? <RereviewDeltaButton ticket={ticket} /> : null)}
     />
   );
 }

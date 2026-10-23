@@ -25,7 +25,9 @@ export interface RowContext {
   newTokens: LineTokens[] | null;
   moved: ReadonlyMap<number, MovedRow>;
   semantics: SemanticChange[];
+  /** New-side lines changed since the point new code counts from, and that point's name ("r2"). */
   changedRanges: Array<[number, number]>;
+  newLabel: string;
   /** A press on a line number, which starts a drag over line numbers (or extends the open comment's range). */
   onLinePress: (side: DiffSide, line: number, extend: boolean) => void;
   /** Enter or Space on a line number. */
@@ -47,7 +49,7 @@ function semanticAt(semantics: SemanticChange[], side: DiffSide, line: number): 
   );
 }
 
-/** How one side's line is tinted: its code, its line number, and whether it changed since the reader last looked. */
+/** How one side's line is tinted: its code, its line number, and whether it is new since the last review. */
 function lineLook(context: RowContext, side: DiffSide, line: number, rowChanged: boolean, movedRow: MovedRow | null, selected: boolean) {
   const semantic = rowChanged && movedRow === null ? semanticAt(context.semantics, side, line) : null;
   const neutral = movedRow !== null || semantic !== null;
@@ -61,8 +63,13 @@ function lineLook(context: RowContext, side: DiffSide, line: number, rowChanged:
 function LineNumberCell({ context, line, side, gutterTint, changedSince, atCursor }: { context: RowContext; line: number; side: DiffSide; gutterTint: string | false; changedSince: boolean; atCursor: boolean }) {
   return (
     <td
-      className={cn("group/ln select-none border-r border-border/60 pl-3 pr-2 text-right align-top text-muted-foreground/70", gutterTint, changedSince && "shadow-[inset_2px_0_0_0_theme(colors.sky.500)]", atCursor && CURSOR_GUTTER)}
-      title={changedSince ? "Changed since you last looked" : undefined}
+      className={cn(
+        "group/ln select-none border-r border-border/60 pl-3 pr-2 text-right align-top text-muted-foreground/70",
+        // The new-since mark replaces the gutter's red or green: the code beside it still says added or changed.
+        changedSince ? "bg-sky-500/25 font-medium text-sky-800 shadow-[inset_3px_0_0_0_theme(colors.sky.500)] dark:text-sky-200" : gutterTint,
+        atCursor && CURSOR_GUTTER,
+      )}
+      title={changedSince ? `New since ${context.newLabel}` : undefined}
     >
       <button
         type="button"
@@ -199,7 +206,30 @@ export const UnifiedRowView = memo(function UnifiedRowView({
 });
 
 /** A fold of unchanged rows `from` up to `to`; `at` is the hidden row whose lines the cursor takes on it. */
-export const GapRow = memo(function GapRow({ path, from, to, total, first, last, at, onReveal, columns = 4 }: { path: string; from: number; to: number; total: number; first: StructuralRow; last: StructuralRow; at: StructuralRow; onReveal: (from: number, to: number) => void; columns?: number }) {
+export const GapRow = memo(function GapRow({
+  path,
+  from,
+  to,
+  total,
+  first,
+  last,
+  at,
+  onReveal,
+  columns = 4,
+  older = null,
+}: {
+  path: string;
+  from: number;
+  to: number;
+  total: number;
+  first: StructuralRow;
+  last: StructuralRow;
+  at: StructuralRow;
+  onReveal: (from: number, to: number) => void;
+  columns?: number;
+  /** The changes "Only new" folded in here, made before the point it counts from. */
+  older?: { changed: number; label: string } | null;
+}) {
   const atCursor = useCursorSide(path, at.lhs, at.rhs) !== null;
   const count = to - from;
   const range = `${first.rhs ?? first.lhs}–${last.rhs ?? last.lhs}`;
@@ -207,8 +237,8 @@ export const GapRow = memo(function GapRow({ path, from, to, total, first, last,
   return (
     <tr data-gap={from} className={FOLD_BAND}>
       <td colSpan={columns} className={cn("px-2 py-0.5", atCursor && CURSOR_RING)} data-cursor={atCursor ? "" : undefined}>
-        <FoldControls count={count} leading={from === 0} trailing={to === total} noun="unchanged lines" atCursor={atCursor} onReveal={reveal}>
-          {count} unchanged {count === 1 ? "line" : "lines"} ({range})
+        <FoldControls count={count} leading={from === 0} trailing={to === total} noun={older === null ? "unchanged lines" : "folded lines"} atCursor={atCursor} onReveal={reveal}>
+          {older === null ? `${count} unchanged ${count === 1 ? "line" : "lines"}` : `${count} ${count === 1 ? "line" : "lines"}, ${older.changed} changed before ${older.label}`} ({range})
         </FoldControls>
       </td>
     </tr>

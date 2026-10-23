@@ -3,10 +3,12 @@ import { z } from "zod";
 
 export const diffSideSchema = z.enum(["LEFT", "RIGHT"]);
 
-/** What changed between the head the reviewer last looked at and the current one. */
+/** What changed since a point in the change's history: the last review, by default, and the current code. */
 export const diffDeltaSchema = z.object({
   fromSha: z.string(),
   toSha: z.string(),
+  /** What `fromSha` is: a review's commit (with the review), your last GitHub review's, the head you last marked files viewed on, or a commit asked for by sha. */
+  since: z.object({ kind: z.enum(["review", "githubReview", "viewed", "commit"]), reviewId: z.string().nullable() }),
   files: z.array(
     z.object({
       path: z.string(),

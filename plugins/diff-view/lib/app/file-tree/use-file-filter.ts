@@ -14,6 +14,7 @@ export function useFileFilter({
   viewed,
   allThreads,
   findingsByPath,
+  changedSince,
   notify,
 }: {
   instanceKey: string;
@@ -21,18 +22,26 @@ export function useFileFilter({
   viewed: ReadonlySet<string>;
   allThreads: readonly DiffThread[];
   findingsByPath: ReadonlyMap<string, readonly PlacedFinding[]>;
+  changedSince: ReadonlySet<string>;
   notify: (message: string) => void;
 }) {
   const stored = useSyncExternalStore(subscribeFileFilters, () => readFileFilter(instanceKey));
-  const fileFilter = useMemo(() => pruneFileFilter(stored, diff?.files ?? []), [stored, diff]);
+  // "Only new" with nothing new (the head came back to the reviewed commit, a re-review caught up) is no filter.
+  const fileFilter = useMemo(() => {
+    const pruned = pruneFileFilter(stored, diff?.files ?? []);
+    if (!pruned.onlyNew || changedSince.size > 0) return pruned;
+    const off = { ...pruned, onlyNew: false };
+    return fileFilterActive(off) ? off : NO_FILE_FILTER;
+  }, [stored, diff, changedSince]);
   const setFileFilter = (filter: FileFilter) => writeFileFilter(instanceKey, filter);
   const fileMarks = useMemo(
     (): FileMarks => ({
       viewed,
       withComments: new Set(allThreads.map((thread) => thread.path)),
       withFindings: new Set([...findingsByPath].filter(([, list]) => list.length > 0).map(([path]) => path)),
+      changedSince,
     }),
-    [viewed, allThreads, findingsByPath],
+    [viewed, allThreads, findingsByPath, changedSince],
   );
   const shownFiles = useMemo(() => filterFiles(diff?.files ?? [], fileFilter, fileMarks), [diff, fileFilter, fileMarks]);
   /** Going to a file the filter leaves out clears the filter; true when it did, and the file mounts on the next render. */

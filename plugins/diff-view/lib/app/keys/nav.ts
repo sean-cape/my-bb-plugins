@@ -163,6 +163,17 @@ export function moveChange(files: readonly NavFile[], cursor: Cursor, direction:
   });
 }
 
+/** Starts of a run of changed rows on new lines `isNew` names: `]n` / `[n`. A run of deletions alone is not one. */
+export function moveNewChange(files: readonly NavFile[], cursor: Cursor, direction: 1 | -1, count: number, isNew: (path: string, line: number) => boolean): Cursor {
+  const fresh = (path: string, row: NavRow | undefined) => row !== undefined && row.changed && !row.expander && row.right !== null && isNew(path, row.right);
+  return seek(files, cursor, direction, count, ({ fileIndex, row }) => {
+    if (row === -1) return false;
+    const file = files[fileIndex]!;
+    const rows = visibleRows(file);
+    return fresh(file.path, rows[row]) && (row === 0 || !fresh(file.path, rows[row - 1]) || rows[row - 1]!.hunk !== rows[row]!.hunk);
+  });
+}
+
 /** First rows of hunks: `}` / `{`. */
 export function moveHunk(files: readonly NavFile[], cursor: Cursor, direction: 1 | -1, count: number): Cursor {
   return seek(files, cursor, direction, count, ({ fileIndex, row }) => {

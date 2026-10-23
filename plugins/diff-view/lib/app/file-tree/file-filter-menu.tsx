@@ -70,13 +70,15 @@ export function FileFilterButton({ active, onClick }: { active: boolean; onClick
 
 /**
  * Extensions and change types, ticked when shown, with every file of the diff counted; then hide viewed, only files with
- * comments, only files with findings (where the view has findings), and Clear. Ticking keeps the menu open.
+ * comments, only files with findings (where the view has findings), only what is new since the last review (where
+ * something is), and Clear. Ticking keeps the menu open.
  */
 export function FileFilterMenu({
   files,
   filter,
   marks,
   findings,
+  sinceLabel,
   anchor,
   onChange,
   onClose,
@@ -86,6 +88,8 @@ export function FileFilterMenu({
   marks: FileMarks;
   /** Whether the view has review findings, so "Only files with findings" means something. */
   findings: boolean;
+  /** What "Only new" counts from ("r2", "you last looked"). */
+  sinceLabel: string;
   anchor: DOMRect;
   onChange: (filter: FileFilter) => void;
   /** `refocus` is false when focus already left for something else. */
@@ -136,6 +140,9 @@ export function FileFilterMenu({
       <CheckItem checked={filter.onlyComments} label="Only files with comments" count={count(marks.withComments)} onToggle={() => onChange({ ...filter, onlyComments: !filter.onlyComments })} />
       {findings || filter.onlyFindings ? (
         <CheckItem checked={filter.onlyFindings} label="Only files with findings" count={count(marks.withFindings)} onToggle={() => onChange({ ...filter, onlyFindings: !filter.onlyFindings })} />
+      ) : null}
+      {marks.changedSince.size > 0 || filter.onlyNew ? (
+        <CheckItem checked={filter.onlyNew} label={`Only new since ${sinceLabel}`} count={count(marks.changedSince)} onToggle={() => onChange({ ...filter, onlyNew: !filter.onlyNew })} />
       ) : null}
       <div role="separator" className="my-1 h-px bg-border" />
       <button type="button" role="menuitem" tabIndex={-1} aria-disabled={!active} className={ITEM} onClick={() => active && onChange(NO_FILE_FILTER)}>

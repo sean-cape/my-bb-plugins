@@ -20,6 +20,7 @@ import {
   moveFile,
   moveHunk,
   moveLines,
+  moveNewChange,
   nextAnchor,
   rowIndexOf,
   visualRange,
@@ -100,6 +101,12 @@ export interface ReviewEnv {
   suggestions: SuggestionActions;
   /** Opens the commit picker; null when the source lists no commits. */
   openCommits: (() => void) | null;
+  /** Which new-side lines changed since the point new code counts from, and that point's name ("r2"); null when nothing is new. */
+  newSince: { isNew: (path: string, line: number) => boolean; label: string } | null;
+  /** Turns "Only new" on or off; null when nothing is new. */
+  toggleOnlyNew: (() => void) | null;
+  /** Moves the keyboard into the review rounds above the diff; false when they don't show. */
+  focusChangesStrip: () => boolean;
 }
 
 export interface FileActions {
@@ -205,6 +212,13 @@ function runViewCommand(command: ReviewCommand, env: ReviewEnv): boolean {
     }
     case "outsideFindings":
       if (!env.focusOutsideFindings()) env.notify("No pre-existing or filtered findings");
+      return true;
+    case "onlyNew":
+      if (env.toggleOnlyNew === null) env.notify("Nothing changed since the last review");
+      else env.toggleOnlyNew();
+      return true;
+    case "changesStrip":
+      if (!env.focusChangesStrip()) env.notify("No reviews or new changes to show");
       return true;
     case "refresh":
       env.refresh();
@@ -346,6 +360,16 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
     case "hunk":
       move(moveHunk(files, cursor, command.direction, count));
       return;
+    case "newChange": {
+      if (env.newSince === null) {
+        env.notify("Nothing changed since the last review");
+        return;
+      }
+      const next = moveNewChange(files, cursor, command.direction, count, env.newSince.isNew);
+      if (next === cursor) env.notify(`No more changes new since ${env.newSince.label} ${command.direction === 1 ? "below" : "above"}`);
+      else move(next, "center");
+      return;
+    }
     case "file":
       move(moveFile(files, cursor, command.direction, count));
       return;

@@ -1,5 +1,6 @@
 // The files view's file filter, as GitHub's "Filter" menu on Files changed: which extensions and change types show,
-// and whether viewed files, files without comments and files without findings are left out.
+// and whether viewed files, files without comments, files without findings and files unchanged since the last review
+// are left out.
 import type { DiffFile } from "../types";
 import { flipped } from "./sets";
 import type { Keymap } from "./ui/vim-keys-core";
@@ -20,9 +21,11 @@ export interface FileFilter {
   hideViewed: boolean;
   onlyComments: boolean;
   onlyFindings: boolean;
+  /** Only what changed since the last review (or the round picked to count from); its other hunks fold away too. */
+  onlyNew: boolean;
 }
 
-export const NO_FILE_FILTER: FileFilter = { hiddenExtensions: new Set(), hiddenChangeTypes: new Set(), hideViewed: false, onlyComments: false, onlyFindings: false };
+export const NO_FILE_FILTER: FileFilter = { hiddenExtensions: new Set(), hiddenChangeTypes: new Set(), hideViewed: false, onlyComments: false, onlyFindings: false, onlyNew: false };
 
 /** What the filter reads about each file beyond the file itself. */
 export interface FileMarks {
@@ -31,6 +34,8 @@ export interface FileMarks {
   withComments: ReadonlySet<string>;
   /** Paths with a review finding shown in the diff. */
   withFindings: ReadonlySet<string>;
+  /** Paths that changed since the point the view counts new code from. */
+  changedSince: ReadonlySet<string>;
 }
 
 /** The lower-cased extension of a path's file name with its dot (".ts"); `NO_EXTENSION` when it has none. */
@@ -56,7 +61,7 @@ export function changeTypeOf(file: Pick<DiffFile, "status">): ChangeType {
 }
 
 export function fileFilterActive(filter: FileFilter): boolean {
-  return filter.hiddenExtensions.size > 0 || filter.hiddenChangeTypes.size > 0 || filter.hideViewed || filter.onlyComments || filter.onlyFindings;
+  return filter.hiddenExtensions.size > 0 || filter.hiddenChangeTypes.size > 0 || filter.hideViewed || filter.onlyComments || filter.onlyFindings || filter.onlyNew;
 }
 
 export function fileShown(file: Pick<DiffFile, "path" | "status">, filter: FileFilter, marks: FileMarks): boolean {
@@ -65,6 +70,7 @@ export function fileShown(file: Pick<DiffFile, "path" | "status">, filter: FileF
   if (filter.hideViewed && marks.viewed.has(file.path)) return false;
   if (filter.onlyComments && !marks.withComments.has(file.path)) return false;
   if (filter.onlyFindings && !marks.withFindings.has(file.path)) return false;
+  if (filter.onlyNew && !marks.changedSince.has(file.path)) return false;
   return true;
 }
 

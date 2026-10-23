@@ -60,8 +60,11 @@ export interface DiffSource {
     /** Marks a finding fixed (or not), so the diff leaves it out; applying a finding's suggestion marks it. */
     setApplied?(reviewId: string, findingId: string, applied: boolean): Promise<Review>;
   };
-  /** What changed since the head the reviewer last looked at. */
-  delta?(): Promise<DiffDelta | null>;
+  /**
+   * What changed since `fromSha` (a review round's commit the reader picked), or, null, since the host's default point:
+   * the last review, say. Null when nothing has.
+   */
+  delta?(fromSha: string | null): Promise<DiffDelta | null>;
   /** `story` lights up the narrative review: every narrative with the diff it was written against, for stepping through. */
   tour?: { get(): Promise<TourState>; generate(): Promise<Narrative>; story?(): Promise<NarrativeStory> };
   explanations?: {

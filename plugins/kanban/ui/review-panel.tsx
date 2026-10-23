@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { toast } from "sonner";
 import { CHEVRON, OPACITY_TRANSITION, PRESS, STAGGER, enter, speed, stagger, usePopOnChange, POPOVER_MOTION } from "bb-motion";
+import { reviewRounds, roundName } from "bb-diff-view/app/rounds";
 import type { Ticket } from "../shared/board";
 import { locationLabel } from "../shared/finding-location";
 import {
@@ -480,7 +481,13 @@ function DepthPicker({ depth, onChange, onStart }: { depth: ReviewDepth; onChang
   );
 }
 
-function ReviewStatusChips({ review }: { review: Ticket["latestReview"] }) {
+/** What a completed review read, in plain text: `at abc1234`, or `def5678..abc1234` for a re-review of the commits since. */
+function reviewedRange(review: { commitSha: string | null; sinceCommitSha: string | null }): string | null {
+  if (review.commitSha === null) return null;
+  return review.sinceCommitSha === null ? `at ${shortSha(review.commitSha)}` : `${shortSha(review.sinceCommitSha)}..${shortSha(review.commitSha)}`;
+}
+
+function ReviewStatusChips({ review, round }: { review: Ticket["latestReview"]; round: string | null }) {
   if (review === null) return null;
   if (review.status === "running") {
     return (
@@ -491,8 +498,11 @@ function ReviewStatusChips({ review }: { review: Ticket["latestReview"] }) {
     );
   }
   if (review.status === "failed") return <Badge tone="danger">failed</Badge>;
+  const range = reviewedRange(review);
   return (
-    <span className="inline-flex items-center gap-1" title={`Reviewed at ${review.commitSha ?? "unknown"}${review.sinceCommitSha !== null ? ` (since ${review.sinceCommitSha})` : ""}`}>
+    <span className="inline-flex items-center gap-1" title={`Reviewed at ${review.commitSha ?? "unknown"}${review.sinceCommitSha !== null ? ` (the commits since ${review.sinceCommitSha})` : ""}`}>
+      {round !== null ? <span className="text-[11px] font-medium text-muted-foreground">{round}</span> : null}
+      {range !== null ? <span className="font-mono text-[11px] text-muted-foreground">{range}</span> : null}
       <DepthBadge depth={review.depth} />
       <SeverityCountBadges counts={review.counts} appliedCount={review.appliedCount} />
     </span>
@@ -536,6 +546,12 @@ export function ReviewPanel({
     };
   }, [showFindings, ticket.id, ticket.latestReview?.completedAt, ticket.latestReview?.selectedCount, ticket.latestReview?.appliedCount, rpc]);
 
+  // The same r1, r2, … the changes view names its review rounds by.
+  const rounds = useMemo(() => reviewRounds(reviews ?? []), [reviews]);
+  const roundNameOf = (reviewId: string | null): string | null => {
+    const round = rounds.find((entry) => entry.review.id === reviewId);
+    return round === undefined ? null : roundName(round.number);
+  };
   const applying = review?.apply !== null && review?.apply !== undefined && review.apply.completedAt === null;
   const selectedCount = review?.selectedCount ?? null;
   const updateReview = (updated: Review) =>
@@ -631,7 +647,7 @@ export function ReviewPanel({
   );
 
   return (
-    <Group title="Code review" summary={<ReviewStatusChips review={review} />} menu={menu} defaultOpen>
+    <Group title="Code review" summary={<ReviewStatusChips review={review} round={roundNameOf(review?.id ?? null)} />} menu={menu} defaultOpen>
       {review === null ? (
         <div className="flex flex-wrap items-center gap-2">
           <span title={unavailable ?? (reviewsLocally ? "Runs the code-review skill on the card thread's commits, in a worktree of their own" : "Runs the code-review skill on the PR in its own worktree")}>
@@ -724,8 +740,8 @@ export function ReviewPanel({
                           .map((entry) => (
                             <details key={entry.id}>
                               <summary className="cursor-pointer text-xs text-muted-foreground">
-                                {shortSha(entry.commitSha)}
-                                {entry.sinceCommitSha !== null ? ` (since ${shortSha(entry.sinceCommitSha)})` : ""} ·{" "}
+                                {roundNameOf(entry.id) === null ? "" : `${roundNameOf(entry.id)} · `}
+                                {reviewedRange(entry) ?? shortSha(entry.commitSha)} ·{" "}
                                 {new Date(entry.completedAt ?? entry.createdAt).toLocaleString()}
                               </summary>
                               <div className="mt-2">

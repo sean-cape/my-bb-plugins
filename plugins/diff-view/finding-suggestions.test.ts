@@ -27,7 +27,7 @@ function inline(suggestion: FindingSuggestion | null, overrides: Partial<Finding
     suggestion,
     ...overrides,
   };
-  return { reviewId: "r1", finding, selected: true, overridden: false, edited: false, isNew: false, carriedFrom: null, touched: false };
+  return { reviewId: "r1", finding, selected: true, overridden: false, edited: false, newIn: null, carriedFrom: null, openSince: null, touched: false };
 }
 
 const suggestion: FindingSuggestion = { file: "a.ts", startLine: 2, endLine: 3, replacement: "TWO\nTHREE" };

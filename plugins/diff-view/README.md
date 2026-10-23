@@ -129,7 +129,10 @@ plugins embed.
   changes show. The summary bar's totals are always the raw counts.
 - **Commits**: the summary bar's "Commits: All changes" control, or `gr`,
   opens a picker of All changes, the host's review marks ("Since last
-  review"), then every commit, oldest first: `j`/`k` move, Enter (or a click)
+  review"), then every commit, oldest first, each commit a review read up to
+  tagged with its round ("r1 reviewed") and the ones after the latest round
+  tagged "new"; with commits no review has read, the control says so ("All
+  changes · 3 new since r2"): `j`/`k` move, Enter (or a click)
   picks one, Space or `x` (or a shift-click) on a commit starts a range and
   Enter on another picks every commit between them (Enter back on the first,
   or across every commit, says it shows one commit or all changes), Escape
@@ -138,10 +141,36 @@ plugins embed.
   "3 commits", a mark). A partial range is for reading: comments and viewed
   marks work only when it ends at the head, and only on new-side lines, where
   existing threads and findings still show; otherwise `i` and `v` say to switch
-  back to All changes. The "since you last looked" strip and the narrative wait
+  back to All changes. The review rounds strip and the narrative wait
   for All changes. A thread's commits come from its local checkout (`git log`
   since the merge base, uncommitted changes as a last "Uncommitted" entry);
   without one there are none.
+- **New since the last review**: when the host serves review rounds (its
+  reviews' commits) and a delta, a strip above the diff tells new code from
+  code a review has read. It lists the completed reviews oldest first as
+  rounds (`r1 abc1234 · 5 findings › r2 def5678 · 2 new · 3 still open · 1
+  fixed`), then what came after the latest one ("+3 commits since r2",
+  "uncommitted changes since r2"), and a review running on it ("r3
+  reviewing…"), with the host's controls (kanban's "Re-review what's new") at
+  the end. Under it, the files changed since that round as chips and "Only
+  new", and the findings the latest round found fixed, each a jump to its file.
+  Every line changed since the round is marked in the gutter in blue (the
+  structural view and the line diff's added lines), its hunk header says "new
+  since r2", its file header and its file tree row say so too, and the file
+  tree lists those files again in a "Changed since r2" group at the top.
+  Picking another round in the strip (or `gh`, then `h`/`l` and Enter) counts
+  from its commit instead. "Only new" (`gn`, or the file filter's "Only new
+  since r2") leaves out the other files and, in the structural view, folds the
+  older hunks too, into folds that say how many changed lines they hold; `]n`
+  and `[n` step through the new changes either way. Opened after a push or a
+  re-review, the view starts at the first file changed since the latest round,
+  once for each new stretch of code, unless the cursor has already moved.
+  Without review rounds the strip counts from the host's own point (kanban's:
+  your last GitHub review, else the head you last marked files viewed on).
+  Findings say which round they came from: "new in r2", "since r1" for one
+  every review since has found still open, and "lines changed" when the code
+  on their lines changed after their review read it, so they may have moved or
+  been fixed.
 - **Keyboard**: the whole review runs on vim-style keys, sent to the view that
   last had the pointer or focus, never while typing in a text box. "Changes:
   review with the keyboard" (⌘⇧D by default, rebindable in bb's keyboard
@@ -154,7 +183,8 @@ plugins embed.
   the diff), and scrolling by hand carries it along to the middle line. Keys: `j`/`k` lines (with counts, `5j`; a line with several comments or findings
   is stepped through one at a time), `h`/`l` old
   or new side (`h` past the old side, or on a file header, moves into the file
-  list), `]c`/`[c` changes, `}`/`{` hunks, `]f`/`[f` files, `c`/`C`
+  list), `]c`/`[c` changes, `]n`/`[n` changes new since the last review
+  (see New since the last review), `}`/`{` hunks, `]f`/`[f` files, `c`/`C`
   comment threads and review findings (one at a time when several share a
   line), `]d`/`[d` findings only, `gg`/`G`, Ctrl-D/U/F/B, and `zz`/`zt`/`zb`.
   `/` searches the diff's text: every file's old and new lines as drawn (with
@@ -189,7 +219,9 @@ plugins embed.
   `zr` shows more unchanged lines, `F` cycles which review findings show,
   `gF` folds or unfolds the filtered findings, `gp` moves the keyboard into
   the pre-existing and filtered list above the diff (`j`/`k` move, Enter
-  opens one or makes a card, Escape returns),
+  opens one or makes a card, Escape returns), `gh` into the review rounds
+  strip (`h`/`l` across, Enter picks a round, Escape returns), `gn` turns
+  "Only new" on or off,
   `K` asks for an explanation of the hunk, `S` switches to the narrative
   review where the host has one (see below),
   `gd` peeks at a symbol on the line (Escape closes it), `gl` switches every file between

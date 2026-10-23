@@ -174,7 +174,8 @@ export function createChanges(ctx: KanbanContext) {
 
   /** The card's commits for the commit picker, with the review marks that are among them. */
   async function ticketCommits(ticket: Ticket): Promise<DiffCommits> {
-    const lastReviewSha = ctx.stmts.latestCompletedReview.get(ticket.id)?.commit_sha ?? null;
+    // A card reviewed both as a PR and locally keeps two chains; the mark reads on from the one this diff is.
+    const lastReviewSha = ctx.stmts.latestCompletedReviewOfKind.get(ticket.id, ticket.pr !== null ? "pr" : "local")?.commit_sha ?? null;
     if (ticket.pr !== null) {
       const auth = await resolveToken(settings);
       if (auth === null) return noCommits();

@@ -31,7 +31,7 @@ const FILES = [
   file("src/old.ts", "deleted"),
 ];
 
-const NO_MARKS: FileMarks = { viewed: new Set(), withComments: new Set(), withFindings: new Set() };
+const NO_MARKS: FileMarks = { viewed: new Set(), withComments: new Set(), withFindings: new Set(), changedSince: new Set() };
 const paths = (files: readonly { path: string }[]) => files.map((entry) => entry.path);
 
 describe("file filter", () => {
@@ -70,11 +70,13 @@ describe("file filter", () => {
   });
 
   it("hides viewed files, and keeps only files with comments or findings, all together", () => {
-    const marks: FileMarks = { viewed: new Set(["src/a.ts"]), withComments: new Set(["src/a.ts", "README.md"]), withFindings: new Set(["README.md", "Makefile"]) };
+    const marks: FileMarks = { viewed: new Set(["src/a.ts"]), withComments: new Set(["src/a.ts", "README.md"]), withFindings: new Set(["README.md", "Makefile"]), changedSince: new Set(["Makefile", "src/old.ts"]) };
     expect(paths(filterFiles(FILES, { ...NO_FILE_FILTER, hideViewed: true }, marks))).toEqual(["src/b.TS", "README.md", "Makefile", ".gitignore", "src/old.ts"]);
     expect(paths(filterFiles(FILES, { ...NO_FILE_FILTER, onlyComments: true }, marks))).toEqual(["src/a.ts", "README.md"]);
     expect(paths(filterFiles(FILES, { ...NO_FILE_FILTER, onlyFindings: true }, marks))).toEqual(["README.md", "Makefile"]);
     expect(paths(filterFiles(FILES, { ...NO_FILE_FILTER, hideViewed: true, onlyComments: true, onlyFindings: true }, marks))).toEqual(["README.md"]);
+    expect(paths(filterFiles(FILES, { ...NO_FILE_FILTER, onlyNew: true }, marks))).toEqual(["Makefile", "src/old.ts"]);
+    expect(fileFilterActive({ ...NO_FILE_FILTER, onlyNew: true })).toBe(true);
   });
 
   it("drops unticked choices the files no longer have, rather than keeping a filter that leaves nothing out", () => {

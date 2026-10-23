@@ -221,13 +221,21 @@ export interface FindingEdit {
 export interface Review {
   id: string;
   status: "running" | "completed" | "failed";
+  /** The commit the review read; absent from hosts that don't record it. */
+  commitSha?: string | null;
   /** Commit the previous review ended at, when this was an incremental review. */
   sinceCommitSha: string | null;
   /**
    * `carriesForward`: a re-review whose findings include every earlier one still open, superseding older reviews.
    * `filtered`: findings the verifier did not believe, kept for a look.
    */
-  report: { findings: Finding[]; filtered?: Finding[]; carriesForward?: boolean } | null;
+  report: {
+    findings: Finding[];
+    filtered?: Finding[];
+    carriesForward?: boolean;
+    /** Earlier findings (`<reviewId>/<findingId>`) a re-review found fixed. */
+    resolved?: Array<{ id: string; title: string }>;
+  } | null;
   /** Effective per-finding selection for the apply round. */
   selection: Record<string, boolean>;
   /** Only the findings the user explicitly toggled. */
@@ -239,10 +247,15 @@ export interface Review {
   createdAt: number;
 }
 
-/** What changed between the head the reviewer last looked at and the current one. */
+/** Where a delta counts from: a review's commit, the reviewer's last GitHub review, the head they last marked files viewed on, or any commit. */
+export type DeltaSinceKind = "review" | "githubReview" | "viewed" | "commit";
+
+/** What changed between a point in the change's history (the last review, say) and the diff's new side. */
 export interface DiffDelta {
   fromSha: string;
   toSha: string;
+  /** What `fromSha` is; absent from hosts that don't say, which the view reads as where the reviewer last looked. */
+  since?: { kind: DeltaSinceKind; reviewId: string | null };
   files: Array<{ path: string; status: string; additions: number; deletions: number; ranges: Array<[number, number]> }>;
 }
 

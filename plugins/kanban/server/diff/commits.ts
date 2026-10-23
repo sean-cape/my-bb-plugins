@@ -39,12 +39,17 @@ export function reviewMarks(
   const reviewed = inList(before, lastReviewSha);
   if (reviewed !== undefined) marks.push({ sha: reviewed.sha, label: "Since last review" });
   if (githubReviews !== null && login !== null) {
-    const mine = githubReviews
-      .filter((review) => review.user?.login.toLowerCase() === login.toLowerCase() && review.state !== "PENDING" && review.submitted_at != null)
-      .sort((a, b) => Date.parse(a.submitted_at!) - Date.parse(b.submitted_at!))
-      .at(-1);
-    const commit = inList(before, mine?.commit_id);
+    const commit = inList(before, lastGithubReviewSha(githubReviews, login));
     if (commit !== undefined) marks.push({ sha: commit.sha, label: "Since your last GitHub review" });
   }
   return marks;
+}
+
+/** The commit the signed-in user's latest submitted review on the PR was left on; null when they have submitted none. */
+export function lastGithubReviewSha(githubReviews: readonly GithubReviewAtCommit[], login: string): string | null {
+  const mine = githubReviews
+    .filter((review) => review.user?.login.toLowerCase() === login.toLowerCase() && review.state !== "PENDING" && review.submitted_at != null)
+    .sort((a, b) => Date.parse(a.submitted_at!) - Date.parse(b.submitted_at!))
+    .at(-1);
+  return mine?.commit_id ?? null;
 }

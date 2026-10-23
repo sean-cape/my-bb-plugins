@@ -22,6 +22,7 @@ import { useNerdFont } from "./ui/nerd-font";
 import { PatchPlaceholder } from "./large-diff";
 import { FileHeaderMenu } from "./file-actions";
 import type { ShownPatch } from "./patches";
+import type { NewSince } from "./new-since";
 
 export type { ShownPatch } from "./patches";
 
@@ -52,7 +53,7 @@ export function FileSection({
   explanations,
   onExplain,
   semantics,
-  changedRanges,
+  newSince,
   shown,
   loadedPatch,
   onPatchLoaded,
@@ -73,7 +74,7 @@ export function FileSection({
   explanations: HunkExplanation[];
   onExplain: ((side: "old" | "new", startLine: number, endLine: number) => void) | null;
   semantics: SemanticChange[];
-  changedRanges: Array<[number, number]>;
+  newSince: NewSince;
   shown: ShownPatch;
   /** The patch "Load diff" fetched for a file the diff came without one for. */
   loadedPatch: string | null;
@@ -115,6 +116,11 @@ export function FileSection({
         {shown.onlyWhitespace ? (
           <Badge tone="outline" title="Every change in this file is whitespace, which is hidden; collapsed by default (W shows whitespace changes)">
             Only whitespace changed
+          </Badge>
+        ) : null}
+        {newSince.changed ? (
+          <Badge tone="fresh" title={`This file changed since ${newSince.label}; its new lines are marked blue in the gutter (]n / [n step through them)`}>
+            new since {newSince.label}
           </Badge>
         ) : null}
         <ChangeCounts additions={file.additions} deletions={file.deletions} className="text-xs" />
@@ -173,7 +179,7 @@ export function FileSection({
                       <Diff patch={drawn} path={file.path} view={layout} className="text-xs" />
                     </>
                   }>
-                  <AnnotatedPatch key={file.path} {...annotations} patch={drawn} />
+                  <AnnotatedPatch key={file.path} {...annotations} patch={drawn} newSince={newSince} />
                 </DiffErrorBoundary>
               );
             // difftastic ignores whitespace already, so a file with nothing else changed skips it while whitespace is hidden.
@@ -185,7 +191,7 @@ export function FileSection({
                 explanations={explanations}
                 onExplain={onExplain}
                 semantics={semantics}
-                changedRanges={changedRanges}
+                newSince={newSince}
                 fallback={textDiff}
                 fallbackNote={file.patch === null ? "difftastic could not diff this file" : undefined}
                 unchangedNote={shown.changed ? "Shown as a line diff: difftastic finds no change beyond formatting" : undefined}

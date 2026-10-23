@@ -300,7 +300,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
   picker beside its Review and Retry buttons (from the keys, h/l choose and
   Enter starts the review), and its menu chooses the depth of the next
   review; `bb kanban review --depth quick|standard|deep` does the same. The
-  changes view's Review button and "Re-review the delta", and the board's
+  changes view's Review button and "Re-review what's new", and the board's
   review icon, run Standard. The card panel shows the depth a review ran at
   (from its report), and the board card's review badge names it on hover.
 - **Persisted reviews**: when the review thread finishes, its compiled findings
@@ -482,15 +482,23 @@ its PR is reviewed and its review findings and comments are handed to agents.
   collapsible strip under the header and is kept until the PR head moves. The same row shows the tour's semantic labels (rename,
   move, signature, reorder, reformat, extract, inline), and lines inside those
   blocks are tinted violet instead of red/green.
-- **Since you last looked**: when the PR head moves after you ticked files as
-  viewed, a strip lists the files that changed (GitHub compare between the two
-  heads), how many findings are new or had their lines touched, and offers
-  "Re-review the delta", which runs the code-review skill incrementally from
-  the last reviewed commit. Viewed marks carry over for files the push did
-  not touch; changed lines get a blue edge in the gutter and changed files a
-  "changed" chip in the tree. Findings from the latest review are shown,
-  tagged "new", "carried" or "touched" (re-reviews made before carry-over
-  stack on the latest full review instead).
+- **New since the last review**: the changes view counts new code from the
+  card's last completed review (of the diff's own kind: a PR card's PR
+  reviews, a local card's local ones), else your last submitted GitHub review
+  of the PR, else the head you last marked files viewed on. A strip above the
+  diff lists the reviews as rounds (r1, r2, …, each with the commit it read
+  and what it found), what came after the latest ("+3 commits since r2"; on
+  a local card, through its uncommitted changes), and a review running now;
+  "Re-review what's new" runs the code-review skill incrementally from the
+  last reviewed commit, on PR and local cards alike. Lines changed since the
+  round are marked blue in the gutter and their hunks and files say "new since
+  r2"; picking an older round counts from it instead; "Only new" (`gn`) folds
+  everything else away and `]n`/`[n` step through what is new. Findings are
+  tagged "new in r2", "since r1" (still open at every review since) or "lines
+  changed" (the code under them changed after their review). The card panel's
+  Code review names its round and the commits it read (`at abc1234`, or
+  `def5678..abc1234` for a re-review). Viewed marks carry over a push for the
+  files it did not touch. See the Diff view plugin's README for the details.
 - **Risk heat**: the narrative scores each file 1–5 for review attention; the file
   tree marks each row with a dot from green to red accordingly (viewed files lose it),
   falling back to the worst finding severity in the file when there is no tour.

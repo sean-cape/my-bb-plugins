@@ -9,7 +9,9 @@ import { toast } from "sonner";
 import { commitRangeKey, type DiffComment, type DiffFile, type SemanticChange, type SymbolLookup } from "../types";
 import { otherLayout, readPreference, requestReload, setDiffPreferences, useDiffInstance, useDiffPreferences, writePreference } from "./state";
 import { DEFAULT_LABELS, type DiffSource, type DiffViewLabels } from "./source";
-import { DeltaStrip, useDelta } from "./delta-strip";
+import { CHANGES_STRIP, ChangesStrip, useDelta } from "./delta-strip";
+import { commitsAfter, reviewRounds, roundName, runningReview, sinceName } from "./rounds";
+import { NOTHING_NEW, type NewSince } from "./new-since";
 import { FileSection } from "./file-section";
 import type { ShownPatch } from "./patches";
 import { useLoadedPatches, useShownPatches } from "./use-patches";
@@ -55,6 +57,7 @@ import { useConversationEvents } from "./conversation/use-conversation-events";
 import { useConversationMode } from "./conversation/use-conversation-mode";
 import { errorMessage, groupByPath, plural } from "./format";
 import { cn } from "./utils";
+import { rangesOverlap } from "./ranges";
 import { enter } from "./ui/motion";
 import { focusRow, focusWhenShown, type Keymap } from "./ui/vim-keys";
 import { SkeletonLines } from "./ui/skeleton";
@@ -90,8 +93,11 @@ export interface DiffViewProps {
   labels?: Partial<DiffViewLabels>;
   /** The bar shown while comments are waiting to be sent; the host decides where they go. */
   renderSubmitBar?: (pending: PendingComments) => ReactNode;
-  /** Extra controls at the end of the "since you last looked" strip. */
-  deltaActions?: ReactNode;
+  /**
+   * Extra controls at the end of the review rounds strip above the diff (a re-review button, say); a function hears
+   * whether the code moved past the latest review, which a review is running on doesn't count.
+   */
+  deltaActions?: ReactNode | ((state: { unreviewed: boolean }) => ReactNode);
   /**
    * Controls above the diff, for surfaces with no title bar of their own (a side panel, say). A function gets the
    * comments waiting to be sent, for a host whose heading row holds the send controls; it then tags their container
@@ -211,7 +217,16 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   };
   // The tour reloads on every refresh signal, so the story follows it.
   const narrative = useNarrativeStory(source, tour, mode === "narrative");
-  const delta = useDelta(source, diff?.headSha ?? null);
+  const rounds = useMemo(() => reviewRounds(reviews), [reviews]);
+  const running = runningReview(reviews);
+  // The reviews refetch with every refresh signal; the deltas only need refetching when a round is added or moves.
+  const roundsKey = rounds.map((round) => `${round.review.id}:${round.review.commitSha ?? ""}`).join(",");
+  // Where new code counts from: the source's default (the last review), unless a round was picked in the strip.
+  const [pickedSince, setPickedSince] = useState<string | null>(null);
+  const latestDelta = useDelta(source, diff?.headSha ?? null, null, roundsKey);
+  const pickedDelta = useDelta(source, diff?.headSha ?? null, pickedSince, roundsKey, pickedSince !== null);
+  const delta = pickedSince === null ? latestDelta : pickedDelta;
+  const sinceLabel = delta === null ? "" : sinceName(delta, rounds);
   const preferences = useDiffPreferences();
   const { findingFilter, hideWhitespace } = preferences;
   const { rawPatches, whitespaceOnly, loadedPatchOf, rememberLoadedPatch } = useLoadedPatches(diff, commitRange);
@@ -257,17 +272,19 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     toast.message(labels.noCheckout);
   };
 
-  const allFindingsByPath = useMemo(() => inlineFindingsByPath(reviews, delta), [reviews, delta]);
+  const allFindingsByPath = useMemo(() => inlineFindingsByPath(reviews, latestDelta), [reviews, latestDelta]);
   const outsideFindings = useMemo(() => findingsOutsideDiff(reviews), [reviews]);
   const [filteredOpen, setFilteredOpen] = useState(false);
   const findingsByPath = useMemo(() => (gate.findings ? filterFindings(allFindingsByPath, findingFilter) : new Map<string, PlacedFinding[]>()), [allFindingsByPath, findingFilter, gate]);
   const allFindings = useMemo(() => distinctFindings([...allFindingsByPath.values()].flat()), [allFindingsByPath]);
   const shownFindingCount = useMemo(() => distinctFindings([...findingsByPath.values()].flat()).length, [findingsByPath]);
-  const newFindings = allFindings.filter((item) => item.isNew);
+  const latestRound = rounds.at(-1)?.number ?? null;
+  const newFindings = allFindings.filter((item) => item.newIn !== null && item.newIn === latestRound);
   const touchedFindings = allFindings.filter((item) => item.touched);
   const semanticsByPath = useMemo(() => tourSemanticsByPath(tour), [tour]);
   const risk = useMemo(() => riskByPath(tour, allFindingsByPath), [tour, allFindingsByPath]);
   const changedRangesByPath = useMemo(() => new Map((gate.whole ? (delta?.files ?? []) : []).map((file) => [file.path, file.ranges] as const)), [delta, gate]);
+  const changedPaths = useMemo(() => new Set(changedRangesByPath.keys()), [changedRangesByPath]);
   const shownThreads = useMemo(() => gate.threads(comments.threads), [comments.threads, gate]);
   // `H` leaves every thread out of the files and the narrative; the conversation still lists them.
   const inlineThreads = preferences.hideThreads ? NO_THREADS : shownThreads;
@@ -275,7 +292,20 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   const threadsByPath = useMemo(() => groupByPath(inlineThreads), [inlineThreads]);
   const forPath = (path: string) => threadsByPath.get(path) ?? NO_THREADS;
   const shownPatches = useShownPatches({ rawPatches, hideWhitespace, whitespaceOnly, threadsByPath, findingsByPath });
-  const { fileFilter, setFileFilter, fileFiltered, fileMarks, shownFiles, unhide } = useFileFilter({ instanceKey, diff, viewed, allThreads: comments.allThreads, findingsByPath, notify });
+  const { fileFilter, setFileFilter, fileFiltered, fileMarks, shownFiles, unhide } = useFileFilter({ instanceKey, diff, viewed, allThreads: comments.allThreads, findingsByPath, changedSince: changedPaths, notify });
+  const onlyNew = fileFilter.onlyNew;
+  const newSinceByPath = useMemo(
+    () => new Map([...changedRangesByPath].map(([path, ranges]): [string, NewSince] => [path, { changed: true, ranges, label: sinceLabel, only: onlyNew }])),
+    [changedRangesByPath, sinceLabel, onlyNew],
+  );
+  const toggleOnlyNew =
+    changedPaths.size === 0
+      ? null
+      : () => {
+          const on = !onlyNew;
+          setFileFilter({ ...fileFilter, onlyNew: on });
+          notify(on ? `Only what changed since ${sinceLabel} (gn shows everything)` : "Showing all the changes");
+        };
   // What `/` searches: each file's patch as drawn, so hidden whitespace changes never match.
   const searchFiles = useMemo((): SearchedFile[] => shownFiles.map((file) => ({ path: file.path, patch: shownPatches.get(file.path)?.patch ?? null })), [shownFiles, shownPatches]);
   const textSearch = useDiffSearch({ keys, files: searchFiles, scroller: () => mainRef.current, painting: mode === "files" });
@@ -475,6 +505,37 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     };
   }, [keys]);
 
+  // Opened after a push or a re-review, the view starts at the first file changed since the last review, once for each
+  // stretch of new code, unless the reader has already moved the cursor.
+  const landOnNew = () => {
+    if (latestDelta === null || commitRange !== null || modeRef.current !== "files") return;
+    const first = shownFiles.find((file) => latestDelta.files.some((entry) => entry.path === file.path));
+    const landed = `landedOnNew:${instanceKey}` as const;
+    const key = `${latestDelta.fromSha}..${latestDelta.toSha}`;
+    if (first === undefined || readPreference(landed) === key) return;
+    const placed = initialCursor.current?.placed ?? null;
+    if (keys.get().cursor !== null && keys.get().cursor !== placed) return;
+    writePreference(landed, key);
+    // The initial cursor would otherwise go back to the first file once its rows arrive.
+    initialCursor.current = { instanceKey: `${instanceKey}|${commitRangeKey(null)}`, placed: null, done: true };
+    jumpTo(first.path);
+    notify(`Opened at what changed since ${sinceName(latestDelta, rounds)}: ]n steps through it, gn shows only it`);
+  };
+  const landOnNewRef = useRef(landOnNew);
+  landOnNewRef.current = landOnNew;
+  const hasShownFiles = shownFiles.length > 0;
+  useEffect(() => {
+    if (latestDelta === null || !hasShownFiles) return;
+    // Its file sections mount on the render after the delta arrives.
+    const frame = requestAnimationFrame(() => landOnNewRef.current());
+    return () => cancelAnimationFrame(frame);
+  }, [latestDelta, hasShownFiles]);
+  const pickSince = (sha: string | null) => {
+    setPickedSince(sha);
+    const round = sha === null ? undefined : rounds.find((entry) => entry.review.commitSha === sha);
+    notify(sha === null ? "Counting new code from the latest review" : `Marking what changed since ${round === undefined ? sha.slice(0, 7) : roundName(round.number)}`);
+  };
+
   /** The line at the middle of the screen, where the files view's cursor rests. */
   const seat = (): Cursor | null => {
     const main = mainRef.current;
@@ -506,7 +567,10 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     () => [...findingsByPath].flatMap(([path, list]) => list.map((entry): FindingAnchor => ({ id: findingAnchorId(entry), path, side: "RIGHT", line: entry.line, item: entry.item }))),
     [findingsByPath],
   );
-  const commitsControl = commits === null || (commits.commits.length === 0 && gate.whole) ? null : { label: rangeLabel(commitRange, commits), partial: commitRange !== null, onOpen: () => setOverlay({ kind: "commits" }) };
+  // All changes says how much of it no review has read yet, so the head moving shows without opening the picker.
+  const unreviewed = commitRange === null && latestDelta !== null && latestDelta.files.length > 0 ? commitsAfter(commits, latestDelta.fromSha) : null;
+  const commitsLabel = rangeLabel(commitRange, commits) + (unreviewed === null || unreviewed === 0 ? "" : ` · ${unreviewed} new since ${sinceName(latestDelta!, rounds)}`);
+  const commitsControl = commits === null || (commits.commits.length === 0 && gate.whole) ? null : { label: commitsLabel, partial: commitRange !== null, onOpen: () => setOverlay({ kind: "commits" }) };
   /** Blame under the line it is about (or the element it was asked from), once that line is in view. */
   const openBlame = (path: string, span: LineSpan, anchor: Element | null) => {
     const model = keys.models.get(path);
@@ -652,6 +716,13 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     },
     suggestions,
     openCommits: commitsControl === null ? null : commitsControl.onOpen,
+    newSince: changedPaths.size === 0 ? null : { isNew: (path, line) => rangesOverlap(line, line, changedRangesByPath.get(path) ?? NO_RANGES), label: sinceLabel },
+    toggleOnlyNew,
+    focusChangesStrip: () => {
+      const first = rootRef.current?.querySelector<HTMLElement>(`${CHANGES_STRIP} [data-nav-row]`) ?? null;
+      if (first !== null) focusRow(first);
+      return first !== null;
+    },
   });
   const runFilesCommand = (command: ReviewCommand, count: number) => {
     if (command.kind === "narrative") {
@@ -762,6 +833,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
       return true;
     },
     focusOutsideFindings: () => false,
+    focusChangesStrip: () => false,
     search: null,
   });
   // Which end of a page the reader arrives at by key, placed once the page's excerpts have published their rows.
@@ -1174,7 +1246,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                     commentCount={(path) => openThreadCounts.get(path) ?? 0}
                     findingCount={(path) => findingsByPath.get(path)?.length ?? 0}
                     risk={(path) => risk.get(path) ?? null}
-                    changedSince={(path) => changedRangesByPath.has(path)}
+                    changedSince={changedPaths.size === 0 ? null : { label: sinceLabel, has: (path) => changedPaths.has(path) }}
                     onSelect={(path) => {
                       jumpTo(path);
                       returnToDiff();
@@ -1195,8 +1267,27 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                       }}
                       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
                     >
-                      {gate.whole && delta !== null && delta.files.length > 0 ? (
-                        <DeltaStrip delta={delta} newFindings={newFindings} touchedFindings={touchedFindings} findingFilter={findingFilter} onJump={jumpTo} actions={deltaActions} />
+                      {gate.whole && diff !== null && diff.files.length > 0 && (rounds.length > 0 || (delta !== null && delta.files.length > 0)) ? (
+                        <ChangesStrip
+                          rounds={rounds}
+                          running={running}
+                          commits={commits}
+                          delta={delta}
+                          latestDelta={latestDelta}
+                          picked={pickedSince}
+                          onPick={pickSince}
+                          newFindings={newFindings}
+                          touchedFindings={touchedFindings}
+                          findingFilter={findingFilter}
+                          onlyNew={{ on: onlyNew, onToggle: () => toggleOnlyNew?.() }}
+                          onJump={(path) => {
+                            jumpTo(path);
+                            returnToDiff();
+                          }}
+                          inDiff={(path) => currentPaths.has(path)}
+                          actions={typeof deltaActions === "function" ? deltaActions({ unreviewed: running === null && latestDelta !== null && latestDelta.files.length > 0 && rounds.length > 0 }) : deltaActions}
+                          onLeave={returnToDiff}
+                        />
                       ) : null}
                       {diff !== null && diff.files.length > 0 && (outsideFindings.preExisting.length > 0 || outsideFindings.filtered.length > 0) ? (
                         <OutsideFindings
@@ -1243,7 +1334,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                           explanations={explanations.filter((entry) => entry.path === file.path)}
                           onExplain={explainHunk === null ? null : (side, startLine, endLine) => explainHunk(file.path, side, startLine, endLine)}
                           semantics={semanticsByPath.get(file.path) ?? NO_SEMANTICS}
-                          changedRanges={changedRangesByPath.get(file.path) ?? NO_RANGES}
+                          newSince={newSinceByPath.get(file.path) ?? NOTHING_NEW}
                           shown={shownPatches.get(file.path) ?? NO_PATCH}
                           loadedPatch={loadedPatchOf(file)}
                           onPatchLoaded={(patch) => rememberLoadedPatch(file, patch)}
@@ -1326,6 +1417,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
               {overlay?.kind === "commits" && commits !== null ? (
                 <CommitPicker
                   commits={commits}
+                  rounds={rounds}
                   current={commitRange}
                   notify={notify}
                   onClose={closeOverlay}
@@ -1346,6 +1438,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                   filter={fileFilter}
                   marks={fileMarks}
                   findings={allFindings.length > 0}
+                  sinceLabel={sinceLabel}
                   anchor={overlay.anchor}
                   onChange={setFileFilter}
                   onClose={(refocus) => (refocus ? closeOverlay() : setOverlay(null))}

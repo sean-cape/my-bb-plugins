@@ -8,6 +8,8 @@ export type ReviewCommand =
   | { kind: "bottom" }
   | { kind: "page"; fraction: number }
   | { kind: "change"; direction: 1 | -1 }
+  /** A change new since the last review, or since the round picked in the strip. */
+  | { kind: "newChange"; direction: 1 | -1 }
   | { kind: "hunk"; direction: 1 | -1 }
   | { kind: "file"; direction: 1 | -1 }
   | { kind: "thread"; direction: 1 | -1 }
@@ -62,7 +64,11 @@ export type ReviewCommand =
   /** The "Filter files" menu: extensions, change types, viewed, with comments, with findings. */
   | { kind: "fileFilter" }
   /** A finding's suggestion to the pull request as a draft suggestion comment. */
-  | { kind: "postSuggestion" };
+  | { kind: "postSuggestion" }
+  /** Only the files and hunks new since the last review, or everything again. */
+  | { kind: "onlyNew" }
+  /** The keyboard to the review rounds above the diff. */
+  | { kind: "changesStrip" };
 
 /** Review commands by key sequence; a count typed before one repeats it. */
 export const REVIEW_KEYMAP: Keymap<ReviewCommand> = {
@@ -82,6 +88,8 @@ export const REVIEW_KEYMAP: Keymap<ReviewCommand> = {
   "<C-b>": { kind: "page", fraction: -1 },
   "]c": { kind: "change", direction: 1 },
   "[c": { kind: "change", direction: -1 },
+  "]n": { kind: "newChange", direction: 1 },
+  "[n": { kind: "newChange", direction: -1 },
   "}": { kind: "hunk", direction: 1 },
   "{": { kind: "hunk", direction: -1 },
   "]f": { kind: "file", direction: 1 },
@@ -143,6 +151,8 @@ export const REVIEW_KEYMAP: Keymap<ReviewCommand> = {
   gr: { kind: "commits" },
   gf: { kind: "fileFilter" },
   gs: { kind: "postSuggestion" },
+  gn: { kind: "onlyNew" },
+  gh: { kind: "changesStrip" },
 };
 
 export type FileTreeCommand = { kind: "list"; motion: ListMotion } | { kind: "scroll"; step: 1 | -1 } | { kind: "leave" } | { kind: "hide" };
@@ -172,6 +182,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["j", "k"], action: "Next / previous line, stopping at each comment when a line has several (a count repeats: 5j)" },
       { keys: ["h", "l"], action: "Old / new side; h past the old side (or on a file header) goes to the file list" },
       { keys: ["]c", "[c"], action: "Next / previous change" },
+      { keys: ["]n", "[n"], action: "Next / previous change new since the last review (or the round picked above the diff), marked blue in the gutter" },
       { keys: ["}", "{"], action: "Next / previous hunk" },
       { keys: ["]f", "[f"], action: "Next / previous file" },
       { keys: ["c", "C"], action: "Next / previous comment or review finding, one at a time on a shared line" },
@@ -238,6 +249,8 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["?"], action: "This sheet" },
       { keys: ["W"], action: "Hide or show whitespace changes in line diffs (hidden at first: only-whitespace files fold away)" },
       { keys: ["gr"], action: "Pick commits: all changes, since a review, one commit or a range (j / k move, Enter picks, Space or x starts a range, Esc closes)" },
+      { keys: ["gn"], action: "Only new: just the files and hunks changed since the last review, the rest folded away; again shows everything" },
+      { keys: ["gh"], action: "Go to the review rounds above the diff, to pick the one new code counts from (h / l across, j / k rows, Enter picks, Esc back)" },
     ],
   },
   {

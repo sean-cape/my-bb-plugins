@@ -1,5 +1,6 @@
 import type { DiffDelta, Finding, FindingSeverity, Review } from "../../types";
 import { rangesOverlap } from "../ranges";
+import { originRound, reviewRounds, roundOf, sameSha } from "../rounds";
 
 export const SEVERITY_LABEL: Record<FindingSeverity, string> = { critical: "Critical", important: "Important", minor: "Minor" };
 export const SEVERITY_DOT: Record<FindingSeverity, string> = { critical: "bg-red-500", important: "bg-amber-500", minor: "bg-slate-400" };
@@ -17,11 +18,13 @@ export interface InlineFinding {
   selected: boolean;
   overridden: boolean;
   edited: boolean;
-  /** First reported by a re-review that ran after the reviewer last looked. */
-  isNew: boolean;
+  /** The round that first reported it, when it is not the only round and the finding was not carried into it. */
+  newIn: number | null;
   /** Still open from an earlier review; the earlier finding's id. */
   carriedFrom: string | null;
-  /** Its lines changed since the reviewer last looked. */
+  /** For a carried finding, the round that first reported it. */
+  openSince: number | null;
+  /** Its lines changed after the review that reported it read the code, so the lines it names may have moved. */
   touched: boolean;
 }
 
@@ -50,31 +53,37 @@ export function activeReviews(reviews: Review[]): Review[] {
 }
 
 /**
- * The active reviews' open findings by file, once per location; `delta` marks the ones whose lines changed since the
- * last look. Findings an apply round fixed are left out.
+ * The active reviews' open findings by file, once per location, tagged with the round that reported them. `delta`
+ * marks the ones whose lines changed after their review: it counts from the review's commit, or, from a host that
+ * records no commit, from wherever the host's delta starts. Findings an apply round fixed are left out.
  */
 export function inlineFindingsByPath(reviews: Review[], delta: DiffDelta | null): Map<string, PlacedFinding[]> {
   const byPath = new Map<string, PlacedFinding[]>();
-  const active = activeReviews(reviews);
-  const newest = active.at(-1) ?? null;
+  const rounds = reviewRounds(reviews);
   const changedRanges = new Map((delta?.files ?? []).map((file) => [file.path, file.ranges]));
-  for (const review of active) {
+  for (const review of activeReviews(reviews)) {
     if (review.report === null) continue;
     const applied = new Set(review.appliedFindingIds ?? []);
+    const round = roundOf(rounds, review.id)?.number ?? null;
+    const deltaFromReview = delta !== null && (review.commitSha == null || sameSha(review.commitSha, delta.fromSha));
     for (const finding of review.report.findings) {
       if (applied.has(finding.id) || finding.preExisting === true) continue;
-      const touched = finding.locations.some((location) => {
-        const ranges = changedRanges.get(location.file);
-        return ranges !== undefined && location.startLine !== null && rangesOverlap(location.startLine, location.endLine ?? location.startLine, ranges);
-      });
+      const touched =
+        deltaFromReview &&
+        finding.locations.some((location) => {
+          const ranges = changedRanges.get(location.file);
+          return ranges !== undefined && location.startLine !== null && rangesOverlap(location.startLine, location.endLine ?? location.startLine, ranges);
+        });
+      const carried = (finding.carriedFrom ?? null) !== null;
       const item: InlineFinding = {
         reviewId: review.id,
         finding,
         selected: review.selection[finding.id] ?? false,
         overridden: finding.id in review.selectionOverrides,
         edited: finding.id in review.findingEdits,
-        isNew: newest !== null && review.id === newest.id && newest.sinceCommitSha !== null && (finding.carriedFrom ?? null) === null,
+        newIn: !carried && rounds.length > 1 ? round : null,
         carriedFrom: finding.carriedFrom?.split("/").pop() ?? null,
+        openSince: carried ? originRound(rounds, review.id, finding) : null,
         touched,
       };
       for (const location of finding.locations) {

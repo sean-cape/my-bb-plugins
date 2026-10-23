@@ -8,6 +8,7 @@ import { FAST, PRESS, enter } from "../ui/motion";
 import { usePopover } from "../ui/use-popover";
 import { usePickerKeys } from "../ui/vim-keys";
 import { cn } from "../utils";
+import { firstUnreviewedCommit, roundName, roundsAt, type ReviewRound } from "../rounds";
 import { COMMIT_PICKER_KEYMAP, collapsedRangeNote, pickedRange, pickerRows, rangeEndsAtHead, rangeGate, rangeSpan, shortCommit, toggledRangeStart, type CommitRow } from "./commit-range";
 
 /** The part of the history the view shows, for the renderers that fetch a file's diff themselves. */
@@ -74,6 +75,7 @@ export function CommitPicker({
   onPick,
   onClose,
   notify,
+  rounds,
 }: {
   commits: DiffCommits;
   current: CommitRange | null;
@@ -81,8 +83,11 @@ export function CommitPicker({
   onPick: (range: CommitRange | null, note: string | null) => void;
   onClose: () => void;
   notify: (message: string) => void;
+  /** The review rounds, to mark the commit each read up to and the commits none has read yet. */
+  rounds: readonly ReviewRound[];
 }) {
   const rows = pickerRows(commits);
+  const firstNew = firstUnreviewedCommit(commits, rounds);
   const currentKey = commitRangeKey(current);
   const span = current === null ? null : rangeSpan(current, commits);
   const [highlight, setHighlight] = useState(() => {
@@ -170,7 +175,7 @@ export function CommitPicker({
               <span aria-hidden="true" className="w-3 shrink-0 text-foreground">
                 {selected ? "✓" : row.kind === "commit" && start === row.index ? "▸" : ""}
               </span>
-              <CommitRowLabel row={row} commits={commits} now={now} />
+              <CommitRowLabel row={row} commits={commits} now={now} rounds={rounds} firstNew={firstNew} />
             </li>
           );
         })}
@@ -179,7 +184,7 @@ export function CommitPicker({
   );
 }
 
-function CommitRowLabel({ row, commits, now }: { row: CommitRow; commits: DiffCommits; now: number }) {
+function CommitRowLabel({ row, commits, now, rounds, firstNew }: { row: CommitRow; commits: DiffCommits; now: number; rounds: readonly ReviewRound[]; firstNew: number | null }) {
   if (row.kind === "all") return <span className="min-w-0 flex-1 truncate font-medium">All changes</span>;
   if (row.kind === "mark") {
     return (
@@ -191,10 +196,21 @@ function CommitRowLabel({ row, commits, now }: { row: CommitRow; commits: DiffCo
   }
   const commit = commits.commits[row.index]!;
   const time = Date.parse(commit.date);
+  const reviewedHere = roundsAt(rounds, commit.sha);
   return (
     <>
       <span className="shrink-0 font-mono">{shortCommit(commit.sha)}</span>
       <span className={cn("min-w-0 flex-1 truncate", commit.sha === WORKTREE_SHA && "italic")}>{commit.summary}</span>
+      {firstNew !== null && row.index >= firstNew ? (
+        <span className="shrink-0 rounded border border-sky-500/50 px-1 text-[10px] leading-4 text-sky-700 dark:text-sky-300" title="No review has read this commit yet">
+          new
+        </span>
+      ) : null}
+      {reviewedHere.length > 0 ? (
+        <span className="shrink-0 rounded border border-border px-1 text-[10px] leading-4" title={`Review ${reviewedHere.map((round) => roundName(round.number)).join(", ")} read the code up to here`}>
+          {reviewedHere.map((round) => roundName(round.number)).join(" ")} reviewed
+        </span>
+      ) : null}
       {commit.author !== "" ? <span className="max-w-[10rem] shrink-0 truncate">{commit.author}</span> : null}
       {commit.sha !== WORKTREE_SHA && !Number.isNaN(time) ? <span className="shrink-0 tabular-nums">{relativeTime(time, now)}</span> : null}
     </>

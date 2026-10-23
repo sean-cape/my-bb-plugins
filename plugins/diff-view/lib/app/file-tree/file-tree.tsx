@@ -21,6 +21,8 @@ interface Cascade {
 
 const ROW_ENTER = cn(enter.rise, FAST, STAGGER);
 const ROW_FOCUS = "outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/70";
+/** The key of the "Changed since" group, which no directory path can be. */
+const NEW_GROUP = "\0new";
 
 /** A truncating label whose tooltip (the full text, plus optional extra lines) appears only when the text is actually clipped. */
 function TruncatedName({ text, full, className, extra }: { text: string; full: string; className?: string; extra?: string | null }) {
@@ -65,7 +67,8 @@ export function FileTree({
   commentCount: (path: string) => number;
   findingCount: (path: string) => number;
   risk: (path: string) => number | null;
-  changedSince: (path: string) => boolean;
+  /** What the files changed since the last review count from ("r2"), listed again in a group of their own at the top; null when none did. */
+  changedSince: { label: string; has: (path: string) => boolean } | null;
   onSelect: (path: string) => void;
   /** Hands the keyboard back to the diff. */
   onLeave: () => void;
@@ -128,14 +131,14 @@ export function FileTree({
       </li>
     );
   };
-  const renderFile = (file: DiffFile, depth: number, cascade: Cascade): ReactNode => {
+  const renderFile = (file: DiffFile, depth: number, cascade: Cascade, group = ""): ReactNode => {
     const count = commentCount(file.path);
     const isViewed = viewed.has(file.path);
     const generated = isGeneratedFile(file);
     const name = file.path.split("/").pop() ?? file.path;
     const fileRisk = isViewed ? null : risk(file.path);
     return (
-      <li key={file.path}>
+      <li key={`${group}${file.path}`}>
         <button
           type="button"
           onClick={() => onSelect(file.path)}
@@ -155,7 +158,7 @@ export function FileTree({
             className={cn((isViewed || generated) && "text-muted-foreground", isViewed && "line-through decoration-muted-foreground/50")}
           />
           <span className="flex shrink-0 items-center gap-1">
-            {changedSince(file.path) ? <span className="rounded border border-sky-500/40 px-1 text-[10px] leading-4 text-sky-700 dark:text-sky-300" title="Changed since you last looked">changed</span> : null}
+            {group === "" && changedSince?.has(file.path) === true ? <span className="rounded border border-sky-500/40 px-1 text-[10px] leading-4 text-sky-700 dark:text-sky-300" title={`Changed since ${changedSince.label}`}>new</span> : null}
             {generated ? <span className="rounded border border-border px-1 text-[10px] leading-4 text-muted-foreground">gen</span> : null}
             {findingCount(file.path) > 0 ? <Badge tone="danger" title="Review findings in this file">{findingCount(file.path)}</Badge> : null}
             {count > 0 ? <Badge tone="warning" title="Open comment threads in this file">{count}</Badge> : null}
@@ -170,9 +173,33 @@ export function FileTree({
     ...dir.dirs.map((child) => renderDir(child, depth, cascade)),
     ...dir.files.map((file) => renderFile(file, depth, cascade)),
   ];
+  const changed = changedSince === null ? [] : files.filter((file) => changedSince.has(file.path));
+  const cascade: Cascade = { next: 0 };
+  const newGroupClosed = closed.has(NEW_GROUP);
   return (
     <Tooltip.Provider>
-      <ul ref={listRef} onKeyDown={onKeyDown}>{renderChildren(tree, 0, { next: 0 })}</ul>
+      <ul ref={listRef} onKeyDown={onKeyDown}>
+        {changedSince !== null && changed.length > 0 ? (
+          <li key={NEW_GROUP} data-nav-group="" className="mb-1 border-b border-border/60 pb-1">
+            <button
+              type="button"
+              onClick={() => toggle(NEW_GROUP)}
+              className={cn("flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs font-medium text-sky-700 hover:bg-state-hover dark:text-sky-300", ROW_ENTER, ROW_FOCUS)}
+              style={{ paddingLeft: 8, ...stagger(cascade.next++) }}
+              data-nav-row="group"
+              aria-expanded={!newGroupClosed}
+              data-bbm-open={!newGroupClosed}
+              title={`The files that changed since ${changedSince.label}, again in the tree below`}
+            >
+              <Icon name="ChevronRight" className={cn("size-3 shrink-0", CHEVRON)} />
+              <span className="min-w-0 flex-1 truncate">Changed since {changedSince.label}</span>
+              <span className="tabular-nums opacity-80">{changed.length}</span>
+            </button>
+            {newGroupClosed ? null : <ul>{changed.map((file) => renderFile(file, 0, cascade, NEW_GROUP))}</ul>}
+          </li>
+        ) : null}
+        {renderChildren(tree, 0, cascade)}
+      </ul>
     </Tooltip.Provider>
   );
 }

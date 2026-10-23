@@ -7,7 +7,7 @@ import type { Services } from "./services";
 /** The board's RPC surface; each handler hands off to the feature that owns it. */
 export function registerRpc(ctx: KanbanContext, services: Services): void {
   const { bb, db, stmts, sync, publish } = ctx;
-  const { board, subjects, threads, projects, changes, viewed, prComments, prConversation, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, codeReviewThreads, loop, projectSettings } = services;
+  const { board, subjects, threads, projects, changes, viewed, deltas, prComments, prConversation, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, codeReviewThreads, loop, projectSettings } = services;
   const { resolveDiffSubject } = subjects;
 
   bb.rpc.register(rpcContract, {
@@ -143,7 +143,7 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
     hunk_explanations_list: async ({ ticketId }) => tour.listExplanations(await resolveDiffSubject(ticketId)),
     code_review_threads: async ({ ticketId }) => ({ threads: codeReviewThreads.codeReviewThreads((await resolveDiffSubject(ticketId)).id) }),
     hunk_explain: async ({ ticketId, path, side, startLine, endLine }) => tour.explainHunk(await resolveDiffSubject(ticketId), path, side, Math.min(startLine, endLine), Math.max(startLine, endLine)),
-    diff_delta: async ({ ticketId }) => ({ delta: await viewed.diffDelta(await resolveDiffSubject(ticketId)) }),
+    diff_delta: async ({ ticketId, fromSha }) => ({ delta: await deltas.diffDelta(await resolveDiffSubject(ticketId), fromSha) }),
     diff_viewed_list: async ({ ticketId }) => viewed.listViewed(await resolveDiffSubject(ticketId)),
     diff_viewed_set: async ({ ticketId, path, viewed: isViewed }) => viewed.setViewed(await resolveDiffSubject(ticketId), path, isViewed),
     diff_comment_add: (input) => diffComments.addDiffComment(input),

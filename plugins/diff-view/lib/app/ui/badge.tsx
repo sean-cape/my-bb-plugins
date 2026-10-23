@@ -7,7 +7,8 @@ export function Badge({
   title,
 }: {
   children: ReactNode;
-  tone?: "neutral" | "outline" | "accent" | "warning" | "danger" | "success";
+  /** `fresh`: changed since the point new code counts from (the last review), the blue the gutter marks it in. */
+  tone?: "neutral" | "outline" | "accent" | "warning" | "danger" | "success" | "fresh";
   title?: string;
 }) {
   return (
@@ -21,6 +22,7 @@ export function Badge({
         tone === "warning" && "bg-amber-500/15 text-amber-700 dark:text-amber-300",
         tone === "danger" && "bg-destructive/10 text-destructive",
         tone === "success" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+        tone === "fresh" && "border border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-300",
       )}
     >
       {children}

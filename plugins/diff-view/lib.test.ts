@@ -175,9 +175,9 @@ describe("inlineFindingsByPath", () => {
       review("inc", 2, [finding("F2", [{ file: "a.ts", startLine: 20, endLine: null }])], { sinceCommitSha: "abc", findingEdits: { F2: {} } }),
     ];
     const byPath = inlineFindingsByPath(reviews, { fromSha: "a", toSha: "b", files: [{ path: "a.ts", status: "modified", additions: 1, deletions: 0, ranges: [[7, 7]] }] });
-    expect(byPath.get("a.ts")!.map((entry) => ({ id: entry.item.finding.id, line: entry.line, isNew: entry.item.isNew, touched: entry.item.touched }))).toEqual([
-      { id: "F1", line: 5, isNew: false, touched: true },
-      { id: "F2", line: 20, isNew: true, touched: false },
+    expect(byPath.get("a.ts")!.map((entry) => ({ id: entry.item.finding.id, line: entry.line, newIn: entry.item.newIn, touched: entry.item.touched }))).toEqual([
+      { id: "F1", line: 5, newIn: 1, touched: true },
+      { id: "F2", line: 20, newIn: 2, touched: false },
     ]);
     expect(byPath.get("b.ts")!.map((entry) => entry.line)).toEqual([null]);
     const f1 = byPath.get("a.ts")![0]!.item;
@@ -202,10 +202,34 @@ describe("inlineFindingsByPath carry-over", () => {
     const carried = { ...finding("F1", [{ file: "a.ts", startLine: 1, endLine: 1 }]), carriedFrom: "r0/F3" };
     const fresh = finding("F2", [{ file: "a.ts", startLine: 9, endLine: 9 }]);
     const byPath = inlineFindingsByPath([review("inc", 2, [carried, fresh], { sinceCommitSha: "a", report: { findings: [carried, fresh], carriesForward: true } })], null);
-    expect(byPath.get("a.ts")!.map(({ item }) => ({ id: item.finding.id, isNew: item.isNew, carriedFrom: item.carriedFrom }))).toEqual([
-      { id: "F1", isNew: false, carriedFrom: "F3" },
-      { id: "F2", isNew: true, carriedFrom: null },
+    // The only round: nothing in it is "new in" anything, and the review it was carried from is not a round.
+    expect(byPath.get("a.ts")!.map(({ item }) => ({ id: item.finding.id, newIn: item.newIn, carriedFrom: item.carriedFrom, openSince: item.openSince }))).toEqual([
+      { id: "F1", newIn: null, carriedFrom: "F3", openSince: null },
+      { id: "F2", newIn: null, carriedFrom: null, openSince: null },
     ]);
+  });
+
+  it("tags each finding with the round that first reported it, back through every carry", () => {
+    const first = finding("F1", [{ file: "a.ts", startLine: 1, endLine: 1 }]);
+    const again = { ...finding("F1", [{ file: "a.ts", startLine: 2, endLine: 2 }]), carriedFrom: "one/F1" };
+    const third = { ...finding("F3", [{ file: "a.ts", startLine: 3, endLine: 3 }]), carriedFrom: "two/F1" };
+    const fresh = finding("F4", [{ file: "a.ts", startLine: 9, endLine: 9 }]);
+    const reviews = [
+      review("one", 1, [first], { commitSha: "a".repeat(40) }),
+      review("two", 2, [again], { commitSha: "b".repeat(40), sinceCommitSha: "a".repeat(40), report: { findings: [again], carriesForward: true } }),
+      review("three", 3, [third, fresh], { commitSha: "c".repeat(40), sinceCommitSha: "b".repeat(40), report: { findings: [third, fresh], carriesForward: true } }),
+    ];
+    expect(inlineFindingsByPath(reviews, null).get("a.ts")!.map(({ item }) => ({ id: item.finding.id, newIn: item.newIn, openSince: item.openSince }))).toEqual([
+      { id: "F3", newIn: null, openSince: 1 },
+      { id: "F4", newIn: 3, openSince: null },
+    ]);
+  });
+
+  it("marks lines changed only from a delta that counts from the finding's own review", () => {
+    const reviews = [review("one", 1, [finding("F1", [{ file: "a.ts", startLine: 5, endLine: 5 }])], { commitSha: "a".repeat(40) })];
+    const since = (fromSha: string) => ({ fromSha, toSha: "f".repeat(40), files: [{ path: "a.ts", status: "modified", additions: 1, deletions: 0, ranges: [[5, 5]] as Array<[number, number]> }] });
+    expect(inlineFindingsByPath(reviews, since("aaaaaaa")).get("a.ts")![0]!.item.touched).toBe(true);
+    expect(inlineFindingsByPath(reviews, since("b".repeat(40))).get("a.ts")![0]!.item.touched).toBe(false);
   });
 });
 
@@ -1150,7 +1174,7 @@ describe("narrative chapters", () => {
 describe("step excerpts", () => {
   const patch = ["@@ -1,4 +1,4 @@", " a", "-b", "+B", " c", " d", "@@ -10,2 +10,3 @@", " x", "+y", " z"].join("\n");
   const thread = (id: string, side: "LEFT" | "RIGHT", line: number | null): DiffThread => ({ id, path: "x.ts", line, side, startLine: null, startSide: null, entries: [], onGithub: false, outdated: false, resolved: null, orphaned: false });
-  const finding = (line: number | null) => ({ line, item: { reviewId: "r", finding: { id: `f${line}` } as never, selected: true, overridden: false, edited: false, isNew: false, carriedFrom: null, touched: false } });
+  const finding = (line: number | null) => ({ line, item: { reviewId: "r", finding: { id: `f${line}` } as never, selected: true, overridden: false, edited: false, newIn: null, carriedFrom: null, openSince: null, touched: false } });
 
   it("cuts a step's refs to one excerpt per file, with the lines they point at", () => {
     const [excerpt] = stepExcerpts([{ path: "x.ts", side: "old", startLine: 2, endLine: 2 }, { path: "x.ts", side: "new", startLine: 2, endLine: 2 }], [{ path: "x.ts", previousPath: null, patch }]);

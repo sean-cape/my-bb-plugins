@@ -25,7 +25,8 @@ import { visualRange, type NavRow } from "../keys/nav";
 import { useFileSelection, usePublishNavModel, type FileNavModel } from "../keys/review-keys-context";
 import { enclosingDefinition } from "./enclosing-definition";
 import { detectMoves } from "./moves";
-import { CONTEXT_LINES, hunkSpan, structuralRows, visibleRows } from "./rows";
+import { CONTEXT_LINES, hunkSpan, newRows, structuralRows, visibleRows } from "./rows";
+import type { NewSince } from "../new-since";
 import { IDENTIFIER } from "./structural-line";
 import { GapRow, StructuralRowView, UnifiedRowView, type RowContext } from "./structural-row";
 import { EXPAND_STEP_LINES } from "../text/patch-gaps";
@@ -68,7 +69,7 @@ export function StructuralPatch({
   explanations,
   onExplain,
   semantics,
-  changedRanges,
+  newSince,
   fallback,
   fallbackNote,
   unchangedNote,
@@ -83,7 +84,7 @@ export function StructuralPatch({
   /** Null when the data source cannot explain hunks. */
   onExplain: ((side: "old" | "new", startLine: number, endLine: number) => void) | null;
   semantics: SemanticChange[];
-  changedRanges: Array<[number, number]>;
+  newSince: NewSince;
   /** Shows the fallback, under this line, when difftastic finds no change (it ignores formatting the line diff has). */
   unchangedNote?: string;
   /** The patch line a search took the cursor to, unfolded when it sits in a fold. */
@@ -148,7 +149,8 @@ export function StructuralPatch({
   const shape = useMemo(() => {
     if (diff === null || allRows === null || drawnRows === null) return null;
     const rows = allRows;
-    const visible = visibleRows(rows, { revealed, findingLines: findings.map((entry) => entry.line), threads });
+    const fresh = newRows(rows, newSince.ranges);
+    const visible = visibleRows(rows, { revealed, findingLines: findings.map((entry) => entry.line), threads, onlyChanges: newSince.only ? fresh : null });
     // The cursor's rows in display order: shown lines, and the folds between them, which the cursor can stop on.
     const entries = tableEntries(drawnRows, visible);
     const nav: NavRow[] = entries.map((entry) => {
@@ -156,8 +158,8 @@ export function StructuralPatch({
       const at = rows[foldCursorIndex(entry)]!;
       return { left: at.lhs, right: at.rhs, hunk: entry.hunk, changed: false, expander: true };
     });
-    return { rows, visible, entries, nav };
-  }, [diff, allRows, drawnRows, revealed, findings, threads]);
+    return { rows, visible, entries, nav, fresh };
+  }, [diff, allRows, drawnRows, revealed, findings, threads, newSince]);
   const navModel = useMemo<FileNavModel | null>(() => {
     // The fallback text diff publishes its own rows.
     if (error !== null || (diff !== null && !diff.available) || unchangedFallback) return null;
@@ -245,7 +247,8 @@ export function StructuralPatch({
       oldTokens,
       newTokens,
       semantics,
-      changedRanges,
+      changedRanges: newSince.ranges,
+      newLabel: newSince.label,
       onLinePress: (side, line, extend) => {
         const { composer: open } = latest.current;
         // A shift-click extends the open comment's range on the same side, from whichever end stays put.
@@ -273,7 +276,7 @@ export function StructuralPatch({
       onSymbol: (symbol, anchor) => latestSymbols.current.lookupSymbol(symbol, anchor),
       onSymbolHover: (symbol, anchor) => latestSymbols.current.hoverSymbol(symbol, anchor),
     };
-  }, [path, text, oldTokens, newTokens, semantics, changedRanges, reveal]);
+  }, [path, text, oldTokens, newTokens, semantics, newSince, reveal]);
   const notesByLine = useMemo(() => {
     const byLine = new Map<string, { threads: typeof threads; findings: typeof findings }>();
     const at = (side: DiffSide, line: number) => {
@@ -313,7 +316,7 @@ export function StructuralPatch({
   }
   if (diff === null || shape === null || text === null || rowContext === null) return <p className={cn("relative overflow-hidden p-4 text-sm text-muted-foreground", SHIMMER)}>Running difftastic…</p>;
   const { oldLines, newLines } = text;
-  const { rows, visible } = shape;
+  const { rows, visible, fresh } = shape;
   const unified = layout === "unified";
   const columns = unified ? 3 : 4;
   const visualSelection = fileSelection?.visual != null ? visualRange(shape.nav, fileSelection.visual, fileSelection.cursor, false) : null;
@@ -354,9 +357,11 @@ export function StructuralPatch({
       return range !== null && rangesOverlap(span.start, span.stop, [range]);
     });
     const explanation = explanations.find((entry) => entry.side === span.side && entry.startLine <= span.stop && entry.endLine >= span.start) ?? null;
+    let isNew = false;
+    for (let at = index; at <= span.end && !isNew; at++) isNew = fresh.has(at);
     // A hunk that is the whole file (an added or deleted file) says nothing a reader doesn't know; K still asks for an explanation.
     const wholeFile = span.start === 1 && span.stop === (span.side === "new" ? newLines : oldLines).length;
-    if (wholeFile && labels.length === 0 && explanation === null) return null;
+    if (wholeFile && labels.length === 0 && explanation === null && !isNew) return null;
     return (
       <Fragment key={`hunk-${index}`}>
         {/* Plain and ruled above, where a fold is a tinted band: the two rows that break a file up read as different things. */}
@@ -370,6 +375,11 @@ export function StructuralPatch({
                 </span>
                 {enclosing !== null ? <span className="text-foreground/80"> {enclosing}</span> : null}
               </code>
+              {isNew ? (
+                <span className="shrink-0 rounded border border-sky-500/50 bg-sky-500/10 px-1.5 py-px font-sans text-[10px] text-sky-700 dark:text-sky-300" title={`Changed since ${newSince.label}: the lines marked blue in the gutter (]n / [n step through them)`}>
+                  new since {newSince.label}
+                </span>
+              ) : null}
               {labels.map((change, labelIndex) => (
                 <span key={labelIndex} className="inline-flex min-w-0 items-center gap-1 rounded border border-violet-500/40 px-1.5 py-px font-sans text-[10px] text-violet-700 dark:text-violet-300" title={change.label}>
                   <span className="uppercase tracking-wide">{change.kind}</span>
@@ -411,9 +421,26 @@ export function StructuralPatch({
       </Fragment>
     );
   };
-  const gapRow = (from: number, to: number) => (
-    <GapRow key={`gap-${from}`} path={path} from={from} to={to} total={rows.length} first={rows[from]!} last={rows[to - 1]!} at={rows[foldCursorIndex({ from, to })]!} onReveal={reveal} columns={columns} />
-  );
+  const gapRow = (from: number, to: number) => {
+    // "Only new" folds the older changes too; the fold says it holds some.
+    let older = 0;
+    if (newSince.only) for (let at = from; at < to; at++) if (rows[at]!.changed) older += 1;
+    return (
+      <GapRow
+        key={`gap-${from}`}
+        path={path}
+        from={from}
+        to={to}
+        total={rows.length}
+        first={rows[from]!}
+        last={rows[to - 1]!}
+        at={rows[foldCursorIndex({ from, to })]!}
+        onReveal={reveal}
+        columns={columns}
+        older={older === 0 ? null : { changed: older, label: newSince.label }}
+      />
+    );
+  };
   const body: ReactNode[] = [];
   for (const entry of shape.entries) {
     if (entry.kind === "gap") {
