@@ -28,8 +28,8 @@ A kanban board where every card is a BB thread.
 - A **changes page** per card: structural diff (a line diff where difftastic cannot diff a file), viewed marks, and line
   comments that stay local for an agent or post to the PR as GitHub drafts.
 - **Review pipeline**: run your `code-review` skill on a PR card or on any
-  card's committed work at a depth (Quick, Standard or Deep, which decides
-  the finders it runs), pick the findings worth fixing and apply them with
+  card's committed work at a depth (Quick, Standard or Deep, which sets how
+  hard its agents reason), pick the findings worth fixing and apply them with
   `apply-review` (a local card's own thread applies them). Every finding is
   verified first: doubtful ones fold under "N filtered", and ones already in
   the code before the change are listed apart, each a click from a Backlog

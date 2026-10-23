@@ -66,14 +66,14 @@ export function createReviews(
     }
   }
 
-  /** The plan the plan gate approved, which the review's scope finder and triage hold the change to. */
+  /** The plan the plan gate approved, which the review and its triage hold the change to. */
   function cardIntent(ticket: Ticket, branch: string | null): CardIntent {
     return { plan: ticket.loop?.plan ?? null, branch };
   }
 
   /**
-   * Review a PR card's pull request, or another card's committed work, in a new hidden thread, running the depth's
-   * finders. `commit` pins a local review to that commit instead of the thread's HEAD; a PR review takes the PR's head.
+   * Review a PR card's pull request, or another card's committed work, in a new hidden thread, at the depth's
+   * effort. `commit` pins a local review to that commit instead of the thread's HEAD; a PR review takes the PR's head.
    * `answers` are the card thread's answers to earlier findings, by handle, which a re-review judges.
    * `severityFloor` leaves a re-review's new findings below it unreported.
    */

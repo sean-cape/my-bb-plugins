@@ -1,210 +1,96 @@
 ---
 name: code-review
-description: "Orchestrate a comprehensive parallel code review by spawning specialized reviewer sub-agents chosen by a review depth (Quick: correctness, CLAUDE.md compliance, scope — parts of the change beyond what it was asked to do — and style, including documented coding standards and design smells; Standard, the default: also testing and git history; Deep: also security, through the security reviewer and /security-review), plus storage when storage files change and spec conformance when the change has a spec under .claude/features, then verifying every finding and triaging each one apply, defer or drop before it is reported. Use when finishing an implementation or when the user asks for a code review; pass quick, standard or deep to choose the depth."
+description: "Run a strict code quality review of a change: one reviewer agent audits it for maintainability, abstraction quality, spaghetti growth, file sprawl, boundary and type cleanliness, and ambitious structural simplifications (code-judo moves), while holding it to its intent and the project's CLAUDE.md; one verifier agent then scores every finding for being real, and the findings are triaged apply, defer or drop before they are reported in the board's format. A depth of quick, standard or deep sets how hard the agents reason. Use when finishing an implementation or when the user asks for a code review."
 allowed-tools: Agent, Bash, Read
 ---
 
-You are orchestrating a comprehensive code review. Your job is to gather the diff, spawn specialized reviewer agents in parallel, have every finding they report verified, triage the verified ones, and compile the result.
+You orchestrate a strict code quality review. You gather the diff, hand it to one reviewer agent, have one verifier agent check its findings, triage the verified ones, and compile the report. You do not review or verify code yourself, and neither you nor the agents change any code.
 
-## Step 1: Get the diff
+## Step 1: Gather the inputs
 
-Use Bash to run the appropriate git diff command. If the user specified branches or a commit range, use that. Otherwise:
-- Find the default branch: `git symbolic-ref --short refs/remotes/origin/HEAD` (strip `origin/`), falling back to `main` or `master`.
-- Use `git diff <default-branch>...HEAD` (three-dot) to review changes since this branch diverged from the default branch.
-- If that's empty, try `git diff` for uncommitted changes.
-- If both are empty and the intended diff is unclear, ask the user.
+**The diff.** If the caller specified branches or a commit range, use that. Otherwise find the default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`, stripping `origin/`; fall back to `main` or `master`) and use `git diff <default-branch>...HEAD` (three-dot). If that is empty, try `git diff` for uncommitted changes; if both are empty and the intended diff is unclear, ask the user. Also get the file list (`git diff --name-only` on the same range) and the commit list (`git log --format='%h %s' <range>`).
 
-Also get the file list with `git diff --name-only` (using the same range).
+**Generated files** (a `Code generated … DO NOT EDIT` or `@generated` header, `*.pb.go`, `*.gen.go`, mocks, lockfiles, `vendor/`, `dist/`, `build/`, minified bundles) are not reviewed: re-run the diff with `-- ':(exclude)<path>'` for each, and list them as `skippedFiles`. Read a file's first lines when unsure. Skip this if the user asks to include them.
 
-Note the **pre-existing range**: the range findings are checked against in Step 5 to tell the change's own problems from ones that were already there. It is the review range unless the caller names a separate one (a re-review of the newest commits on a longer change passes the whole change's range, so lines an earlier commit of the same change touched still count as the change's).
+**The pre-existing range**: the range findings are checked against to tell the change's own problems from ones that were already there. It is the review range unless the caller names a separate one (a re-review of the newest commits on a longer change passes the whole change's range).
 
-Also get the commit list: `git log --format='%h %s' <range>`.
+**The intent**: what the change was asked to do. When the caller gives it (a Kanban card's title, description, approved plan and spec), use it as given. Otherwise take it from the conversation and the commit messages. A spec is part of the intent: the caller names its directory, or a branch (the caller's, else `git rev-parse --abbrev-ref HEAD`) matches a directory under `.claude/features/` in kebab-case ignoring prefixes such as `bb/`, `feature/`, `fix/`, or the diff edits files under exactly one `.claude/features/<feature>/`. Note its path when found.
 
-Note the **intent**: what the change was asked to do. When the caller gives it (a Kanban card's title, description, approved plan and spec), use that as given. Otherwise take it from the conversation (the task the user asked for) and the commit messages in the range. The spec, when Step 2 finds one, is part of the intent either way. The scope finder holds the change to the intent, and triage (Step 6) defers findings whose fix falls outside it.
+**The depth**: `quick`, `standard` or `deep` (the capitalized words mean the same); `standard` when none is named. It sets the reasoning effort of both agents and nothing else:
 
-Note the **depth**: `quick`, `standard` or `deep`, when the caller names one (the words Quick, Standard and Deep mean the same). Without one, the depth is `standard`. It decides which finders run (Step 2); verification and triage run in full at every depth.
+| Depth | Agent effort |
+| --- | --- |
+| `quick` | `medium` |
+| `standard` | `high` |
+| `deep` | `xhigh` |
 
-Note the **severity floor** when the caller names one. Floor `important` means the review reports only critical and important findings: a caller sets it on a re-review of fix commits, where a new minor finding would not start another fix round, so finding and verifying one only spends tokens. Without a floor, every severity is reported.
+**The severity floor**, when the caller names one. Floor `important` means only critical and important findings are reported: a caller sets it on a re-review of fix commits, where a new minor finding would not start another fix round.
 
-Note the **fix findings** when the caller names them: earlier review findings that the new commits in the range were made to fix (a re-review after an apply round). The scope finder checks each fix commit stays within the findings it answers. An earlier finding the fixing agent disputed instead of fixing is not a fix finding: its fix commit is expected to leave it alone, and the caller judges the dispute.
+**The fix findings**, when the caller names them: earlier findings the new commits in the range were made to fix. The reviewer checks each fix commit stays within the findings it answers. A finding the fixing agent disputed instead of fixing is not a fix finding.
 
 Put flags at the end of git commands per project conventions.
 
-### Exclude generated files
+## Step 2: Spawn the reviewer
 
-Generated files should not be reviewed — they're machine-produced from source-of-truth inputs (SQLC queries, proto definitions, mock interfaces, lockfiles, compiled assets, etc.). After running the diff, inspect the file list and identify anything that looks machine-generated. Signals to look for:
+Spawn one `general-purpose` agent (not a fork: a fork ignores effort) with `effort` set from the depth table. Its prompt holds:
 
-- A `Code generated by ... DO NOT EDIT.` or `@generated` header near the top of the file
-- Filenames or path segments suggesting generation (e.g. `generated`, `mocks`, `*.pb.go`, `*.gen.go`, lockfiles, `vendor/`, `dist/`, `build/`)
-- Files paired with an obvious source-of-truth input (e.g. a schema or template file changed alongside its output)
-- Very large, uniformly-structured diffs typical of minified bundles or compiled assets
+- The instruction to read `~/.claude/skills/code-review/reviewer.md` first and review by it, making no changes.
+- The review range and the pre-existing range as literal refs or shas (the agent's shell has none of your variables), the changed files, and the complete diff.
+- The intent in full, the spec directory's path if any, and the fix findings if any (each with its handle, title, fix and locations).
+- The paths of the CLAUDE.md and AGENTS.md files that apply: the repository root's and any in a directory holding a changed file.
+- The severity floor, when set.
 
-If unsure whether a file is generated, Read its first ~20 lines to check for a generation header. Re-run the diff commands with pathspec exclusions (`-- ':(exclude)<path>' ...`) for every generated file you identify so reviewers receive only hand-written changes. Mention in the final compiled report which generated files were skipped. If the user explicitly asks to include generated files, skip this step.
+It reports its findings in the shape `reviewer.md` describes, ending with a `Not covered` list.
 
-## Step 2: Determine which reviewers to spawn
+## Step 3: Spawn the verifier
 
-**By depth**, spawn exactly the finders of the depth from Step 1; each depth includes the one before it:
+Number the reviewer's findings `C1`, `C2`, … as candidates. Keep every one, nits, smells and hedged "possibly" items included: the verifier decides what holds up, and what does not lands in the filtered list. With the severity floor `important`, drop minor candidates here instead; they are neither verified nor reported, and the Change Summary says how many the floor left out.
 
-| Depth | Finders |
-| --- | --- |
-| `quick` | `change-reviewer-correctness`, `change-reviewer-claude-md` (CLAUDE.md compliance), `change-reviewer-scope` (the scope finder), `change-reviewer-style` |
-| `standard` | the Quick finders, plus `change-reviewer-testing` and `change-reviewer-git-history` |
-| `deep` | the Standard finders, plus `change-reviewer-security` and the **security-review runner**: a `general-purpose` agent that runs the built-in `security-review` skill (Step 3) |
+Spawn one `general-purpose` agent with the same `effort`, whose prompt holds:
 
-Every finder the depth leaves out goes in `skippedReviewers` with the reason `<depth> depth` (e.g. `{ "name": "security", "reason": "standard depth" }`), so a reader can see what didn't run.
+- The instruction to read `~/.claude/skills/code-review/verifier.md` first and judge by it, making no changes, ending with only the JSON verdict.
+- Every candidate in full with its `C` number.
+- The review range, the pre-existing range, and the **base**: `git merge-base` of the pre-existing range, as a literal sha.
+- The applicable CLAUDE.md and AGENTS.md paths, and for `scope` candidates the intent, spec path and fix findings.
 
-With the severity floor `important`, also leave out `change-reviewer-style`, since its findings are always minor, with the reason `severity floor important`.
+More than fifteen candidates: split them into groups of at most fifteen by the file of their first location and spawn one verifier per group in one message.
 
-**Conditionally spawn, at every depth:**
-- `change-reviewer-storage` — if any `.sql` files or files in `storage/`, `store/`, `repository/`, `db/`, `queries/`, or `migration/` directories changed
-- `change-reviewer-spec` — only if this change has a spec. Determine this now, taking the first that applies:
-  - The caller names the spec's directory: use it.
-  - Match a branch against the directory names under `.claude/features/`, ignoring common branch prefixes (`bb/`, `feature/`, `feat/`, `fix/`, `chore/`) and comparing kebab-case (a branch `feature/saved-searches` matches `.claude/features/saved-searches/`). The branch is the one the caller names, else the current one (`git rev-parse --abbrev-ref HEAD`; a detached HEAD has none).
-  - The diff edits files under exactly one `.claude/features/<feature>/` directory: use that one.
-  - If a feature directory was found, note its path — you'll pass it to the spec reviewer and the scope finder (see Step 3). Otherwise do NOT spawn the spec reviewer.
+Then sort: confidence ≥ 80 becomes a report finding, with `preExisting` as the verifier decided; below 80 goes to the filtered list, kept so a reader can check the filter. Drop from a finding any location the verifier's sentence says does not hold. You do not override a verdict. If the verifier fails or leaves candidates without one, spawn one more verifier for those; a candidate still without a verdict is **unverified**: it stays in its severity section with `"confidence": null`, `"preExisting": false`, `"verification": null`, the word `unverified` where its line would show the confidence, and a note in the Change Summary.
 
-## Step 3: Spawn ALL reviewers in ONE message
+## Step 4: Score and triage
 
-Send a single message with multiple parallel Agent tool calls. Each agent prompt must include:
-- The complete diff output
-- The list of changed files
-- Their specific review focus area
-- Instruction to NOT make any changes — only analyze and report
-- The reporting rules below, verbatim
+Give every reported finding two independent 1–5 scores:
+- **importance**: how much it matters that this is fixed before merge. 5: data loss, security hole, wrong behavior on a common path, or a structural regression the codebase will pay for in every later change. 4: a real bug on a plausible path, or a blocker-grade quality problem (an unnecessary layer, spaghetti in a shared flow, a file sprawled past 1k lines). 3: worth fixing, limited blast radius. 2: polish with some value. 1: cosmetic or debatable.
+- **scope** (scope fit): how well the recommended fix stays inside what this change is already doing. 5: a local edit to code the change touches. 4: a small addition in the same files. 3: nearby code the change did not touch, or a modest new behavior. 2: a new abstraction or refactor beyond the change's purpose. 1: a different piece of work entirely.
 
-Give every reviewer these reporting rules verbatim:
+Score them independently: a code-judo restructuring can be importance 5 and scope 2. A pre-existing finding's fix is usually scope 1 or 2. Filtered findings may leave both null.
 
-> - **Bug class and every instance.** Name each finding's bug class: a short name for the kind of mistake (`unquoted shell argument`, `missing await`, `magic number`, `copy-pasted validation`), specific enough that one fix pattern covers it. Then list every place in the change where that same mistake occurs, not just the first: search the changed files and the code they touch for the same pattern. One finding covers one class of mistake, with each instance as a location. Two different mistakes are two findings, even when they share a file.
-> - **Report everything in your area, nits included.** Style issues, code smells and nits are findings like any other; report them rather than leaving them out as minor.
+Then **triage** every verified, introduced finding (confidence ≥ 80, `preExisting: false`) by `~/.claude/skills/triage-criteria.md`, read in full: each gets `apply`, `defer` or `drop` with a one-sentence reason. Apply is the default whatever the severity; a `scope` finding is applied by removing or splitting out the extra work; defer is for a fix that is separate work (low scope fit is the signal, and a critical finding is still deferred when its proper fix is separate work, its reason saying so); drop is only for churn far out of proportion to the benefit, or a conflict with the project's conventions. Judge the findings as a set with the intent in mind; when a fix's churn is unclear, read the code it would change. Pre-existing, filtered and unverified findings have `triage: null`.
 
-With the severity floor `important`, give this rule in place of the one about nits:
-
-> - **Report only what would be critical or important.** A real bug, a security or data problem, work beyond the change's intent, or a broken written rule with real consequences. Leave out style issues, code smells, nits and polish, and missing or weaker tests unless the untested code has a bug you can show; this review does not report minor findings.
-> - **Not covered.** End your report with a `Not covered` list: what in your area neither the project's tests nor your review could check. Lead each entry with its kind: `Untested:` (a changed path no test exercises), `UI only:` (behaviour that only shows when the app runs: rendering, layout, focus, animation), or `Unverified:` (something you could not confirm from the code, such as runtime data, an external service, or a premise outside the repo), then name the file or behaviour. Write `Not covered: nothing` when there is nothing. A missing test the change should add is a finding, not an entry here.
-
-For `change-reviewer-spec` (only when spawned), also include the path to the matched feature directory (`.claude/features/<feature>/`) from Step 2 — this agent reads the `spec.md` and `tickets/` files there itself.
-
-For `change-reviewer-scope`, also include the commit list, the intent from Step 1 in full (title, description, approved plan, or what the user asked for), the spec directory's path when Step 2 found one, and the fix findings when the caller named them (each with its handle, title, fix and locations). It reports hunks beyond the intent, and fix-commit hunks beyond the findings they answer, recommending each be removed or split out.
-
-For `change-reviewer-git-history`, also include the review range and its merge base (as a literal sha, from `git merge-base`), so it blames the old side of each hunk.
-
-For the security-review runner (Deep only), spawn `general-purpose` with: the review range, the changed files, the instruction to invoke the `security-review` skill with the Skill tool and follow it, reviewing the commits in that range (the checkout may be detached, so wherever the skill works out the current branch's pending changes, use the range instead), to make no changes, and to report each finding the skill keeps with its file and lines, the vulnerability, the exploit scenario and the fix, followed by the reporting rules above. Its findings become candidates like any other reviewer's, flagged by `security-review`.
-
-The other agents receive only the diff.
-
-Example agent call:
-```
-Agent(
-  subagent_type: "change-reviewer-correctness",
-  description: "Review correctness",
-  prompt: "Review the following diff for correctness issues only. Do NOT make any changes. Report findings with file paths and line numbers.\n\nChanged files:\n<files>\n...\n</files>\n\nFull diff:\n<diff>\n...\n</diff>"
-)
-```
-
-Launch all applicable agents in parallel in a single response.
-
-## Step 4: Merge the reported findings
-
-After all agents report back, merge their findings into one candidate list. Deduplicate findings flagged by multiple reviewers into one candidate listing every reviewer. Each candidate has a severity, title, description, recommended fix, bug class, locations (repo-relative `file` with `startLine`/`endLine`, or no lines for a whole file; one per instance of the class), flaggedBy and category. Candidates that are the same mistake at different places (whether one reviewer or several reported them) become one candidate with every instance as a location, under one class name; distinct problems that merely share a broad class stay separate. Keep every candidate, including nits, code smells and style findings, and a reviewer's hedged notes, questions and "possibly" items; the verifier decides what holds up, not you, and what doesn't lands in the filtered list.
-
-A candidate whose category is `style` (a style issue, a code or design smell, a documented-standard violation, a nit) is always severity **minor**, whatever the reviewer called it. It is kept like any other; its importance score (Step 6) says how much it matters.
-
-A candidate's category is its reviewer's short name (Step 7): a CLAUDE.md-compliance candidate has category `claude-md`, a git-history candidate `git-history`, and a security-review runner candidate `security`; when the security reviewer and the runner report the same problem, merge them into one candidate flagged by both.
-
-Every candidate from the scope finder, and every "scope creep" candidate from the spec reviewer, has category **`scope`**; when both name the same extra work, merge them into one candidate flagged by both. A scope candidate names the hunks beyond the intent as its instances, and its fix is to remove them or split them into a separate change, never to improve them.
-
-With the severity floor `important`, drop every candidate that is minor (style candidates included) here, and every testing candidate that names no bug in the untested code, before verification, and say in the Change Summary how many the floor left out. They are not verified, reported or filtered.
-
-Number the candidates `C1`, `C2`, … so the verifiers' verdicts can name them.
-
-Also merge the reviewers' `Not covered` lists into one **not-covered list**, each entry once, keeping its `Untested:`, `UI only:` or `Unverified:` lead.
-
-## Step 5: Verify every finding
-
-Group the candidates by the file of their first location, at most five to a group (split a larger one), and spawn one `general-purpose` verifier agent per group, all in ONE message so they run in parallel (adapted from Anthropic's official code-review plugin, whose verifier scores each issue 0–100). A verifier per candidate would read the same file once for each; a verifier still judges each of its candidates on its own. Each verifier's prompt must include:
-- Each candidate finding of its group in full, with its `C` number.
-- The review range and the pre-existing range from Step 1, and the **base**: the sha of `git merge-base <from> <to>` for the pre-existing range (not the review range), so the base is where the whole change started. Resolve all three to literal refs or shas first: a verifier's shell has none of your shell variables, so a range like `origin/$BASE...HEAD` must reach it as `origin/main...HEAD`.
-- The paths (not contents) of the CLAUDE.md and AGENTS.md files that apply: the repository root's, and any in a directory that holds a changed file.
-- For a `scope` candidate, the intent from Step 1 and the spec directory's path, if any (and the fix findings, when the candidate is about a fix commit).
-- The rubric, the instances rule and the pre-existing rule below, verbatim.
-- The instruction to read the code at HEAD itself (Read, Grep and Bash for `git` commands), to make no changes, and to end with only the JSON verdict.
-
-Give the verifier this rubric verbatim:
-
-> Score 0–100 how confident you are that the problem is real: the code at HEAD actually behaves the way the finding says, or, for a style or convention finding, the code really has the smell described or breaks the rule cited. **Confidence measures whether the finding is real, not how much it matters.** A real nit scores as high as a real bug: severity, how often it happens, and how important it is never lower the score. Whether this change introduced it is judged separately (preExisting, below), so it never lowers the score either.
->
-> - **0** — Not real. It does not survive light scrutiny: the code does not do what the finding says, or the finding misreads it.
-> - **25** — Possibly real, but you could not confirm it from the code. A style finding that is pure preference (one way of writing it is as good as the other) belongs here too, unless a CLAUDE.md, AGENTS.md or the project's style docs ask for it. A concrete smell you can point at (duplicated logic, a misleading name, a function doing too much) is not preference: score it on whether it is really there, like anything else, whether or not a rule is written down.
-> - **50** — Partly confirmed. The code the finding describes exists, but a premise the problem depends on (an input reaching this path, a caller relying on the old behaviour) is unconfirmed.
-> - **75** — Confirmed. You traced the code and the problem is very likely real; for a convention finding, the rule is written down and the code breaks it; for a smell, the code has it as described.
-> - **100** — Certain. The evidence directly confirms it: the code plainly reads that way, or you reproduced it.
->
-> Score it low when: it looks like a bug but is not (a guard elsewhere handles it, the types rule it out); it is a behaviour change the change clearly intends; it cites a CLAUDE.md or AGENTS.md instruction that does not actually say that (check the file); the code deliberately silences it (a lint-ignore, or a comment explaining the choice); or it is speculation ("this might break if…") with no path that gets there.
-> Never score it low because it is a nit, a code smell, a missing test or minor, because no rule names the smell, or because it is in code the change did not touch.
-> A scope finding is real when the hunks it names do something the intent you were given does not ask for (or, for a fix commit, that none of the findings it answers asks for), and are not plumbing the asked-for work needs. Score it low when a plain reading of the intent covers the work.
-
-this instances rule verbatim:
-
-> The finding names a bug class and lists each instance of it as a location. Check every location, not just the first. Score the class as a whole: it is real when at least one instance is. Name in your `verification` sentence any listed location where the problem does not hold, so it can be dropped.
-
-and this pre-existing rule verbatim:
-
-> After scoring, decide `preExisting`. Run `git diff -U0 <pre-existing range> -- <file>` for each location's file and read the new-side hunk ranges (`+start,count`). The finding is **introduced** (`preExisting: false`) when any location's lines overlap an added or changed new-side line, when a whole-file location names a file the diff changes, or when the change caused the problem in code it did not touch (a caller broken by a changed signature, an old path the change makes reachable). It is **pre-existing** (`preExisting: true`) only when no location overlaps the diff and the same problem is there at the base, the merge base of the pre-existing range you were given (`git show <base>:<file>`). A real pre-existing problem keeps its full score.
-
-The verifier's final message is only one verdict per candidate of its group:
-
-```json
-[{ "id": "C1", "confidence": 0-100, "preExisting": true | false, "verification": "<one sentence: what you checked and what you found>" }]
-```
-
-Then sort the candidates:
-- **confidence ≥ 80** go into the report's findings, with `preExisting` as the verifier decided.
-- **confidence < 80** go into the filtered list. They are kept, not deleted, so a reader can check the filter.
-
-Drop from a finding any location its verifier's sentence says does not hold; the rest stay as its instances.
-
-You do not override a verifier's verdict. If a verifier fails, or returns no verdict for some of its candidates, spawn one more verifier for the candidates left without one; a candidate it also leaves without a verdict is **unverified**: keep it with the verified findings, in its severity section, with `"confidence": null`, `"preExisting": false` and `"verification": null`, write `unverified` where its line would show the confidence, and say so in the Change Summary.
-
-## Step 6: Score and triage
-
-First give every reported finding two independent 1–5 scores:
-- **importance** — how much it matters that this gets fixed before merge. 5: data loss, security hole, or wrong behavior on a common path. 4: real bug or missing test on a plausible path. 3: worth fixing, limited blast radius. 2: polish with some value. 1: cosmetic or debatable.
-- **scope** (scope fit) — how well the recommended fix stays inside what this change is already doing. 5: a local edit to code the change touches, no new behavior. 4: small addition in the same files or tests. 3: touches nearby code the change did not, or adds a modest behavior. 2: a new feature, abstraction, or refactor beyond the change's purpose. 1: a different piece of work entirely (file it separately).
-
-Score them independently: a critical bug can have scope 2 if fixing it properly means a larger change, and a nit can have scope 5. Be honest rather than generous. Both are separate from the verifier's confidence: they say how much a finding matters and where its fix belongs, confidence says whether it is real. A pre-existing finding's fix is usually a separate piece of work (scope 1 or 2). Filtered findings may leave both null.
-
-Then **triage** every verified, introduced finding: each reported finding with a confidence (≥ 80) and `preExisting: false`. Read `~/.claude/skills/triage-criteria.md` and follow it: it is the one written reference for triage, shared with `apply-review`, so the two judge scope the same way. Each such finding gets a decision, `apply`, `defer` or `drop`, and a one-sentence reason:
-- **apply** is the default, whatever the severity: in-scope nits, style findings and code smells are applied. A `scope` finding is applied by removing or splitting out the extra work.
-- **defer** is for the wrong scope: the proper fix is separate work (low scope fit is the main signal). A critical finding is still deferred when its proper fix is separate work, and its reason says so.
-- **drop** is only for churn far out of proportion to the benefit, or a conflict with the project's conventions. Low priority alone is never a reason to drop.
-
-Importance and scope fit are inputs to the decision, not the decision. Judge the findings as a set (two that contradict each other are handled as the criteria say), with the intent from Step 1 in mind. When a fix's churn is unclear, read the code it would change. Pre-existing, filtered and unverified findings are not triaged: their `triage` is null.
-
-## Step 7: Compile results
+## Step 5: Compile the report
 
 Compile ONE report in exactly this shape. Tools (the Kanban board, `apply-review`) parse it, so keep the headings, the finding line format, and the trailing JSON block exactly as specified.
 
 ```
 ## Change Summary
-[2-3 sentences describing what changed. Name the depth and any severity floor, and mention skipped reviewers and skipped generated files here.]
+[2-3 sentences describing what changed. Name the depth and any severity floor, and mention skipped generated files here.]
 
 ## Review Findings
 
 ### Critical (Must Fix)
-- **F1** (importance 5, scope 5, confidence 100) `path/to/file.go:120-134`, `path/to/other.go:12` — Short title. Description of the problem — recommended fix (class: unquoted shell argument) (triage: apply — quoting fix in code the change adds) (flagged by: correctness, security)
-- **F2** (importance 5, scope 2, confidence 90) `path/to/sync.go:40` — Short title. Description — recommended fix (class: non-idempotent retry) (triage: defer — critical, but the proper fix is an idempotency layer for every writer; separate work) (flagged by: correctness)
+- **F1** (importance 5, scope 2, confidence 90) `path/to/flow.ts:120-134`, `path/to/flow.ts:210-222` — Short title. Description of the problem — recommended fix (class: special case in shared flow) (triage: defer — critical, but the proper fix is a policy object every caller shares; separate work) (flagged by: quality)
+- **F2** (importance 4, scope 5, confidence 100) `path/to/panel.tsx` — Short title. Description — recommended fix (class: file past 1k lines) (triage: apply — split the new section into its own module) (flagged by: quality)
 
 ### Important (Should Fix)
-- **F3** (importance 4, scope 3, confidence 85) `path/to/file.go:42` — Short title. Description — recommended fix (class: untested error path) (triage: apply — one test beside the change's own) (flagged by: testing)
-- **F4** (importance 3, scope 5, confidence 90) `path/to/cache.go:10-80` — Short title. Hunks beyond the intent — remove them, or split them into a separate change (class: unrequested refactor) (triage: apply — remove the extra work) (flagged by: scope, spec)
-- **F5** (importance 4, scope 1, confidence 90) `path/to/old.go:88` — Short title. Description — recommended fix (class: missing nil check) (flagged by: correctness) (pre-existing)
+- **F3** (importance 4, scope 4, confidence 85) `path/to/api.ts:42` — Short title. Description — recommended fix (class: pass-through wrapper) (triage: apply — delete the wrapper in code the change adds) (flagged by: quality)
+- **F4** (importance 3, scope 5, confidence 90) `path/to/cache.go:10-80` — Short title. Hunks beyond the intent — remove them, or split them into a separate change (class: unrequested refactor) (triage: apply — remove the extra work) (flagged by: quality)
+- **F5** (importance 4, scope 1, confidence 90) `path/to/old.go:88` — Short title. Description — recommended fix (class: missing nil check) (flagged by: quality) (pre-existing)
 
 ### Minor (Nice to Fix)
-- **F6** (importance 2, scope 5, confidence 95) `path/to/other.go` — Short title. Description — recommended fix (class: magic number) (triage: apply — named constant in touched code) (flagged by: style)
-- **F7** (importance 2, scope 4, confidence 85) `path/to/parser.go` — Short title. Description — recommended fix (class: nested conditionals) (triage: drop — rewrites the 600-line parser to save one branch) (flagged by: style)
+- **F6** (importance 2, scope 5, confidence 95) `path/to/other.go` — Short title. Description — recommended fix (class: magic number) (triage: apply — named constant in touched code) (flagged by: quality)
 
 ### Filtered (Confidence Below 80)
-- **X1** (confidence 25) `path/to/file.go:60` — Short title. Verifier: what it checked and found (class: off-by-one) (flagged by: correctness)
+- **X1** (confidence 25) `path/to/file.go:60` — Short title. Verifier: what it checked and found (class: off-by-one) (flagged by: quality)
 
 ## Not Covered
 - Untested: the retry branch in `path/to/client.go` when the server times out
@@ -221,16 +107,13 @@ Depth: <quick, standard or deep, from Step 1>
 
 Rules for the markdown part:
 - Finding ids are `F1`, `F2`, … in order of appearance; they are stable handles for `apply-review` and the board. Filtered findings are numbered apart, `X1`, `X2`, …, so the `F` ids stay dense.
-- `file:location` is a repo-relative path, optionally with `:line` or `:start-end`. One finding may list several locations separated by `, `: each is an instance of its bug class, and the first is the primary one.
-- Every finding's line names its bug class as `(class: <name>)`, then a triaged finding's decision and reason as `(triage: <apply|defer|drop> — <reason>)`, just before `(flagged by: …)`. Pre-existing, filtered and unverified findings have no triage part.
-- Deduplicate findings flagged by multiple reviewers into one finding listing every reviewer.
+- `file:location` is a repo-relative path, optionally with `:line` or `:start-end`. One finding may list several locations separated by `, `: each is an instance of its class, and the first is the primary one.
+- Every finding's line names its class as `(class: <name>)`, then a triaged finding's decision and reason as `(triage: <apply|defer|drop> — <reason>)`, just before `(flagged by: quality)`. Pre-existing, filtered and unverified findings have no triage part.
 - Omit empty severity sections, and the Filtered section when nothing was filtered. If no finding passed verification, write `No findings.` under `## Review Findings` (before any Filtered section).
 - A pre-existing finding sits in its severity section like any other, and its line ends with `(pre-existing)`.
-- Style and code-smell findings (category `style`) always sit under Minor.
-- `## Not Covered` always appears, after the findings and before `Reviewed commit:`, with the not-covered list from Step 4, one entry per line. When the list is empty, write `Nothing: the checks and the review covered the whole change.` under it.
-- Every verified finding's parentheses carry its `confidence` after importance and scope (`importance 4, scope 3, confidence 85`); an unverified one says `unverified` there instead (`importance 4, scope 3, unverified`). A filtered finding's line carries only its confidence, and its verification takes the place of the fix.
-- Reviewer names are the short forms: `correctness`, `claude-md`, `scope`, `style`, `testing`, `git-history`, `security`, `security-review`, `storage`, `spec`.
-- Every finding carries the importance and scope scores from Step 6 (reviewers do not score).
+- Findings of category `style` always sit under Minor; the reviewer's severity decides the rest.
+- `## Not Covered` always appears, after the findings and before `Reviewed commit:`, with the reviewer's not-covered list, one entry per line. When the list is empty, write `Nothing: the checks and the review covered the whole change.` under it.
+- Every verified finding's parentheses carry its `confidence` after importance and scope; an unverified one says `unverified` there instead. A filtered finding's line carries only its confidence, and its verification takes the place of the fix.
 
 The trailing fenced block has the info string `json review-findings` and contains a single JSON object with this schema (no comments, no trailing commas, valid JSON):
 
@@ -241,8 +124,8 @@ The trailing fenced block has the info string `json review-findings` and contain
   "commit": "<full sha or null>",
   "range": "<diff range or null>",
   "depth": "quick" | "standard" | "deep",
-  "reviewers": ["correctness", "claude-md", "scope", "style", "testing", "git-history"],
-  "skippedReviewers": [{ "name": "security", "reason": "standard depth" }, { "name": "security-review", "reason": "standard depth" }, { "name": "storage", "reason": "no storage files changed" }],
+  "reviewers": ["quality"],
+  "skippedReviewers": [],
   "skippedFiles": ["path/generated.pb.go"],
   "findings": [
     {
@@ -252,14 +135,14 @@ The trailing fenced block has the info string `json review-findings` and contain
       "description": "<what is wrong and why it matters>",
       "fix": "<recommended fix, or null>",
       "locations": [{ "file": "path/to/file.go", "startLine": 120, "endLine": 134 }],
-      "flaggedBy": ["correctness", "security"],
-      "category": "correctness" | "claude-md" | "scope" | "style" | "testing" | "git-history" | "security" | "storage" | "spec",
+      "flaggedBy": ["quality"],
+      "category": "structure" | "boundary" | "scope" | "claude-md" | "correctness" | "style",
       "importance": 1 | 2 | 3 | 4 | 5,
       "scopeFit": 1 | 2 | 3 | 4 | 5,
       "confidence": 0-100 | null,
       "preExisting": true | false,
       "verification": "<the verifier's one sentence>" | null,
-      "class": "<the bug class's short name>",
+      "class": "<the class's short name>",
       "triage": { "decision": "apply" | "defer" | "drop", "reason": "<one sentence>" } | null,
       "suggestion": { "file": "path/to/file.go", "startLine": 120, "endLine": 122, "replacement": "<exact new text of those lines>" } | null,
       "dispute": null
@@ -272,12 +155,12 @@ The trailing fenced block has the info string `json review-findings` and contain
 }
 ```
 
-`depth` is the depth from Step 1, the same as the `Depth:` line. `importance` and `scopeFit` are the two scores from Step 6 (the markdown writes them as `importance N, scope N`). `triage` is Step 6's decision and reason for every verified, introduced finding, and null for pre-existing, filtered and unverified ones. `confidence`, `preExisting` and `verification` are the verifier's verdict from Step 5, copied as given; only an unverified finding has `"confidence": null`, and it always has `"preExisting": false`. `startLine`/`endLine` are integers or null when the finding is about a whole file. `locations` lists every instance of the finding's `class`. `category` is the reviewer whose concern it primarily is. `suggestion` is the fix as an exact edit, for the diff view to show as a GitHub-style suggested change and apply in one keystroke: give it only when the recommended fix is a replacement of one contiguous run of lines in the new version of one file and you can state the replacement exactly. Read those lines from the file at the reviewed commit first; `startLine`/`endLine` are the inclusive 1-based lines replaced and `replacement` is their new text, with the file's indentation, lines joined by `\n`, no trailing newline (an empty string deletes the lines). Anything wider (several hunks, new files, a fix that needs judgement) has `"suggestion": null`, as do filtered and pre-existing findings. `notCovered` is the Not Covered section's entries as strings, `[]` when it says nothing. `dispute` is always null in this skill's own report: a caller re-reviewing a fix round sets it on a finding the fixing agent disputed, with the outcome of that dispute, and says how. The JSON must list the same findings, in the same order and with the same ids, as the markdown, with `filtered` holding the Filtered section's. Put the JSON block last; nothing follows it.
+`depth` is the depth from Step 1, the same as the `Depth:` line. `importance` and `scopeFit` are Step 4's scores (the markdown writes them as `importance N, scope N`); `triage` is Step 4's decision for every verified, introduced finding and null otherwise. `confidence`, `preExisting` and `verification` are the verifier's verdict, copied as given; only an unverified finding has `"confidence": null`, and it always has `"preExisting": false`. `startLine`/`endLine` are integers, or null for a whole-file finding. `locations` lists every instance of the finding's `class`. `category` is the reviewer's. `suggestion` is the reviewer's exact edit, for the diff view to show as a GitHub-style suggested change and apply in one keystroke: `startLine`/`endLine` are the inclusive 1-based new-side lines replaced and `replacement` their new text, lines joined by `\n`, no trailing newline (an empty string deletes the lines); null when the reviewer gave none, and always null for filtered and pre-existing findings. `notCovered` is the Not Covered section's entries as strings, `[]` when it says nothing. `dispute` is always null in this skill's own report: a caller re-reviewing a fix round sets it. The JSON must list the same findings, in the same order and with the same ids, as the markdown, with `filtered` holding the Filtered section's. Put the JSON block last; nothing follows it.
 
 ## Rules
 
-- You do NOT review or verify code yourself. You ONLY orchestrate, triage and compile; the verifiers decide each finding's confidence and whether it is pre-existing.
-- Neither you nor sub-agents make code changes. Report only. (A finding's `suggestion` describes an edit; it is not one.)
-- All applicable reviewers MUST be spawned in parallel in a single message, and so must all the verifiers (one per group of candidates, Step 5). The depth decides only which finders run: every depth verifies and triages every finding the same way.
-- Every finding is verified, whatever its severity. Never leave one out of the report: it is either reported or filtered. The one exception is a minor candidate under the severity floor `important`, which Step 4 drops before verification. That includes style and code-smell findings, which are reported as minor, and findings triage defers or drops, which stay in the report with their decision.
+- You do NOT review or verify code yourself. You orchestrate, triage and compile; the reviewer finds, the verifier decides each finding's confidence and whether it is pre-existing.
+- Neither you nor the agents make code changes. Report only. (A finding's `suggestion` describes an edit; it is not one.)
+- The depth sets only the agents' effort: every depth reviews, verifies and triages the same way.
+- Every finding is verified, whatever its severity, and every one is either reported or filtered, never left out; the one exception is a minor candidate under the severity floor `important`. Findings triage defers or drops stay in the report with their decision.
 - Triage follows `~/.claude/skills/triage-criteria.md`. Low priority alone is never a reason to drop.

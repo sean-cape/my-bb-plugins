@@ -303,7 +303,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
             ...ticketOption,
             project: { type: "string", description: "Project id to run a PR review in; defaults to the card's project. A local review runs in its thread's project" },
             full: { type: "boolean", description: "Review the whole change even if an earlier review exists (default: the commits since the last review, re-checking its open findings)" },
-            depth: { type: "string", description: "Which finders run: quick (correctness, CLAUDE.md compliance, scope, style), standard (adds testing and git history; the default) or deep (adds security)" },
+            depth: { type: "string", description: "How hard the review's agents reason: quick (medium effort), standard (high; the default) or deep (xhigh)" },
             json: { type: "boolean", description: "Emit JSON" },
           },
           async run({ options }, ctx) {

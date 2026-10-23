@@ -471,7 +471,7 @@ function applyStatusLabel(apply: NonNullable<Review["apply"]>, local: boolean): 
 
 const DEPTH_OPTIONS = reviewDepthSchema.options.map((value) => ({ value, label: REVIEW_DEPTH_LABEL[value] }));
 const DEPTH_TITLE =
-  "Which finders the review runs. Quick: correctness, CLAUDE.md compliance, scope and style. Standard adds testing and git history. Deep adds security. Every depth verifies and triages its findings.";
+  "How hard the review's agents reason: Quick at medium effort, Standard at high, Deep at xhigh. Every depth reviews, verifies and triages the same way.";
 
 function DepthBadge({ depth }: { depth: ReviewDepth | null }) {
   if (depth === null) return null;

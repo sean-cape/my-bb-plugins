@@ -18,7 +18,7 @@ const TRANSIENT_CATEGORIES = new Set(["unknown", "connection-failed", "stream-di
 
 /**
  * A review thread that dies mid-turn (the machine slept, the connection dropped, bb restarted) is resumed where it
- * stopped instead of failing, since starting over would run every finder and verifier again. Rate limits and
+ * stopped instead of failing, since starting over would run the reviewer and verifier again. Rate limits and
  * overloads are left to the provider-retry plugin, whose queued retry keeps the review running. Checks and classify
  * threads are cheap and fail straight to the loop, which starts them again from scratch.
  */

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Installs or upgrades everything in this repository on this machine: pulls the checkout, installs each plugin's
 // dependencies, builds it, installs it into bb (or reloads it when bb already runs it from here), and links the
-// Claude Code skills and subagents into ~/.claude.
+// Claude Code skills (and any subagents) into ~/.claude.
 //
 //   node scripts/install.mjs                     # pull, then install or upgrade every plugin
 //   node scripts/install.mjs kanban diff-view    # only these plugins (the Claude config is still linked)

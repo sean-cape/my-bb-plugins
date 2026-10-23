@@ -5,9 +5,10 @@
 //   node scripts/link-claude-config.mjs            # link everything, backing up what it replaces
 //   node scripts/link-claude-config.mjs --check    # list what isn't linked yet, change nothing
 //
-// The code-review skill spawns the change-reviewer-* subagents by name and reads triage-criteria.md,
-// so the three are linked together. Without the skill, Claude Code's own plugin skill of the same name
-// answers instead, and its report is one the board can't read.
+// The code-review skill's agents read reviewer.md and verifier.md beside it and it reads triage-criteria.md,
+// so the skills are linked together. Without the skill, Claude Code's own plugin skill of the same name
+// answers instead, and its report is one the board can't read. A link whose source left this repository
+// (a removed skill or subagent) is pruned, so Claude Code doesn't load a dangling entry.
 //
 // Run it from the main checkout: a link into a worktree breaks once the worktree is cleaned up.
 import { spawnSync } from "node:child_process";
@@ -31,8 +32,9 @@ if (gitDir !== null && gitDir !== gitPath("--git-common-dir")) {
 }
 
 /** Each entry to link: the skills' directories and loose files, and the subagent files. */
-const links = ["skills", "agents"].flatMap((kind) =>
-  readdirSync(join(repo, "claude", kind))
+const kinds = ["skills", "agents"];
+const links = kinds.flatMap((kind) =>
+  (existsSync(join(repo, "claude", kind)) ? readdirSync(join(repo, "claude", kind)) : [])
     .filter((name) => !name.startsWith("."))
     .map((name) => ({ source: join(repo, "claude", kind, name), target: join(claudeDir, kind, name), label: `${kind}/${name}` })),
 );
@@ -68,6 +70,26 @@ for (const { source, target, label } of links) {
   }
   symlinkSync(source, target);
   console.log(`${label}: linked`);
+}
+// Links into this repository whose source is gone: a skill or subagent a commit removed.
+const stale = kinds.flatMap((kind) => {
+  const dir = join(claudeDir, kind);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .map((name) => ({ target: join(dir, name), label: `${kind}/${name}` }))
+    .filter(({ target }) => {
+      const source = linkTarget(target);
+      return source !== null && source.startsWith(join(repo, "claude") + "/") && !existsSync(source);
+    });
+});
+for (const { target, label } of stale) {
+  pending += 1;
+  if (check) {
+    console.log(`${label}: links to a file this repository no longer has`);
+    continue;
+  }
+  unlinkSync(target);
+  console.log(`${label}: removed the dangling link`);
 }
 if (pending === 0) console.log(`Everything in ${join(repo, "claude")} is linked into ${claudeDir}.`);
 else if (check) process.exit(1);

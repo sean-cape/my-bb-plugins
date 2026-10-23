@@ -220,7 +220,7 @@ export function createLoop(
       bb.log.warn(`could not prompt the thread of ticket ${ticketId}: ${errorMessage(error)}`);
       return;
     }
-    // The fix round is the review's apply round, so its re-review hands the fixed findings to the scope finder.
+    // The fix round is the review's apply round, so its re-review hands the fixed findings to the reviewer's scope check.
     if (prompt.kind === "fix") {
       stmts.startApply.run(ticket.threadId, Date.now(), JSON.stringify(prompt.findingIds), 0, prompt.reviewId);
       publish();

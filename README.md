@@ -78,8 +78,8 @@ bb plugin install git:github.com/sean-cape/my-bb-plugins@main --plugin <name>
 
 ## Claude Code skills
 
-`claude/` holds the Claude Code skills and subagents the kanban board's review loop runs: `code-review` with the
-`change-reviewer-*` subagents it spawns and the `triage-criteria.md` it reads, `apply-review`, `apply-pr-comments`,
+`claude/` holds the Claude Code skills the kanban board's review loop runs: `code-review` with the `reviewer.md`
+and `verifier.md` its agents read and the `triage-criteria.md` it reads, `apply-review`, `apply-pr-comments`,
 and the `grill-me` → `to-spec` → `to-tickets` → `implement` flow that writes the specs the reviews hold changes to.
 `scripts/install.mjs` links them; to link them alone, run this from the main checkout (existing copies are moved to
 `~/.claude/backups`):

@@ -164,7 +164,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
   --reason "<why>"`, and the board refuses its ready report until every one
   is answered. The fix commit is checked and re-reviewed incrementally, with
   a severity floor once the first round is done: the re-review only looks for
-  new critical and important findings and leaves the style finder out. It
+  new critical and important findings and leaves style findings out. It
   also judges each dispute: an accepted one closes the finding, a
   rejected one stops the loop with reason "dispute" (or, on a minor finding,
   stays open as a minor), and a critical or important finding answered fixed
@@ -291,12 +291,10 @@ its PR is reviewed and its review findings and comments are handed to agents.
   also have a "thread" link.
   Turn off "Keep code review threads out of the sidebar" to show them (existing
   ones follow the setting).
-- **Review depth**: a review runs at Quick (correctness, CLAUDE.md
-  compliance, scope and style), Standard (adds testing and git history; the
-  default) or Deep (adds security, through the security reviewer and
-  `/security-review`). The storage reviewer still runs only when storage
-  files change, the spec reviewer whenever there is a spec, and every depth
-  verifies and triages its findings. The card panel's Code review has a depth
+- **Review depth**: a review runs at Quick, Standard (the default) or Deep,
+  which set how hard the skill's reviewer and verifier agents reason (medium,
+  high or xhigh effort); every depth runs the same strict code quality audit
+  and verifies and triages its findings. The card panel's Code review has a depth
   picker beside its Review and Retry buttons (from the keys, h/l choose and
   Enter starts the review), and its menu chooses the depth of the next
   review; `bb kanban review --depth quick|standard|deep` does the same. The
@@ -328,8 +326,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   changes persist per review, and "Reset to suggested" restores the suggestion.
 - **Scope and triage**: the review prompt carries the card's intent (title,
   description, approved plan once the loop's plan gate keeps one, and the
-  spec under `.claude/features/` when there is one), and the skill's scope
-  finder reports parts of the change beyond it under a `scope` category, with
+  spec under `.claude/features/` when there is one), and the skill's
+  reviewer reports parts of the change beyond it under a `scope` category, with
   the fix to remove or split them out; on a re-review it also checks each fix
   commit stays within the findings it answers. After verifying, the skill
   triages every verified finding of the change's own: **apply**, **defer**

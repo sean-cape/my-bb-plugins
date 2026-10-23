@@ -41,8 +41,8 @@ export const NOT_COVERED_REPORT_VERSION = 3;
 export const TRIAGED_REPORT_VERSION = 4;
 
 /**
- * Which finders a review runs: Quick has correctness, CLAUDE.md compliance, scope and style; Standard adds testing and
- * git history; Deep adds security. Every depth verifies and triages its findings the same way.
+ * How hard the review's agents reason: Quick runs them at medium effort, Standard at high and Deep at xhigh. Every depth
+ * reviews, verifies and triages the same way.
  */
 export const reviewDepthSchema = z.enum(["quick", "standard", "deep"]);
 export type ReviewDepth = z.infer<typeof reviewDepthSchema>;
@@ -143,7 +143,7 @@ export const reviewReportSchema = z.object({
   summary: z.string().default(""),
   commit: z.string().nullable().default(null),
   range: z.string().nullable().default(null),
-  /** Null in reports from before depths, which ran every finder. */
+  /** Null in reports from before depths. */
   depth: reviewDepthSchema.nullable().catch(null).default(null),
   reviewers: z.array(z.string()).default([]),
   skippedReviewers: z.array(z.object({ name: z.string(), reason: z.string().default("") })).default([]),
