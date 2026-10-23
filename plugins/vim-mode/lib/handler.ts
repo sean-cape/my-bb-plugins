@@ -174,7 +174,7 @@ export function createKeyHandler<C>(options: KeyHandlerOptions<C>): KeyHandler {
     if (read.kind === "pending") return take(event);
     if (options.onCommand(read.command, { event, target, keys: read.keys, count: read.count }) === false) return false;
     take(event);
-    announce(selfElement() ?? target ?? doc ?? null, { keys: read.keys, count: read.count, event, plugin: typeof __BB_PLUGIN_ID__ === "string" ? __BB_PLUGIN_ID__ : undefined });
+    announceKeyCommand(selfElement() ?? target ?? doc ?? null, { keys: read.keys, count: read.count, event });
     return true;
   };
 
@@ -192,9 +192,18 @@ export function createKeyHandler<C>(options: KeyHandlerOptions<C>): KeyHandler {
   };
 }
 
-function announce(on: EventTarget | null, detail: KeyCommandDetail): void {
+/**
+ * Dispatches `KEY_COMMAND_EVENT` for a command a key ran, with this bundle's plugin id: for keys
+ * a plugin handles outside `createKeyHandler`, such as its bb command shortcuts.
+ */
+export function announceKeyCommand(on: EventTarget | null, detail: Omit<KeyCommandDetail, "plugin">): void {
   if (on === null || typeof CustomEvent === "undefined") return;
-  on.dispatchEvent(new CustomEvent<KeyCommandDetail>(KEY_COMMAND_EVENT, { bubbles: true, composed: true, detail }));
+  // A command that submits or closes its surface has removed `on` by now, and an event on a
+  // detached node never reaches the window.
+  const target = on instanceof Node && !on.isConnected ? on.ownerDocument : on;
+  if (target === null) return;
+  const plugin = typeof __BB_PLUGIN_ID__ === "string" ? __BB_PLUGIN_ID__ : undefined;
+  target.dispatchEvent(new CustomEvent<KeyCommandDetail>(KEY_COMMAND_EVENT, { bubbles: true, composed: true, detail: { ...detail, plugin } }));
 }
 
 export interface BindKeysOptions<C> extends KeyHandlerOptions<C> {

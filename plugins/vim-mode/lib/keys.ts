@@ -46,6 +46,15 @@ export function keyToken(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "shiftKe
   return key;
 }
 
+/** `keyToken` that also names the ⌘ and ⌥ chords it leaves to bb: `<D-k>`, `<A-S-Left>`, `<D-C-f>`. */
+export function chordToken(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "isComposing">): KeyToken | null {
+  if (!event.metaKey && !event.altKey) return keyToken(event);
+  const inner = keyToken({ key: event.key, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: false, metaKey: false, isComposing: event.isComposing });
+  if (inner === null) return null;
+  const body = inner.startsWith("<") ? inner.slice(1, -1) : inner.length === 1 && inner !== inner.toLowerCase() ? `S-${inner.toLowerCase()}` : inner;
+  return `<${event.metaKey ? "D-" : ""}${event.altKey ? "A-" : ""}${body}>`;
+}
+
 const TOKEN = /<[^<>]+>|[^]/gu;
 
 export function tokenize(sequence: string): KeyToken[] {

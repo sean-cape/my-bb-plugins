@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  announceKeyCommand,
   bindKeyScope,
+  chordToken,
   createKeyReader,
   cycle,
   displaySequence,
@@ -20,6 +22,17 @@ import {
 function key(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   return new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
 }
+
+describe("chordToken", () => {
+  it("writes ⌘ and ⌥ chords, which bb owns, in vim notation", () => {
+    expect(chordToken(key("k", { metaKey: true }))).toBe("<D-k>");
+    expect(chordToken(key("D", { metaKey: true, shiftKey: true }))).toBe("<D-S-d>");
+    expect(chordToken(key("ArrowLeft", { altKey: true }))).toBe("<A-Left>");
+    expect(chordToken(key("f", { metaKey: true, ctrlKey: true }))).toBe("<D-C-f>");
+    expect(chordToken(key("j"))).toBe("j");
+    expect(chordToken(key("Meta", { metaKey: true }))).toBeNull();
+  });
+});
 
 describe("keyToken", () => {
   it("writes printable keys as themselves and the rest in vim notation", () => {
@@ -452,5 +465,29 @@ describe("KEY_COMMAND_EVENT", () => {
     expect(seen[0]!.event).toBe(j);
     expect(j.defaultPrevented).toBe(true);
     expect(seen[0]!.plugin).toBeUndefined();
+  });
+
+  it("still reaches the window when the command removed the root it ran on", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const seen: string[] = [];
+    const listen = (event: Event) => seen.push((event as CustomEvent<KeyCommandDetail>).detail.keys);
+    window.addEventListener(KEY_COMMAND_EVENT, listen);
+    const unbind = bindKeyScope(root, { keymap: { "<CR>": "submit" }, onCommand: () => root.remove() });
+    root.focus();
+    root.dispatchEvent(key("Enter"));
+    unbind();
+    window.removeEventListener(KEY_COMMAND_EVENT, listen);
+    expect(seen).toEqual(["<CR>"]);
+  });
+
+  it("announces a command a plugin ran outside a key handler", () => {
+    const seen: KeyCommandDetail[] = [];
+    const listen = (event: Event) => seen.push((event as CustomEvent<KeyCommandDetail>).detail);
+    window.addEventListener(KEY_COMMAND_EVENT, listen);
+    const event = key("o", { ctrlKey: true });
+    announceKeyCommand(document, { keys: "<C-o>", count: null, event });
+    window.removeEventListener(KEY_COMMAND_EVENT, listen);
+    expect(seen).toEqual([{ keys: "<C-o>", count: null, event, plugin: undefined }]);
   });
 });

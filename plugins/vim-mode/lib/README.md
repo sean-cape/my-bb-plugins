@@ -87,6 +87,7 @@ It is layers, not a framework. Use the highest layer that fits and drop a level 
 - `keyToken(event)` names a keydown: `j`, `G`, `<C-d>`, `<Esc>`, `<CR>`, `<Space>`, `<S-Tab>`. It returns null for ⌘ and
   ⌥ chords (bb's and the system's), bare modifiers (so Shift between `g` and `O` doesn't break `gO`), and composition.
   Plugins don't take ⌘ chords; register those as bb commands (`app.commands.register` with `defaultShortcut`).
+  `chordToken(event)` is `keyToken` that also names those chords (`<D-k>`, `<A-S-Left>`), for logging them.
 - `createKeyReader(keymap, { counts?, timeoutMs? })` reads sequences, waiting on the start of one for up to
   `SEQUENCE_TIMEOUT_MS` (1000, vim's `timeoutlen`). A key that can't continue the sequence starts over on its own.
 - `keymapConflicts(keymap)` lists sequences that also start a longer one (`g` beside `gg`); keep it empty.
@@ -112,7 +113,9 @@ It is layers, not a framework. Use the highest layer that fits and drop a level 
 - After a bound command runs, the handler dispatches a bubbling `KEY_COMMAND_EVENT` (`bb-vim-keys:command`) on its
   root or the key's target with `{ keys, count, event, plugin }` (`KeyCommandDetail`; `plugin` is the id `bb plugin build`
   defines into the bundle). The activity plugin listens for it on the window to log which commands get used; a plugin
-  needn't do anything for its keys to count.
+  needn't do anything for its keys to count. A command that removed its root (a banner it submitted) is announced on
+  the root's document instead, so it still reaches the window. Keys a plugin handles another way, such as its bb
+  command shortcuts, announce themselves with `announceKeyCommand(target, { keys, count, event })`.
 - `bindKeys(target, options)` puts a handler on the window, a document or an element, with `capture` to run before bb
   and vim-mode and keep taken keys from them. It is for content scripts over bb's own DOM, which have no root of their
   own: resolve the surface at key time in `accepts`.
