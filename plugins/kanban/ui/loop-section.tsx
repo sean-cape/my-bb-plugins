@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { Board, Ticket } from "../shared/board";
-import { ATTENTION_LEVEL_LABEL, NEEDS_YOU_REASON_LABEL, formatPathRules, openMinorsList, parsePathRules, phaseChip, type LoopGates, type PathRule } from "../shared/loop";
+import { ATTENTION_LEVEL_LABEL, NEEDS_YOU_REASON_LABEL, formatPathRules, openMinorsClause, parsePathRules, phaseChip, type LoopGates, type PathRule } from "../shared/loop";
 import { Checkbox } from "@/components/ui/checkbox";
 import { usePortalScopeProps } from "@/lib/portal-scope";
 import type { Rpc } from "./data";
@@ -168,7 +168,7 @@ function LoopStatus({ ticket, onOpenThread }: { ticket: Ticket; onOpenThread: (t
         : loop.phase === "needs-you" && loop.reason !== null && loop.reason !== "clean"
           ? `Needs you: ${NEEDS_YOU_REASON_LABEL[loop.reason]}${loop.reason === "checks" && last !== undefined ? `, exit code ${last.exitCode}` : ""}${loop.reason === "loop-error" && loop.failure !== null ? `: ${loop.failure}` : ""}`
           : loop.phase === "needs-you" && loop.openFindings.length > 0
-            ? `Clean with ${loop.openFindings.length} minor finding${loop.openFindings.length === 1 ? "" : "s"} left open: ${openMinorsList(loop.openFindings)}`
+            ? `Clean with ${openMinorsClause(loop.openFindings)}`
           : loop.phase === "needs-you" && loop.levelOverride !== null
             ? `${ATTENTION_LEVEL_LABEL[loop.levelOverride.level]}: you set it, ${loop.levelOverride.reason}`
           : loop.phase === "needs-you" && loop.attention !== null

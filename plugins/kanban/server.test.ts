@@ -11,7 +11,7 @@ import {
 import type { PluginThreadEventPayloads, PluginTurnFailedEvent } from "@get-bb/plugin-sdk";
 import type { ReadingPlan } from "./shared/reading-plan";
 import plugin, { adfToText, defaultSelected, githubRepoFromRemote, newLineRangesFromPatch, parseNarrative, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CodeReviewThread, type CommentApply, type DiffComment, type Dump, type Finding, type Narrative, type NarrativeStory, type PrComment, type Review, type StructuralDiff, type SymbolLookup, type Ticket, type TicketDiff } from "./server";
-import { loopStateSchema, phaseChip } from "./shared/loop";
+import { loopStateSchema, openMinorsClause, phaseChip } from "./shared/loop";
 
 type Host = ReturnType<typeof createFakePluginHost>;
 type ThreadResponse = ReturnType<typeof makeThreadResponse>;
@@ -2521,27 +2521,24 @@ describe("monitored review loop", () => {
 });
 
 describe("ready chip open minors", () => {
+  const minors = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `F${index + 1}`, severity: "minor" as const, title: `Nit ${index + 1}` }));
   const readyTitle = (count: number) =>
-    phaseChip(
-      loopStateSchema.parse({
-        monitored: true,
-        phase: "needs-you",
-        reason: "clean",
-        commit: "abc1234def",
-        openFindings: Array.from({ length: count }, (_, index) => ({ id: `F${index + 1}`, severity: "minor", title: `Nit ${index + 1}` })),
-      }),
-    )!.title;
+    phaseChip(loopStateSchema.parse({ monitored: true, phase: "needs-you", reason: "clean", commit: "abc1234def", openFindings: minors(count) }))!.title;
 
   it("lists none when no minor is open", () => {
     expect(readyTitle(0)).toBe("Checked and reviewed clean at abc1234; needs you");
   });
 
   it("lists three in full", () => {
-    expect(readyTitle(3)).toContain("; 3 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3; needs you");
+    expect(readyTitle(3)).toBe("Checked and reviewed clean at abc1234; 3 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3; needs you");
   });
 
   it("lists the first three of five, then how many more", () => {
-    expect(readyTitle(5)).toContain("; 5 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3, +2 more; needs you");
+    expect(readyTitle(5)).toBe("Checked and reviewed clean at abc1234; 5 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3, +2 more; needs you");
+  });
+
+  it("gives the loop status line the same capped clause", () => {
+    expect(openMinorsClause(minors(5))).toBe("5 minor findings left open: F1 Nit 1, F2 Nit 2, F3 Nit 3, +2 more");
   });
 });
 
