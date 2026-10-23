@@ -15,7 +15,7 @@ import { navRows, patchRows, selectionRange } from "./lib/app/text/patch-rows";
 import { gapEnter, gapPart, navWithGaps } from "./lib/app/text/patch-gaps";
 import { FILE_TREE_KEYMAP, KEY_HELP, OUTSIDE_FINDINGS_KEYMAP, REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import { createKeyReader, keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
-import { anchorsAtCursor, hunkSpanAt, moveChange, moveFile, moveHunk, moveLines, nextAnchor, visualRange, type Cursor, type NavFile } from "./lib/app/keys/nav";
+import { anchorsAtCursor, hunkSpanAt, lastPosition, moveChange, moveFile, moveHunk, moveLines, nextAnchor, visualRange, type Cursor, type NavFile } from "./lib/app/keys/nav";
 import { rankFiles } from "./lib/app/keys/rank-files";
 import { runReviewCommand, type ReviewEnv } from "./lib/app/keys/review-commands";
 import type { FileNavModel } from "./lib/app/keys/review-keys-context";
@@ -1039,6 +1039,10 @@ describe("excerpt gaps", () => {
     ]);
     // The fold keeps the hunk above it, so the hunk below still starts at its first row.
     expect(moveHunk([{ path: "a", collapsed: false, rows: nav }], { path: "a", side: "RIGHT", line: 66, want: "RIGHT" }, 1, 1)).toMatchObject({ line: 86 });
+    // The top fold has no hunk to explain, and the last line is the last one shown, not a fold under it.
+    expect(hunkSpanAt(nav, 0)).toBeNull();
+    const trailing = navWithGaps(rows, [{ after: { old: null, new: 86 }, before: null, hidden: lines(87, 90), unchanged: 0 }]).rows;
+    expect(lastPosition([{ path: "a", collapsed: false, rows: trailing }], "RIGHT")).toMatchObject({ line: 86 });
   });
 
   it("opens a short gap whole and a long one a step at a time toward the code", () => {

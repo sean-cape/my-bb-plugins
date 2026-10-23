@@ -132,8 +132,9 @@ export function firstPosition(files: readonly NavFile[], want: DiffSide): Cursor
   return files.length === 0 ? null : cursorAt(files, { fileIndex: 0, row: -1 }, want);
 }
 
+/** The last line, passing over a fold of hidden lines at the bottom: the last line shown, as the first one is. */
 export function lastPosition(files: readonly NavFile[], want: DiffSide): Cursor | null {
-  const all = positions(files, 0, false);
+  const all = positions(files, 0, false).filter(({ fileIndex, row }) => row === -1 || visibleRows(files[fileIndex]!)[row]!.expander !== true);
   const last = all.at(-1);
   return last === undefined ? null : cursorAt(files, last, want);
 }
@@ -262,5 +263,7 @@ export function hunkSpanAt(rows: readonly NavRow[], row: number): { side: "old" 
   const olds = members.map((entry) => entry.left).filter((line): line is number => line !== null);
   const side = news.length > 0 ? "new" : "old";
   const lines = side === "new" ? news : olds;
+  // A fold above a file's first hunk belongs to none.
+  if (lines.length === 0) return null;
   return { side, start: Math.min(...lines), stop: Math.max(...lines) };
 }

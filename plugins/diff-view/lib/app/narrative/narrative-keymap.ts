@@ -54,7 +54,7 @@ const SHARED_HELP = KEY_HELP.filter((section) => section.title !== "File list").
     "n N": "Next / previous step matching the search",
     f: "Find a file by name and open it in the files view",
     v: "Mark the excerpt's file viewed or not",
-    zr: "Not in excerpts: they are line diffs",
+    zr: "Show 20 more of the lines the excerpt leaves out either side of the cursor's run (Enter on a band shows its lines)",
     gd: "Not in excerpts: they are line diffs",
     gl: "Split or unified, for the excerpts (remembered apart from the files view's)",
     S: "Back to the files view, cursor where it was (S there comes back)",
