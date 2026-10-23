@@ -200,7 +200,7 @@ function Composer({ writing }: { writing: ConversationWriting }) {
         }}
       />
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-muted-foreground">Markdown · ⌘↩ posts to GitHub · Esc keeps the draft</span>
+        <span className="text-[11px] text-muted-foreground">Markdown · ⌘↩ posts to GitHub · Esc (twice with vim mode) keeps the draft</span>
         <Button type="button" className={cn(COMPACT, "ml-auto")} disabled={posting || draft.trim() === ""} onClick={post}>
           {posting ? "Posting…" : "Comment"}
         </Button>

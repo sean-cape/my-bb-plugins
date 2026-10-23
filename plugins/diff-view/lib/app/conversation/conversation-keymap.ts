@@ -43,7 +43,7 @@ export const CONVERSATION_KEY_HELP: readonly KeyHelpSection[] = [
   {
     title: "Write",
     keys: [
-      { keys: ["i"], action: "Comment on the pull request: the box at the end (⌘↩ posts to GitHub, Esc keeps the draft)" },
+      { keys: ["i"], action: "Comment on the pull request: the box at the end (⌘↩ posts to GitHub, Esc keeps the draft; with vim mode the first Esc is its normal mode)" },
       { keys: ["Q"], action: "Quote the comment under the cursor into the box" },
       { keys: ["+"], action: "React to the comment under the cursor (pick one; again takes yours back)" },
       { keys: ["e"], action: "Edit your comment, review summary or description under the cursor (⌘↩ saves, Esc cancels)" },
