@@ -167,5 +167,6 @@ export const conversationDataSchema = z.object({
   events: z.array(conversationEventSchema),
   comments: z.record(z.string(), commentMetaSchema),
   commits: z.record(z.string(), z.object({ verified: z.boolean().nullable(), checks: checkOutcomeSchema.nullable() })),
+  threads: z.record(z.string(), z.object({ resolvedBy: z.string().nullable() })),
 });
 export type ConversationData = z.infer<typeof conversationDataSchema>;

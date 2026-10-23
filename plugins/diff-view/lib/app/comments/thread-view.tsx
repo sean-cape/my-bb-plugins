@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { Badge } from "../ui/badge";
 import { Button, COMPACT } from "../ui/button";
@@ -229,11 +229,15 @@ function ThreadKeyHint({ thread, open, shown, suggestion }: { thread: DiffThread
   return <p className={cn(CARD_FOOTER, enter.fade, FAST, !shown && "hidden")}>{hints.join(" · ")}</p>;
 }
 
+/** Set where something around the thread folds it instead (the conversation folds a resolved thread's whole block), so the card starts open. */
+export const ThreadStartsOpenContext = createContext(false);
+
 /** One thread under its line: the root, its replies (GitHub and local interleaved by time), and a reply box. Resolved threads start collapsed. */
 export function DiffThreadView({ thread }: { thread: DiffThread }) {
   const actions = useContext(DiffCommentsContext);
   const now = useNow();
-  const [open, setOpen] = useState(thread.resolved !== true);
+  const startsOpen = useContext(ThreadStartsOpenContext);
+  const [open, setOpen] = useState(startsOpen || thread.resolved !== true);
   const [replying, setReplying] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);

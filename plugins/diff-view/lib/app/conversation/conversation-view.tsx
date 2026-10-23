@@ -15,10 +15,10 @@ import { DiffErrorBoundary } from "../text/diff-error-boundary";
 import { CommentBody } from "../suggestions/suggestion-diff";
 import { DiffCommentsContext, type DiffCommentActions } from "../comments/context";
 import { FileLevelComments } from "../comments/file-level-comments";
-import { useNow } from "../comments/thread-view";
+import { ThreadStartsOpenContext, useNow } from "../comments/thread-view";
 import type { ThreadCode } from "../comments/thread-code";
 import type { DiffThread } from "../comments/threads";
-import { commitKey, threadKey, type ConversationCommit, type ConversationItem, type ConversationReview } from "./conversation";
+import { commitKey, threadKey, threadStartsFolded, type ConversationCommit, type ConversationItem, type ConversationReview } from "./conversation";
 import { CheckMark, CommentMetaContext, MetaBadges, Reactions } from "./comment-meta";
 import { Button, COMPACT } from "../ui/button";
 import { LabelChip, PullRequestHeader, PullRequestStatus } from "./conversation-summary";
@@ -216,23 +216,61 @@ const VERDICT: Record<ReviewVerdict, { icon: string; text: string; tone: string 
   DISMISSED: { icon: "diff-view-eye", text: "left a review, since dismissed", tone: "" },
 };
 
-/** A thread over its code: the file it is on, the lines it was left on, and the thread under them. */
-function ThreadBlock({ code, stopRef, inDiff, annotations, onOpen }: { code: ThreadCode; stopRef: StopRef; inDiff: boolean; annotations: PatchAnnotationProps; onOpen: () => void }) {
+/**
+ * A thread over its code: the file it is on, the lines it was left on, and the thread under them. Folded, as GitHub
+ * shows a resolved or outdated conversation, it is the file's name, its labels, who resolved it, and a Show button.
+ */
+function ThreadBlock({
+  code,
+  stopRef,
+  focused,
+  folded,
+  resolvedBy,
+  inDiff,
+  annotations,
+  onToggle,
+  onOpen,
+}: {
+  code: ThreadCode;
+  stopRef: StopRef;
+  focused: boolean;
+  folded: boolean;
+  resolvedBy: string | null;
+  inDiff: boolean;
+  annotations: PatchAnnotationProps;
+  onToggle: () => void;
+  onOpen: () => void;
+}) {
   const thread = code.placed;
+  const resolved = thread.resolved === true;
+  const comments = thread.entries.length;
   const fileLevel = <FileLevelComments path={code.key} threads={[thread]} composing={false} onSubmit={annotations.onSubmitComposer} onCancel={annotations.onCancelComposer} />;
+  const what = resolved ? "resolved" : "outdated";
   return (
-    <section {...stopProps(threadKey(thread), stopRef, false)} className="min-w-0 overflow-hidden rounded-md border border-border">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/40 px-2 py-1 text-xs">
-        <button type="button" className={cn("flex min-w-0 flex-1 items-baseline gap-2 text-left hover:underline", PRESS)} title="Open in the files view (gf)" onClick={onOpen}>
+    <section {...stopProps(threadKey(thread), stopRef, focused)} className={cn("min-w-0 overflow-hidden rounded-md border border-border", folded && "bg-muted/20", focused && CURSOR_RING)}>
+      <div className={cn("flex flex-wrap items-center gap-2 bg-muted/40 px-2 py-1 text-xs", !folded && "border-b border-border")}>
+        <button type="button" className={cn("flex min-w-0 items-baseline gap-2 text-left hover:underline", PRESS)} title="Open in the files view (gf)" onClick={onOpen}>
           <code className="min-w-0 truncate">{code.path}</code>
         </button>
         {thread.outdated ? (
-          <Badge title="The lines as they were when the comment was left, as GitHub stored them; a later push changed them">outdated</Badge>
+          <Badge tone="warning" title="A later push changed the lines this was left on; the code shown is as it was then">
+            Outdated
+          </Badge>
         ) : !inDiff ? (
           <Badge title="This file is no longer in the diff">not in the diff</Badge>
         ) : null}
+        {resolved ? <Badge tone="success">Resolved</Badge> : null}
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+          {resolved ? `This conversation was marked as resolved${resolvedBy === null ? "" : ` by ${resolvedBy}`}` : null}
+          {folded ? `${resolved ? " · " : ""}${comments} comment${comments === 1 ? "" : "s"}` : null}
+        </span>
+        {resolved || thread.outdated ? (
+          <button type="button" aria-expanded={!folded} className={cn("shrink-0 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-state-hover hover:text-foreground", PRESS)} title="Enter or za" onClick={onToggle}>
+            {folded ? `Show ${what}` : `Hide ${what}`}
+          </button>
+        ) : null}
       </div>
-      {code.patch !== null ? (
+      {folded ? null : code.patch !== null ? (
         <DiffErrorBoundary
           fallback={
             <>
@@ -418,7 +456,23 @@ export function ConversationView({
   );
   const thread = (entry: DiffThread) => {
     const code = codeOf(entry);
-    return <ThreadBlock key={entry.id} code={code} stopRef={stopRef} inDiff={inDiff(entry.path)} annotations={annotationsFor(code)} onOpen={() => onOpenThread(entry)} />;
+    const key = threadKey(entry);
+    const isFolded = folded.has(key) !== threadStartsFolded(entry);
+    return (
+      <ThreadBlock
+        key={entry.id}
+        code={code}
+        stopRef={stopRef}
+        // Open, the thread's own card shows the cursor.
+        focused={isFolded && focusedKey === key}
+        folded={isFolded}
+        resolvedBy={data?.threads[entry.id]?.resolvedBy ?? null}
+        inDiff={inDiff(entry.path)}
+        annotations={annotationsFor(code)}
+        onToggle={() => onToggle(key)}
+        onOpen={() => onOpenThread(entry)}
+      />
+    );
   };
   const review = (key: string, entry: ConversationReview, threads: DiffThread[]) => {
     const verdict = VERDICT[entry.state];
@@ -535,6 +589,7 @@ export function ConversationView({
   return (
     <DiffCommentsContext.Provider value={scoped}>
       <CommentMetaContext.Provider value={metaContext}>
+      <ThreadStartsOpenContext.Provider value>
       <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         <div className={cn("mx-auto flex max-w-5xl flex-col gap-2 px-4 py-3", enter.fade, FAST)}>
           {error !== null ? <p className="text-xs text-destructive">Could not read the pull request's reviews and events: {error}</p> : null}
@@ -546,6 +601,7 @@ export function ConversationView({
           {writing !== null ? <Composer writing={writing} /> : null}
         </div>
       </div>
+      </ThreadStartsOpenContext.Provider>
       </CommentMetaContext.Provider>
     </DiffCommentsContext.Provider>
   );

@@ -263,6 +263,8 @@ export interface ConversationData {
   comments: Record<string, CommentMeta>;
   /** A commit's signature and checks, by sha. */
   commits: Record<string, { verified: boolean | null; checks: CheckOutcome | null }>;
+  /** Who resolved each resolved review thread, by its first comment's id (`review-comment:<n>`). */
+  threads: Record<string, { resolvedBy: string | null }>;
 }
 
 export type FindingSeverity = "critical" | "important" | "minor";

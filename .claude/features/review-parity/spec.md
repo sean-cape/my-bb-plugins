@@ -68,7 +68,7 @@ Goal: GitHub's review feature set, with this view's own keys and workflows. Skip
    Files changed tab: the PR's description, then commits, PR comments, reviews (approvals without text included) and
    changes to the PR (merged, renamed, force-pushed, review requested), oldest first. Each GitHub thread sits under the
    review it was submitted in, over the `diff_hunk` GitHub stored for it; a thread started on the board stands on its
-   own over today's lines. Resolved and outdated threads are listed too, resolved ones folded. A summary (state,
+   own over today's lines. Resolved and outdated threads are listed too, each folded to its file, labels and resolver as on GitHub. A summary (state,
    base and head, reviewers, assignees, labels, milestone, closing issues) heads it and a status box (review decision,
    head checks, mergeability; no merge button) ends it; comments carry association, edited, hidden and reactions. The
    reader comments on the PR (`i`), quotes (`Q`), edits their own comments, review summaries and description (`e`),

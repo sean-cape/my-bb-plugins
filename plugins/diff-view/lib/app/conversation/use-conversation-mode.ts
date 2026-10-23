@@ -8,11 +8,11 @@ import type { Cursor } from "../keys/nav";
 import { runReviewCommand, runThreadCommand, type ReviewEnv } from "../keys/review-commands";
 import type { FocusedAnnotation, ReviewKeys } from "../keys/review-keys-context";
 import type { PatchAnnotationProps } from "../patch-annotations";
-import { flipped } from "../sets";
+import { flipped, withMembers } from "../sets";
 import type { DiffViewMode } from "../summary-bar";
 import { threadCode, type ThreadCode } from "../comments/thread-code";
 import type { DiffThread } from "../comments/threads";
-import { commitKey, conversationStops, type ConversationCommit, type ConversationItem, type ConversationStop } from "./conversation";
+import { commitKey, conversationStops, threadKey, threadStartsFolded, type ConversationCommit, type ConversationItem, type ConversationStop } from "./conversation";
 import type { ConversationCommand } from "./conversation-keymap";
 import type { useConversationWriting } from "./use-conversation-writing";
 
@@ -153,6 +153,20 @@ export function useConversationMode(options: ConversationModeOptions) {
     setCursorKey(null);
   }, [mode]);
 
+  /**
+   * Runs a thread key once its card is on screen: a folded block opens first, and the card registers its controls as
+   * it mounts, a frame or two later.
+   */
+  const withThreadShown = (thread: DiffThread, run: () => void) => {
+    const key = threadKey(thread);
+    if (folded.has(key) === threadStartsFolded(thread)) {
+      run();
+      return;
+    }
+    setFolded((set) => flipped(set, key));
+    requestAnimationFrame(() => requestAnimationFrame(run));
+  };
+
   /** `gf` on a thread: the files view at its line, or at its file when the diff has no line for it today. */
   const openThread = (thread: DiffThread) => {
     const target = original(thread);
@@ -227,7 +241,10 @@ export function useConversationMode(options: ConversationModeOptions) {
           notify("Enter or za opens and closes the entry");
           return;
         }
-        if (current.kind === "thread") keys.threads.get(current.thread.id)?.toggle();
+        if (current.kind === "thread") {
+          if (threadStartsFolded(current.thread) || folded.has(current.key)) setFolded((set) => flipped(set, current.key));
+          else keys.threads.get(current.thread.id)?.toggle();
+        }
         else if (current.kind === "commit") options.openCommit(current.commit);
         else if (current.kind === "link") {
           if (current.url === null) notify("Nothing to open here");
@@ -271,7 +288,8 @@ export function useConversationMode(options: ConversationModeOptions) {
       case "edit":
       case "delete": {
         if (current?.kind === "thread") {
-          runThreadCommand(command, original(current.thread), options.filesEnv());
+          const thread = current.thread;
+          withThreadShown(thread, () => runThreadCommand(command, original(thread), options.filesEnv()));
           return;
         }
         const comment = commentAt(current, data);
@@ -284,6 +302,16 @@ export function useConversationMode(options: ConversationModeOptions) {
       }
       case "reply":
       case "resolve":
+        if (current?.kind !== "thread") {
+          notify(NOT_A_THREAD);
+          return;
+        }
+        withThreadShown(current.thread, () => {
+          runThreadCommand(command, original(current.thread), options.filesEnv());
+          // Resolving folds the conversation as GitHub does: the block goes back to how a resolved thread starts.
+          if (command.kind === "resolve" && current.thread.resolved !== true) setFolded((set) => withMembers(set, [current.key], false));
+        });
+        return;
       case "move":
       case "openThread":
       case "applySuggestion":

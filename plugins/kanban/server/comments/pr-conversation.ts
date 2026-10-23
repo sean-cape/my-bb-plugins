@@ -67,7 +67,7 @@ export const THREAD_META_QUERY = `query($owner: String!, $name: String!, $number
     pullRequest(number: $number) {
       reviewThreads(first: 50, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { comments(first: 100) { nodes { ${COMMENT_META} } } }
+        nodes { isResolved resolvedBy { login } comments(first: 100) { nodes { ${COMMENT_META} } } }
       }
     }
   }
@@ -262,7 +262,14 @@ function action(node: GraphqlTimelineNode, repoUrl: string): Extract<Conversatio
  * commits, the synced comments), so the timeline's own copies of them only lend their badges. A pending review is the
  * viewer's unsent draft and stays out.
  */
-export function conversationData(pr: GraphqlPullRequest, timeline: readonly (GraphqlTimelineNode | null)[], threadComments: readonly GraphqlCommentMeta[], viewer: string | null): ConversationData {
+/** A review thread as the badges query reads it. */
+export interface GraphqlThreadMeta {
+  isResolved?: boolean;
+  resolvedBy?: Login | null;
+  comments?: { nodes?: GraphqlCommentMeta[] };
+}
+
+export function conversationData(pr: GraphqlPullRequest, timeline: readonly (GraphqlTimelineNode | null)[], reviewThreads: readonly GraphqlThreadMeta[], viewer: string | null): ConversationData {
   const repoUrl = pr.url.replace(/\/pull\/\d+$/u, "");
   const openedId = `pr:${pr.number}`;
   const comments: ConversationData["comments"] = { [openedId]: commentMeta(pr) };
@@ -290,7 +297,13 @@ export function conversationData(pr: GraphqlPullRequest, timeline: readonly (Gra
     const event = action(node, repoUrl);
     if (event !== null) events.push(event);
   }
-  for (const node of threadComments) if (node.databaseId != null) comments[`review-comment:${node.databaseId}`] = commentMeta(node);
+  const threads: ConversationData["threads"] = {};
+  for (const thread of reviewThreads) {
+    const nodes = thread.comments?.nodes ?? [];
+    for (const node of nodes) if (node.databaseId != null) comments[`review-comment:${node.databaseId}`] = commentMeta(node);
+    const root = nodes[0]?.databaseId;
+    if (thread.isResolved === true && root != null) threads[`review-comment:${root}`] = { resolvedBy: thread.resolvedBy?.login ?? null };
+  }
 
   const requested = pr.reviewRequests.nodes.map((node) => reviewerName(node.requestedReviewer)).filter((name): name is string => name !== null);
   const reviewed = pr.latestReviews.nodes
@@ -317,7 +330,7 @@ export function conversationData(pr: GraphqlPullRequest, timeline: readonly (Gra
         ? null
         : { outcome: outcomeOfState(rollup.state) ?? "neutral", runs: rollup.contexts.nodes.filter((context): context is CheckContext => context !== null).map(checkRun) },
   };
-  return { viewer, pullRequest, events, comments, commits };
+  return { viewer, pullRequest, events, comments, commits, threads };
 }
 
 /** A comment id as the conversation names it, split into its kind and GitHub's number. */
@@ -381,7 +394,7 @@ export function createPrConversation(ctx: KanbanContext, { board, prComments }: 
 
   async function prConversation(ticketId: string): Promise<ConversationData> {
     const { pr } = board.getTicket(ticketId);
-    if (pr === null) return { viewer: null, pullRequest: null, events: [], comments: {}, commits: {} };
+    if (pr === null) return { viewer: null, pullRequest: null, events: [], comments: {}, commits: {}, threads: {} };
     const auth = await resolveToken(settings);
     if (auth === null) throw new Error(NO_GITHUB_TOKEN);
     const [owner, name] = pr.repo.split("/");
@@ -403,13 +416,13 @@ export function createPrConversation(ctx: KanbanContext, { board, prComments }: 
       return { ...first!, nodes };
     };
     const readThreadMeta = async () => {
-      const metas: GraphqlCommentMeta[] = [];
+      const metas: GraphqlThreadMeta[] = [];
       let after: string | null = null;
       for (let page = 0; page < 10; page += 1) {
-        const data: { repository: { pullRequest: { reviewThreads: { pageInfo?: { hasNextPage: boolean; endCursor: string | null }; nodes: Array<{ comments?: { nodes?: GraphqlCommentMeta[] } }> } } | null } | null } =
+        const data: { repository: { pullRequest: { reviewThreads: { pageInfo?: { hasNextPage: boolean; endCursor: string | null }; nodes: GraphqlThreadMeta[] } } | null } | null } =
           await githubGraphql(THREAD_META_QUERY, { ...variables, after }, auth.token);
         const threads = data.repository?.pullRequest?.reviewThreads;
-        for (const thread of threads?.nodes ?? []) metas.push(...(thread.comments?.nodes ?? []));
+        metas.push(...(threads?.nodes ?? []));
         if (threads?.pageInfo?.hasNextPage !== true || threads.pageInfo.endCursor === null) break;
         after = threads.pageInfo.endCursor;
       }

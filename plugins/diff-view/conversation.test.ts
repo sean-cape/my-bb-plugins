@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { allDiffThreads } from "./lib/app/comments/threads";
 import { recountHunk, shownInline, threadCode, threadCounts, threadStatus } from "./lib/app/comments/thread-code";
-import { conversationItems, conversationStops } from "./lib/app/conversation/conversation";
+import { conversationItems, conversationStops, threadStartsFolded } from "./lib/app/conversation/conversation";
 import { CONVERSATION_KEY_HELP, CONVERSATION_KEYMAP } from "./lib/app/conversation/conversation-keymap";
 import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
 import type { ConversationEvent, DiffCommit, PullRequestSummary } from "./lib/types";
@@ -129,6 +129,22 @@ describe("conversationItems", () => {
     const stored = [...github_, github({ id: "review:7", kind: "review", path: null, line: null, body: "Looks good", reviewState: "CHANGES_REQUESTED", createdAt: at(8) })];
     const review = conversationItems({ threads, github: stored, commits: [], events: [] }).find((item) => item.key === "review:7")!;
     expect(review.kind === "review" ? [review.review.state, review.review.body, review.threads.length] : null).toEqual(["CHANGES_REQUESTED", "Looks good", 2]);
+  });
+});
+
+describe("threadStartsFolded", () => {
+  it("folds resolved and outdated threads as GitHub does, unless the reader has an unsent reply in one", () => {
+    const threads = allDiffThreads(
+      [local({ id: "open" }), local({ id: "reply", inReplyTo: "review-comment:3", target: "github" })],
+      [github({ id: "review-comment:1" }), github({ id: "review-comment:2", resolved: true }), github({ id: "review-comment:3", resolved: true }), github({ id: "review-comment:4", outdated: true, line: 9 })],
+    );
+    expect(threads.map((thread) => [thread.id, threadStartsFolded(thread)]).sort()).toEqual([
+      ["open", false],
+      ["review-comment:1", false],
+      ["review-comment:2", true],
+      ["review-comment:3", false],
+      ["review-comment:4", true],
+    ]);
   });
 });
 

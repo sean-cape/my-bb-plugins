@@ -103,7 +103,12 @@ plugins embed.
   under the review it was submitted in, over the hunk GitHub stored when it
   was left; a thread started here stands at its first comment over today's
   lines around it (or under its file's name when the diff no longer shows
-  them). Resolved and outdated threads are there too, resolved ones folded.
+  them). Resolved and outdated threads are there too, folded as GitHub folds
+  them: the file's name, an Outdated or Resolved label, who resolved it and
+  how many comments it holds, with Show resolved / Show outdated (or Enter)
+  bringing back its code and comments; a thread with your unsent reply starts
+  open, resolving one folds it again, and a thread key on a folded one opens
+  it first.
   `j`/`k` step through the entries (each commit and each thread is one),
   `c`/`C` jump between threads, Enter folds a thread or comment and on a
   commit shows that commit's changes in the files view, `gf` opens a thread's

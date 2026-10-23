@@ -1,7 +1,7 @@
 // The conversation view's model, as GitHub's Conversation tab lays a pull request out: the description, then commits,
 // comments, reviews with their threads, and changes to the pull request, oldest first. Pure, for the tests.
 import type { ConversationEvent, DiffCommit, GithubComment, PullRequestSummary, ReviewVerdict } from "../../types";
-import type { DiffThread } from "../comments/threads";
+import { isUnsent, type DiffThread } from "../comments/threads";
 
 type OpenedEvent = Extract<ConversationEvent, { kind: "opened" }>;
 type ActionEvent = Extract<ConversationEvent, { kind: "action" }>;
@@ -48,6 +48,14 @@ function verdict(state: string | null | undefined): ReviewVerdict {
 }
 
 export const threadKey = (thread: Pick<DiffThread, "id">): string => `thread:${thread.id}`;
+/**
+ * Whether a thread's block starts folded to its file's name, as GitHub folds a resolved or outdated conversation; one
+ * holding the reader's unsent reply starts open.
+ */
+export function threadStartsFolded(thread: DiffThread): boolean {
+  return (thread.resolved === true || thread.outdated) && !thread.entries.some(isUnsent);
+}
+
 export const commitKey = (commit: Pick<DiffCommit, "sha">): string => `commit:${commit.sha}`;
 
 function threadTime(thread: DiffThread): number {

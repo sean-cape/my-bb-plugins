@@ -145,7 +145,7 @@ function stubGithub(options: {
       if (/\b(add|remove)Reaction\(/u.test(request.query)) return json({ data: { reaction: { clientMutationId: null } } });
       if (request.query.includes("timelineItems(")) return json({ data: { viewer: { login: "sean" }, repository: { pullRequest: options.conversation?.pr ?? null } } });
       if (request.query.includes("reviewThreads(first: 50")) {
-        return json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ comments: { nodes: options.conversation?.threadComments ?? [] } }] } } } } });
+        return json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ isResolved: true, resolvedBy: { login: "alex" }, comments: { nodes: options.conversation?.threadComments ?? [] } }] } } } } });
       }
       if (request.query.includes("addPullRequestReviewThread(")) {
         const review = ghPending.reviews.find((entry) => entry.node_id === request.variables.reviewId && entry.submitted === null);
@@ -3532,6 +3532,7 @@ describe("diff comment threads", () => {
     });
     expect(data.commits).toEqual({ abc: { verified: true, checks: "success" } });
     expect(data.viewer).toBe("sean");
+    expect(data.threads).toEqual({ "review-comment:10": { resolvedBy: "alex" } });
   });
 
   it("resolves and reopens a GitHub review thread from any of its comments, marking the whole thread here", async () => {
