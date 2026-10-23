@@ -1,6 +1,6 @@
 // The sink: one set of window listeners that turns clicks, keys, and page changes anywhere in bb
 // into activity events, attributed to the plugin whose root they happened under.
-import { isTextEntry, KEY_COMMAND_EVENT, type KeyCommandDetail, keyToken, PRESSABLE, tokenize } from "bb-vim-keys";
+import { chordToken, isTextEntry, KEY_COMMAND_EVENT, type KeyCommandDetail, PRESSABLE, tokenize } from "bb-vim-keys";
 import { type ActivityEvent, MAX_TEXT } from "./contract";
 
 export interface CollectorOptions {
@@ -30,6 +30,8 @@ const STRUCTURAL_ROLES = new Set(["list", "listbox", "tree", "grid", "table", "m
 const NOT_A_TYPE = /^(?:bb-|nav-|vim-|aura-|radix-|escape-|lazy-|bbm-|testid$|state$|slot$|index$|value$|cursor$|row$|line$|alt-line$|orientation$|side$|align$|highlighted$|disabled$|selected$|open$)/u;
 const LIST = '[role="list"], [role="listbox"], [role="tree"], [role="grid"], [role="menu"], [role="tablist"], [role="radiogroup"], [data-nav-group], ul, ol, table, nav, section, aside, main, dialog, [role="dialog"]';
 const HEADING = "h1, h2, h3, h4, h5, h6, legend, caption";
+/** bb's conversation: the timeline and the question, approval, and plan banners, whose text the agent or the user wrote. */
+const CONVERSATION = '[data-timeline-row-list], [data-testid="user-question-banner"], [data-testid="approval-banner"], [data-testid="plan-review-banner"]';
 const POINTER_CLICK_MS = 500;
 /** Segments that are ids or file names, not page names. */
 const ID_SEGMENT = /^(?:[a-z]+_[A-Za-z0-9]+|[0-9a-f]{8,}|\d+|.+\.[A-Za-z0-9]{1,5})$/u;
@@ -75,15 +77,6 @@ function closestThrough(start: Element | null, selector: string): Element | null
 
 export function pluginOf(element: Element | null): string | null {
   return closestThrough(element, PLUGIN_ROOT)?.getAttribute("data-bb-plugin") ?? null;
-}
-
-/** A ⌘ or ⌥ chord, which `keyToken` leaves to bb: `<D-k>`, `<A-S-Left>`, `<D-C-f>`. */
-export function chordToken(event: KeyboardEvent): string | null {
-  if (!event.metaKey && !event.altKey) return keyToken(event);
-  const inner = keyToken({ key: event.key, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: false, metaKey: false, isComposing: event.isComposing });
-  if (inner === null) return null;
-  const body = inner.startsWith("<") ? inner.slice(1, -1) : inner.length === 1 && inner !== inner.toLowerCase() ? `S-${inner.toLowerCase()}` : inner;
-  return `<${event.metaKey ? "D-" : ""}${event.altKey ? "A-" : ""}${body}>`;
 }
 
 function ownText(element: Element): string {
@@ -154,10 +147,13 @@ function headingName(container: Element): string | null {
 export function containerOf(element: Element): string | null {
   const ancestors: Element[] = [];
   for (let node = element.parentElement; node !== null && !node.hasAttribute("data-bb-plugin") && node !== node.ownerDocument.body; node = node.parentElement) ancestors.push(node);
+  // A message's headings are the conversation's, not a section's name.
+  const headings = closestThrough(element, CONVERSATION) === null;
   for (const node of ancestors) {
     const named = node.getAttribute("aria-label");
     if (named !== null && named.trim() !== "") {
-      const name = generalize(named, true);
+      // "Browser preview controls: <page title>" names the region before the colon and the thing it shows after.
+      const name = generalize(named.split(": ")[0]!, true);
       if (name.length <= NAME_LENGTH) return name;
     }
     const testId = node.getAttribute("data-testid");
@@ -166,10 +162,11 @@ export function containerOf(element: Element): string | null {
     if (type !== null) return type;
     const role = node.getAttribute("role");
     if (role !== null && STRUCTURAL_ROLES.has(role)) {
-      const heading = headingName(node);
+      const heading = headings ? headingName(node) : null;
       return heading === null ? role : `${role} ${heading}`;
     }
   }
+  if (!headings) return null;
   for (const node of ancestors) {
     if (!node.matches(LIST)) continue;
     const heading = headingName(node);
@@ -204,8 +201,9 @@ export interface ControlDescription {
 
 /**
  * A control described without its content: a test id; a link's page; a row by its kind and the list
- * it sits in; a long or badge-filled button by its tag and container; else its name with numbers
- * and file names blanked, plus the thing it sits in (`Cancel in kanban card`) when one is marked.
+ * it sits in; a long or badge-filled button, or one in the conversation with no label, by its tag
+ * and container; else its name with numbers and file names blanked, plus the thing it sits in
+ * (`Cancel in kanban card`) when one is marked.
  */
 export function describeControl(element: Element): ControlDescription {
   const tag = element.tagName.toLowerCase();
@@ -232,7 +230,9 @@ export function describeControl(element: Element): ControlDescription {
   const raw = named ?? ownText(element);
   const label = generalize(raw, false);
   const composite = named === null && textBearingDescendants(element) >= COMPOSITE_PARTS;
-  if (label === "" || label.length > NAME_LENGTH || composite) {
+  // In the conversation a button's text is what it shows (a command bb ran, an answer the agent offered); only a label names it.
+  const conversation = named === null && closestThrough(element, CONVERSATION) !== null;
+  if (label === "" || label.length > NAME_LENGTH || composite || conversation) {
     const key = `<${tag}> in ${container}`;
     return { key, label: key };
   }
@@ -274,7 +274,7 @@ export function mountCollector(doc: Document, win: Window, options: CollectorOpt
   let sending = false;
   /** Raw key records that a command announcement may turn out to be. */
   const pendingKeys = new WeakMap<KeyboardEvent, ActivityEvent>();
-  let lastKey: { record: ActivityEvent; at: number } | null = null;
+  let lastKey: { record: ActivityEvent; token: string; at: number } | null = null;
   let lastPointerDown = -Infinity;
   let lastRoute = "";
 
@@ -314,7 +314,7 @@ export function mountCollector(doc: Document, win: Window, options: CollectorOpt
     if (control === null) return;
     const keyboard = (event as MouseEvent).detail === 0 && now() - lastPointerDown > POINTER_CLICK_MS;
     // Enter or Space on a button fires this click; the click is the record, with how it was made.
-    if (keyboard && lastKey !== null && now() - lastKey.at < POINTER_CLICK_MS && (lastKey.record.key === "<CR>" || lastKey.record.key === "<Space>")) drop(lastKey.record);
+    if (keyboard && lastKey !== null && now() - lastKey.at < POINTER_CLICK_MS && (lastKey.token === "<CR>" || lastKey.token === "<Space>")) drop(lastKey.record);
     const { key, label } = describeControl(control);
     push({ at: now(), kind: "click", plugin: pluginOf(control), route: route(), key, label, via: keyboard ? "keyboard" : "pointer", count: null });
   };
@@ -329,11 +329,18 @@ export function mountCollector(doc: Document, win: Window, options: CollectorOpt
     const record: ActivityEvent = { at: now(), kind: "key", plugin: pluginOf(target), route: route(), key: token, label: token, via: null, count: null };
     push(record);
     pendingKeys.set(keydown, record);
-    lastKey = { record, at: record.at };
-    // A type-to-search box (bb's settings search, a palette) takes a key pressed on the page and
-    // then holds focus; that key was text, not a shortcut, so it goes once the box has focus.
+    lastKey = { record, token, at: record.at };
+    const pressed = token === "<CR>" || token === "<Space>" ? closestThrough(target, CONTROL) : null;
     win.setTimeout(() => {
-      if (record.kind === "key" && isTextEntry(doc.activeElement)) drop(record);
+      if (record.kind !== "key" || !buffer.includes(record)) return;
+      if (pressed !== null) {
+        // A role="button" element that opens on its own keydown (a board card) fires no click; the key pressed it all the same.
+        Object.assign(record, describeControl(pressed), { kind: "click", plugin: pluginOf(pressed), via: "keyboard" });
+        return;
+      }
+      // A type-to-search box (bb's settings search, a palette) takes a key pressed on the page and
+      // then holds focus; that key was text, not a shortcut, so it goes once the box has focus.
+      if (isTextEntry(doc.activeElement)) drop(record);
     }, 0);
   };
 

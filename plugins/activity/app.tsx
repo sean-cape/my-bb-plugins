@@ -31,6 +31,8 @@ export default definePluginApp((app) => {
   app.contentScripts.register({
     id: "collector",
     mount() {
+      // An agent's headless bb window (browser automation, UI tests) presses keys no one pressed.
+      if (navigator.webdriver) return;
       const collector = mountCollector(document, window, {
         send: (events) => (send === null ? Promise.reject(new Error("The activity plugin's RPC bridge isn't mounted yet.")) : send(events)),
       });

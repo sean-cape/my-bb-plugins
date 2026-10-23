@@ -99,6 +99,21 @@ describe("activity server", () => {
     expect(all.items.map((item) => item.label).sort()).toEqual(["View changes", "link /threads/*", "option in Unread threads"]);
   });
 
+  it("drops clicks logged before the content rules, keeping keys and later clicks", async () => {
+    const shipped = 1792687678001;
+    await host.harness.behavior.callRpc("record", {
+      events: [
+        event({ at: shipped - 1, key: "<button> in Fix the widget cache", label: "<button> in Fix the widget cache" }),
+        event({ at: shipped - 1, kind: "key", key: "j", label: "j", via: null }),
+        event({ at: shipped, key: "View changes", label: "View changes" }),
+      ],
+    });
+    host.bb.storage.database().prepare("DELETE FROM _bb_migrations WHERE id = 4").run();
+    host = await host.harness.lifecycle.reload(plugin);
+    const all = (await host.harness.behavior.callRpc("summary", { sinceMs: null, kind: null, plugin: null, limit: 10 })) as Summary;
+    expect(all.items.map((item) => item.key).sort()).toEqual(["View changes", "j"]);
+  });
+
   it("refuses a batch over the limit or with a bad shape", async () => {
     await expect(host.harness.behavior.callRpc("record", { events: [{ ...event({}), kind: "hover" }] })).rejects.toThrow();
     await expect(host.harness.behavior.callRpc("record", { events: Array.from({ length: 501 }, () => event({})) })).rejects.toThrow();

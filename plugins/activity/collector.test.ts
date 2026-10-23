@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { KEY_COMMAND_EVENT, type KeyCommandDetail } from "bb-vim-keys";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chordToken, type Collector, controlKey, controlLabel, describeControl, generalize, mountCollector, normalizeRoute, routePlugin } from "./collector";
+import { type Collector, controlKey, controlLabel, describeControl, generalize, mountCollector, normalizeRoute, routePlugin } from "./collector";
 import type { ActivityEvent } from "./contract";
 
 let sent: ActivityEvent[][];
@@ -69,18 +69,6 @@ describe("normalizeRoute", () => {
     expect(normalizeRoute("/")).toBe("/");
     expect(routePlugin("/plugins/kanban/board")).toBe("kanban");
     expect(routePlugin("/threads/thr_1")).toBeNull();
-  });
-});
-
-describe("chordToken", () => {
-  it("writes ⌘ and ⌥ chords, which bb owns, in vim notation", () => {
-    const event = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
-    expect(chordToken(event({ key: "k", metaKey: true }))).toBe("<D-k>");
-    expect(chordToken(event({ key: "D", metaKey: true, shiftKey: true }))).toBe("<D-S-d>");
-    expect(chordToken(event({ key: "ArrowLeft", altKey: true }))).toBe("<A-Left>");
-    expect(chordToken(event({ key: "f", metaKey: true, ctrlKey: true }))).toBe("<D-C-f>");
-    expect(chordToken(event({ key: "j" }))).toBe("j");
-    expect(chordToken(event({ key: "Meta", metaKey: true }))).toBeNull();
   });
 });
 
@@ -167,6 +155,25 @@ describe("control names", () => {
     const run = document.getElementById("run")!;
     expect(describeControl(run)).toEqual({ key: "<button> in Timeline", label: "<button> in Timeline" });
   });
+
+  it("names a control in the conversation only by its label, never by the text it shows or a message's headings", () => {
+    html(`
+      <div data-timeline-row-list="top-level">
+        <div data-timeline-row-id="r1"><button id="tool">Ran make deploy</button><button id="copy" aria-label="Copy message">⧉</button></div>
+        <section><h3>Root cause</h3><ul><li><button id="expand" aria-label="Expand">▸</button></li></ul></section>
+      </div>
+      <section data-testid="user-question-banner"><fieldset><button id="answer" aria-pressed="false">Use the widget cache</button></fieldset></section>`);
+    const by = (id: string) => document.getElementById(id)!;
+    expect(controlKey(by("tool"))).toBe("<button> in timeline row");
+    expect(controlKey(by("copy"))).toBe("Copy message in timeline row");
+    expect(controlKey(by("expand"))).toBe("Expand");
+    expect(controlKey(by("answer"))).toBe("<button> in user-question-banner");
+  });
+
+  it("names a container by its label up to a colon, past which it names what the region shows", () => {
+    html(`<div aria-label="Browser preview controls: Acme dashboard"><button id="grow" aria-label="Expand browser preview">⤢</button></div>`);
+    expect(controlKey(document.getElementById("grow")!)).toBe("Expand browser preview in Browser preview controls");
+  });
 });
 
 describe("mountCollector", () => {
@@ -186,6 +193,7 @@ describe("mountCollector", () => {
     const button = document.getElementById("go")!;
     keydown(button, "Enter");
     click(button, 0);
+    await vi.advanceTimersByTimeAsync(0);
     now += 10_000;
     window.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     click(button, 0);
@@ -194,6 +202,17 @@ describe("mountCollector", () => {
       ["click", "Go", "keyboard"],
       ["click", "Go", "pointer"],
     ]);
+  });
+
+  it("records Enter on a role=\"button\" element that opens on its own keydown as a keyboard click on it", async () => {
+    html(`<div data-bb-plugin="kanban"><div data-kanban-column-list=""><div id="card" data-ticket-id="tk_2" role="button" tabindex="0">Widget fixes</div></div></div>`);
+    mount();
+    const card = document.getElementById("card")!;
+    card.addEventListener("keydown", (event) => event.preventDefault());
+    keydown(card, "Enter");
+    await vi.advanceTimersByTimeAsync(0);
+    const events = await recorded();
+    expect(events.map((event) => [event.kind, event.key, event.via, event.plugin])).toEqual([["click", "ticket in kanban column list", "keyboard", "kanban"]]);
   });
 
   it("records keys outside text boxes, with ⌘ chords, and nothing typed into one", async () => {

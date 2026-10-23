@@ -15,16 +15,21 @@ window and attributes what it sees to the plugin it happened in.
 
 The thing a control sits in comes from the DOM, not from the plugin: the nearest ancestor with an `aria-label`, a
 `data-testid`, a `data-*` marker (`data-kanban-card`) or id (`data-thread-id`, read as "thread"), or a structural
-role; else a short, digit-free heading. An element with a marker or id of its own (a board card with `data-ticket-id`) is
+role; else a short, digit-free heading. A label is read up to a colon, since what follows names the thing the region
+shows (`Browser preview controls: <page title>`). An element with a marker or id of its own (a board card with `data-ticket-id`) is
 keyed by that type and its container whatever its role (`ticket in kanban column list`). A row's own text (a thread title, a card name, a meeting) is never stored,
-and neither is a label longer than a name or made of several badges. Nothing in the log should identify what you
+and neither is a label longer than a name or made of several badges. In bb's conversation (the timeline and the
+question, approval, and plan banners) a control's text is what the agent or the user wrote, a command bb ran or an
+answer offered, so only an `aria-label` or `title` names it there, and a message's headings never name a section. Nothing in the log should identify what you
 were working on, only what you did with it.
 
 Each event also carries the plugin (from bb's `data-bb-plugin` root around it, or the key library's bundle id;
 `bb` when it was bb's own UI), the page it happened on, and for clicks whether the mouse or the keyboard made them.
-A click made with Enter or Space counts once, as a keyboard click, not as a key too.
+A click made with Enter or Space counts once, as a keyboard click, not as a key too, and so does Enter or Space on a
+`role="button"` element that acts on its own keydown and fires no click (a board card).
 
-Nothing typed into a text box is recorded, and no input values ever are. Events are batched every five seconds
+Nothing typed into a text box is recorded, and no input values ever are. A window under automation
+(`navigator.webdriver`: an agent's headless bb session) records nothing, since no one pressed its keys. Events are batched every five seconds
 into the plugin's own SQLite file under bb's data directory; nothing leaves the machine.
 
 ## Reading it
@@ -66,4 +71,5 @@ through the event `createKeyHandler` in `bb-vim-keys` dispatches after a command
 carries the plugin id `bb plugin build` defines into each bundle. Keys pressed inside a text box are never recorded, so vim-mode's editing commands in the
 prompt box (`dd`, `ciw`) don't show up; its thread scroll-mode keys do, since they go through the library. A click
 bb makes itself (`element.click()`) counts as a keyboard click, and a row opened with Enter or `o` records both the
-command and the click it caused.
+command and the click it caused. Keys a plugin handles outside the library, such as the bb command shortcuts
+history-keys registers, count as its commands when it calls `announceKeyCommand`; otherwise they log as plain keys.
