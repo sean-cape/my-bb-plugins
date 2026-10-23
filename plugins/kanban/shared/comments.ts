@@ -112,10 +112,59 @@ export const conversationEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("action"),
     id: z.string(),
-    action: z.enum(["merged", "closed", "reopened", "force-pushed", "ready-for-review", "converted-to-draft", "review-requested", "renamed", "branch-deleted"]),
+    action: z.enum([
+      "merged", "closed", "reopened", "force-pushed", "ready-for-review", "converted-to-draft", "review-requested", "review-request-removed", "review-dismissed", "renamed",
+      "branch-deleted", "branch-restored", "base-changed", "labeled", "unlabeled", "assigned", "unassigned", "milestoned", "demilestoned", "auto-merge-enabled",
+      "auto-merge-disabled", "cross-referenced",
+    ]),
     actor: z.string(),
     detail: z.string().nullable(),
     createdAt: z.string(),
+    url: z.string().nullable(),
+    color: z.string().nullable(),
   }),
 ]);
 export type ConversationEvent = z.infer<typeof conversationEventSchema>;
+
+const reactionSchema = z.object({
+  content: z.enum(["THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"]),
+  count: z.number().int(),
+  mine: z.boolean(),
+});
+export type Reaction = z.infer<typeof reactionSchema>;
+
+export const commentMetaSchema = z.object({ association: z.string().nullable(), edited: z.boolean(), minimized: z.string().nullable(), reactions: z.array(reactionSchema) });
+export type CommentMeta = z.infer<typeof commentMetaSchema>;
+
+const checkOutcomeSchema = z.enum(["success", "failure", "pending", "neutral", "skipped"]);
+export type CheckOutcome = z.infer<typeof checkOutcomeSchema>;
+
+/** See `PullRequestSummary` in bb-diff-view. */
+export const pullRequestSummarySchema = z.object({
+  state: z.enum(["open", "draft", "merged", "closed"]),
+  author: z.string(),
+  url: z.string(),
+  baseRef: z.string(),
+  headRef: z.string(),
+  commitCount: z.number().int(),
+  labels: z.array(z.object({ name: z.string(), color: z.string() })),
+  assignees: z.array(z.string()),
+  milestone: z.object({ title: z.string(), url: z.string() }).nullable(),
+  linkedIssues: z.array(z.object({ number: z.number().int(), title: z.string(), url: z.string(), open: z.boolean() })),
+  reviewers: z.array(z.object({ name: z.string(), state: z.enum(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "REQUESTED"]) })),
+  reviewDecision: z.enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]).nullable(),
+  mergeable: z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]),
+  mergeState: z.string(),
+  checks: z
+    .object({ outcome: checkOutcomeSchema, runs: z.array(z.object({ name: z.string(), outcome: checkOutcomeSchema, description: z.string().nullable(), url: z.string().nullable() })) })
+    .nullable(),
+});
+export type PullRequestSummary = z.infer<typeof pullRequestSummarySchema>;
+
+export const conversationDataSchema = z.object({
+  pullRequest: pullRequestSummarySchema.nullable(),
+  events: z.array(conversationEventSchema),
+  comments: z.record(z.string(), commentMetaSchema),
+  commits: z.record(z.string(), z.object({ verified: z.boolean().nullable(), checks: checkOutcomeSchema.nullable() })),
+});
+export type ConversationData = z.infer<typeof conversationDataSchema>;

@@ -1,7 +1,7 @@
 // The conversation as a mode of the changes view: entering and leaving it (`gc`), the cursor over its rows, and what
 // the keys do there. The thread keys act on the thread under the cursor as they do on a line's in the diff.
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DiffCommentTarget, LineRange } from "../../types";
+import type { DiffCommentTarget, LineRange, PullRequestSummary } from "../../types";
 import { githubCommitUrl } from "../links";
 import type { NarrativePatchFile } from "../../narrative";
 import type { Cursor } from "../keys/nav";
@@ -24,6 +24,7 @@ export interface ConversationModeOptions {
   setMode: (mode: DiffViewMode) => void;
   available: boolean;
   items: readonly ConversationItem[];
+  pullRequest: PullRequestSummary | null;
   narrativeAvailable: boolean;
   enterNarrative: () => void;
   threadById: ReadonlyMap<string, DiffThread>;
@@ -49,6 +50,7 @@ export interface ConversationModeOptions {
 function stopUrl(stop: ConversationStop, repo: string | null): string | null {
   if (stop.kind === "commit") return repo === null ? null : githubCommitUrl(repo, stop.commit.commit.sha);
   if (stop.kind === "thread") return null;
+  if (stop.kind === "link") return stop.url;
   const { item } = stop;
   switch (item.kind) {
     case "opened":
@@ -63,8 +65,8 @@ function stopUrl(stop: ConversationStop, repo: string | null): string | null {
 }
 
 export function useConversationMode(options: ConversationModeOptions) {
-  const { keys, mode, items, files, threadById, currentPaths, notify } = options;
-  const stops = useMemo(() => conversationStops(items), [items]);
+  const { keys, mode, items, pullRequest, files, threadById, currentPaths, notify } = options;
+  const stops = useMemo(() => conversationStops(items, pullRequest), [items, pullRequest]);
   // Null keeps the cursor on the first entry until the reader moves it: the PR's description and reviews load after
   // the view opens, and land before what was first until then.
   const [cursorKey, setCursorKey] = useState<string | null>(null);
@@ -198,7 +200,10 @@ export function useConversationMode(options: ConversationModeOptions) {
         }
         if (current.kind === "thread") keys.threads.get(current.thread.id)?.toggle();
         else if (current.kind === "commit") options.openCommit(current.commit);
-        else if (current.item.kind !== "action" && (current.item.kind !== "review" || current.item.review.body.trim() !== "")) setFolded((set) => flipped(set, current.key));
+        else if (current.kind === "link") {
+          if (current.url === null) notify("Nothing to open here");
+          else options.openUrl(current.url);
+        } else if (current.item.kind !== "action" && (current.item.kind !== "review" || current.item.review.body.trim() !== "")) setFolded((set) => flipped(set, current.key));
         return;
       }
       case "openInFiles":

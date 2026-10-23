@@ -167,7 +167,29 @@ export interface GithubComment {
 export type ReviewVerdict = "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
 
 /** A change to the pull request itself that its conversation lists between the comments. */
-export type PullRequestAction = "merged" | "closed" | "reopened" | "force-pushed" | "ready-for-review" | "converted-to-draft" | "review-requested" | "renamed" | "branch-deleted";
+export type PullRequestAction =
+  | "merged"
+  | "closed"
+  | "reopened"
+  | "force-pushed"
+  | "ready-for-review"
+  | "converted-to-draft"
+  | "review-requested"
+  | "review-request-removed"
+  | "review-dismissed"
+  | "renamed"
+  | "branch-deleted"
+  | "branch-restored"
+  | "base-changed"
+  | "labeled"
+  | "unlabeled"
+  | "assigned"
+  | "unassigned"
+  | "milestoned"
+  | "demilestoned"
+  | "auto-merge-enabled"
+  | "auto-merge-disabled"
+  | "cross-referenced";
 
 /**
  * What a pull request's conversation holds besides its commits and comments: the description it was opened with,
@@ -176,8 +198,68 @@ export type PullRequestAction = "merged" | "closed" | "reopened" | "force-pushed
 export type ConversationEvent =
   | { kind: "opened"; id: string; author: string; body: string; createdAt: string; url: string }
   | { kind: "review"; id: string; author: string; mine: boolean; state: ReviewVerdict; body: string; createdAt: string; url: string }
-  /** `detail` names who a review was requested from, the new title, or the merge commit. */
-  | { kind: "action"; id: string; action: PullRequestAction; actor: string; detail: string | null; createdAt: string };
+  /**
+   * `detail` is what the action names: who a review was requested from or a dismissal's message, the new title, a
+   * label, the merge commit, `abc1234 → def5678` for a force-push, or the referencing pull request's title. `url` is
+   * where `gx` goes (the compare of a force-push, the referencing issue); `color` is a label's hex colour.
+   */
+  | { kind: "action"; id: string; action: PullRequestAction; actor: string; detail: string | null; createdAt: string; url?: string | null; color?: string | null };
+
+export type ReactionContent = "THUMBS_UP" | "THUMBS_DOWN" | "LAUGH" | "HOORAY" | "CONFUSED" | "HEART" | "ROCKET" | "EYES";
+
+export interface Reaction {
+  content: ReactionContent;
+  count: number;
+  /** The signed-in user reacted so. */
+  mine: boolean;
+}
+
+/** What GitHub shows beside a comment's author and under its text. */
+export interface CommentMeta {
+  /** GitHub's author association: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, ...; NONE shows nothing. */
+  association: string | null;
+  edited: boolean;
+  /** Why a moderator hid the comment (outdated, off-topic, resolved, ...); null when it shows. */
+  minimized: string | null;
+  /** Only the reactions anyone left. */
+  reactions: Reaction[];
+}
+
+/** A check's outcome as the conversation draws it. */
+export type CheckOutcome = "success" | "failure" | "pending" | "neutral" | "skipped";
+
+/** The pull request's own facts, as GitHub's Conversation tab heads and ends it. */
+export interface PullRequestSummary {
+  state: "open" | "draft" | "merged" | "closed";
+  author: string;
+  url: string;
+  baseRef: string;
+  headRef: string;
+  commitCount: number;
+  labels: Array<{ name: string; color: string }>;
+  assignees: string[];
+  milestone: { title: string; url: string } | null;
+  /** Issues the pull request closes when merged. */
+  linkedIssues: Array<{ number: number; title: string; url: string; open: boolean }>;
+  /** Each reviewer's latest review, then the reviews still requested (`REQUESTED`). */
+  reviewers: Array<{ name: string; state: ReviewVerdict | "REQUESTED" }>;
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  /** GitHub's merge state: CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE, HAS_HOOKS, DRAFT or UNKNOWN. */
+  mergeState: string;
+  /** The head commit's checks; null when it has none. */
+  checks: { outcome: CheckOutcome; runs: Array<{ name: string; outcome: CheckOutcome; description: string | null; url: string | null }> } | null;
+}
+
+/** Everything the conversation view reads from a source beyond its commits and synced comments. */
+export interface ConversationData {
+  pullRequest: PullRequestSummary | null;
+  events: ConversationEvent[];
+  /** Badges and reactions by comment id: `issue-comment:<n>`, `review-comment:<n>`, `review:<n>`, or the opened event's id for the description. */
+  comments: Record<string, CommentMeta>;
+  /** A commit's signature and checks, by sha. */
+  commits: Record<string, { verified: boolean | null; checks: CheckOutcome | null }>;
+}
 
 export type FindingSeverity = "critical" | "important" | "minor";
 

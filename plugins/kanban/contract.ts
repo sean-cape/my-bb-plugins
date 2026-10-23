@@ -2,7 +2,7 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { COMMIT_SHA_PATTERN } from "bb-diff-view/types";
 import { TICKET_TITLE_MAX_LENGTH, boardSchema, columnSchema, dueDateSchema, sourceSchema, syncStatusSchema, tagSchema, ticketSchema } from "./shared/board";
-import { commentApplySchema, conversationEventSchema, diffCommentSchema, diffCommentTargetSchema, pendingReviewStateSchema, prCommentSchema, reviewEventSchema } from "./shared/comments";
+import { commentApplySchema, conversationDataSchema, diffCommentSchema, diffCommentTargetSchema, pendingReviewStateSchema, prCommentSchema, reviewEventSchema } from "./shared/comments";
 import { blameLineSchema, commitRangeSchema, diffCommitsSchema, diffDeltaSchema, diffSideSchema, structuralDiffSchema, suggestionItemSchema, symbolLookupSchema, symbolUsagesSchema, ticketDiffSchema } from "./shared/diff";
 import { dumpSchema, proposedTicketSchema } from "./shared/dump";
 import { PLAN_MAX_LENGTH, attentionLevelSchema, levelOverrideSchema, loopGatesSchema, pathRuleSchema, projectSettingsSchema } from "./shared/loop";
@@ -310,10 +310,10 @@ export const rpcContract = defineRpcContract({
     input: z.object({ ticketId: z.string() }).strict(),
     output: z.object({ comments: z.array(prCommentSchema), applies: z.array(commentApplySchema) }),
   },
-  /** The PR's description, every submitted review and its changes (merged, renamed, force-pushed) for the conversation view; empty for a card without a PR. */
+  /** The PR's summary, description, submitted reviews, changes and badges for the conversation view; empty for a card without a PR. */
   pr_conversation: {
     input: z.object({ ticketId: z.string() }).strict(),
-    output: z.object({ events: z.array(conversationEventSchema) }),
+    output: conversationDataSchema,
   },
   comment_set_selected: {
     input: z.object({ id: z.string(), selected: z.boolean().nullable() }).strict(),

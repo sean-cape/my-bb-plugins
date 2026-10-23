@@ -80,11 +80,20 @@ plugins embed.
   patch came through "Load diff".
 - **Conversation view**: a third reading mode beside Files (and Narrative),
   read like GitHub's Conversation tab, or `gc` (again to return where you
-  were). Oldest first on one rule: the pull request's description, commits
-  (a run of them together), comments, reviews (approvals without text too)
-  and changes to the pull request (merged, renamed, force-pushed, review
-  requested), where the host lists them (kanban does for PR cards; without
-  them the view shows the commits and threads alone). Each GitHub thread sits
+  were). A summary heads it: the pull request's state, what it merges into
+  what, its reviewers and their verdicts, assignees, labels, milestone and
+  the issues it closes. Then, oldest first on one rule: the description,
+  commits (a run of them together, each with its verified mark and checks),
+  comments, reviews (approvals without text too) and changes to the pull
+  request (merged, closed, renamed, force-pushed with a compare link, labels,
+  assignees, review requests and dismissals, milestones, base branch,
+  auto-merge, mentions from other pull requests and issues). Comments carry
+  the author's association, an edited mark and their reactions; one GitHub
+  hid starts folded with the reason. A status box ends it like GitHub's merge
+  box, without its button: the review decision, each check of the head
+  commit, and whether the branch merges cleanly. The host provides all this
+  (kanban does for PR cards); without it the view shows the commits and
+  threads alone. Each GitHub thread sits
   under the review it was submitted in, over the hunk GitHub stored when it
   was left; a thread started here stands at its first comment over today's
   lines around it (or under its file's name when the diff no longer shows

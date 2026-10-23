@@ -4,7 +4,7 @@ import { recountHunk, shownInline, threadCode, threadCounts, threadStatus } from
 import { conversationItems, conversationStops } from "./lib/app/conversation/conversation";
 import { CONVERSATION_KEY_HELP, CONVERSATION_KEYMAP } from "./lib/app/conversation/conversation-keymap";
 import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
-import type { ConversationEvent, DiffCommit } from "./lib/types";
+import type { ConversationEvent, DiffCommit, PullRequestSummary } from "./lib/types";
 import { keymapConflicts, unboundHelpKeys } from "../vim-mode/lib/index.ts";
 import { githubComment as github, localComment as local } from "./test-helpers";
 
@@ -129,6 +129,26 @@ describe("conversationItems", () => {
     const stored = [...github_, github({ id: "review:7", kind: "review", path: null, line: null, body: "Looks good", reviewState: "CHANGES_REQUESTED", createdAt: at(8) })];
     const review = conversationItems({ threads, github: stored, commits: [], events: [] }).find((item) => item.key === "review:7")!;
     expect(review.kind === "review" ? [review.review.state, review.review.body, review.threads.length] : null).toEqual(["CHANGES_REQUESTED", "Looks good", 2]);
+  });
+});
+
+describe("summary and status stops", () => {
+  it("stops at the pull request and each issue it closes before the timeline, and at the status and each check after it", () => {
+    const pr: PullRequestSummary = {
+      state: "open", author: "Jordan Rivera", url: "https://github.invalid/acme-co/widgets/pull/7", baseRef: "main", headRef: "widgets", commitCount: 1, labels: [], assignees: [], milestone: null,
+      linkedIssues: [{ number: 3, title: "Widgets", url: "https://github.invalid/acme-co/widgets/issues/3", open: true }],
+      reviewers: [], reviewDecision: null, mergeable: "MERGEABLE", mergeState: "CLEAN",
+      checks: { outcome: "success", runs: [{ name: "build", outcome: "success", description: null, url: "https://github.invalid/run/1" }] },
+    };
+    const items = conversationItems({ threads: [], github: [], commits: [{ sha: "a1", summary: "s", author: "Alex", date: "2026-01-01T00:00:00Z" }], events: [] });
+    const stops = conversationStops(items, pr);
+    expect(stops.map((stop) => [stop.key, stop.kind === "link" ? stop.url : null])).toEqual([
+      ["summary", pr.url],
+      ["issue:3", "https://github.invalid/acme-co/widgets/issues/3"],
+      ["commit:a1", null],
+      ["status", `${pr.url}/checks`],
+      ["check:0", "https://github.invalid/run/1"],
+    ]);
   });
 });
 

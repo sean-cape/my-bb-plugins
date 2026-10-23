@@ -21,14 +21,14 @@ export const CONVERSATION_KEY_HELP: readonly KeyHelpSection[] = [
   {
     title: "Conversation",
     keys: [
-      { keys: ["j", "k"], action: "Next / previous entry: a comment, review, commit or thread (a count repeats: 5j)" },
+      { keys: ["j", "k"], action: "Next / previous entry: the summary, a linked issue, a comment, review, commit, thread, the status or a check (a count repeats: 5j)" },
       { keys: ["c", "C"], action: "Next / previous comment thread" },
       { keys: ["gg", "G"], action: "First / last entry" },
       { keys: ["Ctrl-d", "Ctrl-u"], action: "Half a page down / up (Ctrl-f / Ctrl-b a whole page)" },
       { keys: ["zz", "zt", "zb"], action: "Scroll the entry to the middle / top / bottom" },
-      { keys: ["Enter", "za"], action: "Open or close the thread or comment; on a commit, show that commit's changes" },
+      { keys: ["Enter", "za"], action: "Open or close the thread or comment (a hidden one opens); on a commit, show that commit's changes; on a check or issue, open it" },
       { keys: ["gf"], action: "Open the files view at the thread's line, or at the commit's changes" },
-      { keys: ["gx"], action: "Open the entry on GitHub" },
+      { keys: ["gx"], action: "Open the entry on GitHub: the pull request, a comment, a commit, a force-push's compare, a check's run" },
       { keys: ["gr"], action: "Pick commits to read in the files view" },
       { keys: ["gc"], action: "Back to the files or the narrative, where you were" },
       { keys: ["S"], action: "Switch to the narrative review" },

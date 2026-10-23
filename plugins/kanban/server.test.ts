@@ -11,6 +11,7 @@ import {
 import type { PluginThreadEventPayloads, PluginTurnFailedEvent } from "@get-bb/plugin-sdk";
 import type { ReadingPlan } from "./shared/reading-plan";
 import plugin, { adfToText, defaultSelected, githubRepoFromRemote, newLineRangesFromPatch, parseNarrative, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CodeReviewThread, type CommentApply, type DiffComment, type Dump, type Finding, type Narrative, type NarrativeStory, type PrComment, type Review, type StructuralDiff, type SymbolLookup, type Ticket, type TicketDiff } from "./server";
+import type { ConversationData } from "./shared/comments";
 import { LOOP_STOPPED } from "./shared/events";
 import { loopStateSchema, openFindingsClause, phaseChip } from "./shared/loop";
 
@@ -92,8 +93,8 @@ function stubGithub(options: {
   };
   /** Root review-comment ids of resolved threads, answered from the GraphQL reviewThreads query. */
   resolvedThreads?: number[];
-  /** The PR's issue timeline, served as GitHub lists it. */
-  timeline?: unknown[];
+  /** The pull request as the conversation's GraphQL query reads it, and its inline comments' badges. */
+  conversation?: { pr: Record<string, unknown>; threadComments?: unknown[] };
   /** Head branch and check rollup per `repo#number` for the batched GraphQL query; a missing PR comes back null. */
   heads?: Record<string, { headRef: string; rollup: string | null }>;
   failHeads?: boolean;
@@ -141,6 +142,10 @@ function stubGithub(options: {
     const method = typeof input === "object" && input !== null && "method" in input ? (input as Request).method : (init?.method ?? "GET");
     if (method === "POST" && url.endsWith("/graphql")) {
       const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, string | number | null> };
+      if (request.query.includes("timelineItems(")) return json({ data: { viewer: { login: "sean" }, repository: { pullRequest: options.conversation?.pr ?? null } } });
+      if (request.query.includes("reviewThreads(first: 50")) {
+        return json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ comments: { nodes: options.conversation?.threadComments ?? [] } }] } } } } });
+      }
       if (request.query.includes("addPullRequestReviewThread(")) {
         const review = ghPending.reviews.find((entry) => entry.node_id === request.variables.reviewId && entry.submitted === null);
         if (review === undefined) return json({ errors: [{ message: "Could not resolve to a node with the global id" }] });
@@ -291,7 +296,6 @@ function stubGithub(options: {
         ],
       );
     }
-    if (/\/issues\/\d+\/timeline$/u.test(path)) return json(options.timeline ?? []);
     const issueComments = /\/repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments/u.exec(url);
     if (issueComments !== null) {
       return json(
@@ -3442,29 +3446,64 @@ describe("diff comment threads", () => {
     ]);
   });
 
-  it("reads the PR's conversation: its description, every submitted review and its changes, leaving out commits, comments and drafts", async () => {
-    const timeline = [
-      { event: "committed", sha: "abc" },
-      { event: "commented", id: 5, body: "Synced already", created_at: "2026-10-04T10:00:00Z" },
-      { event: "reviewed", id: 40, user: { login: "sean" }, state: "approved", body: "", submitted_at: "2026-10-05T12:00:00Z", html_url: "https://github.com/acme-co/widgets/pull/7#pullrequestreview-40" },
-      { event: "reviewed", id: 41, user: { login: "jordan-rivera" }, state: "pending", body: "draft" },
-      { event: "review_requested", id: 6, actor: { login: "octocat" }, requested_reviewer: { login: "alex" }, created_at: "2026-10-04T11:00:00Z" },
-      { event: "renamed", id: 7, actor: { login: "octocat" }, rename: { from: "Old", to: "Add widgets" }, created_at: "2026-10-04T12:00:00Z" },
-      { event: "labeled", id: 8, actor: { login: "octocat" }, created_at: "2026-10-04T13:00:00Z" },
-      { event: "merged", id: 9, actor: { login: "octocat" }, commit_id: "f00d", created_at: "2026-10-06T12:00:00Z" },
-    ];
-    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 7)], timeline }));
+  it("reads the PR's conversation: its facts, description, submitted reviews, changes and badges, leaving out drafts", async () => {
+    const meta = (extra: Record<string, unknown> = {}) => ({ authorAssociation: "NONE", lastEditedAt: null, isMinimized: false, minimizedReason: null, reactionGroups: [], ...extra });
+    const actor = (id: string, at: string) => ({ id, createdAt: at, actor: { login: "jordan-rivera" } });
+    const pr = {
+      number: 7, state: "OPEN", isDraft: false, merged: false, url: "https://github.com/acme-co/widgets/pull/7", createdAt: "2026-10-04T09:00:00Z", body: "Adds widgets",
+      ...meta({ authorAssociation: "MEMBER", lastEditedAt: "2026-10-04T09:30:00Z", reactionGroups: [{ content: "HEART", viewerHasReacted: true, reactors: { totalCount: 2 } }, { content: "EYES", viewerHasReacted: false, reactors: { totalCount: 0 } }] }),
+      author: { login: "jordan-rivera" }, baseRefName: "main", headRefName: "widgets", commits: { totalCount: 2 },
+      reviewDecision: "CHANGES_REQUESTED", mergeable: "CONFLICTING", mergeStateStatus: "DIRTY",
+      labels: { nodes: [{ name: "feature", color: "a2eeef" }] }, assignees: { nodes: [{ login: "jordan-rivera" }] }, milestone: null,
+      closingIssuesReferences: { nodes: [{ number: 3, title: "Widgets", url: "https://github.com/acme-co/widgets/issues/3", state: "OPEN" }] },
+      reviewRequests: { nodes: [{ requestedReviewer: { __typename: "Team", name: "platform" } }] },
+      latestReviews: { nodes: [{ author: { login: "alex" }, state: "CHANGES_REQUESTED" }] },
+      headCommit: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE", contexts: { nodes: [
+        { __typename: "CheckRun", name: "build", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://github.com/acme-co/widgets/runs/1" },
+        { __typename: "CheckRun", name: "lint", status: "IN_PROGRESS", conclusion: null, detailsUrl: null },
+        { __typename: "StatusContext", context: "deploy", state: "SUCCESS", targetUrl: null, description: "Preview ready" },
+      ] } } } }] },
+      timelineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+        { __typename: "PullRequestCommit", commit: { oid: "abc", signature: { isValid: true }, statusCheckRollup: { state: "SUCCESS" } } },
+        { __typename: "IssueComment", databaseId: 5, ...meta({ isMinimized: true, minimizedReason: "OUTDATED" }) },
+        { __typename: "PullRequestReview", databaseId: 40, ...meta({ authorAssociation: "COLLABORATOR" }), state: "CHANGES_REQUESTED", body: "Please rename", submittedAt: "2026-10-05T12:00:00Z", url: "https://github.com/acme-co/widgets/pull/7#pullrequestreview-40", author: { login: "alex" } },
+        { __typename: "PullRequestReview", databaseId: 41, ...meta(), state: "PENDING", body: "draft", submittedAt: null, url: "", author: { login: "sean" } },
+        { __typename: "HeadRefForcePushedEvent", ...actor("E1", "2026-10-05T13:00:00Z"), beforeCommit: { oid: "1111111aaa" }, afterCommit: { oid: "2222222bbb" } },
+        { __typename: "LabeledEvent", ...actor("E2", "2026-10-04T10:00:00Z"), label: { name: "feature", color: "a2eeef" } },
+        { __typename: "CrossReferencedEvent", ...actor("E3", "2026-10-04T11:00:00Z"), source: { number: 9, title: "Use widgets", url: "https://github.com/acme-co/gadgets/pull/9", repository: { nameWithOwner: "acme-co/gadgets" } } },
+        { __typename: "SubscribedEvent", id: "E4" },
+      ] },
+    };
+    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 7)], conversation: { pr, threadComments: [{ databaseId: 10, ...meta({ reactionGroups: [{ content: "THUMBS_UP", viewerHasReacted: false, reactors: { totalCount: 1 } }] }) }] } }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sync_now", null);
     const card = (await board()).tickets[0]!;
-    const { events } = (await current().harness.behavior.callRpc("pr_conversation", { ticketId: card.id })) as { events: unknown[] };
-    expect(events).toEqual([
-      { kind: "opened", id: "pr:7", author: "octocat", body: "Adds widgets", createdAt: "2026-10-04T09:00:00Z", url: "https://github.com/acme-co/widgets/pull/7" },
-      { kind: "review", id: "review:40", author: "sean", mine: true, state: "APPROVED", body: "", createdAt: "2026-10-05T12:00:00Z", url: "https://github.com/acme-co/widgets/pull/7#pullrequestreview-40" },
-      { kind: "action", id: "review_requested:6", action: "review-requested", actor: "octocat", detail: "alex", createdAt: "2026-10-04T11:00:00Z" },
-      { kind: "action", id: "renamed:7", action: "renamed", actor: "octocat", detail: "Add widgets", createdAt: "2026-10-04T12:00:00Z" },
-      { kind: "action", id: "merged:9", action: "merged", actor: "octocat", detail: "f00d", createdAt: "2026-10-06T12:00:00Z" },
+    const data = (await current().harness.behavior.callRpc("pr_conversation", { ticketId: card.id })) as ConversationData;
+    expect(data.pullRequest).toMatchObject({
+      state: "open", author: "jordan-rivera", baseRef: "main", headRef: "widgets", commitCount: 2, labels: [{ name: "feature", color: "a2eeef" }], assignees: ["jordan-rivera"],
+      linkedIssues: [{ number: 3, title: "Widgets", open: true }],
+      reviewers: [{ name: "alex", state: "CHANGES_REQUESTED" }, { name: "platform", state: "REQUESTED" }],
+      reviewDecision: "CHANGES_REQUESTED", mergeable: "CONFLICTING", mergeState: "DIRTY",
+      checks: { outcome: "failure", runs: [
+        { name: "build", outcome: "failure", description: null, url: "https://github.com/acme-co/widgets/runs/1" },
+        { name: "lint", outcome: "pending", description: null, url: null },
+        { name: "deploy", outcome: "success", description: "Preview ready", url: null },
+      ] },
+    });
+    expect(data.events).toEqual([
+      { kind: "opened", id: "pr:7", author: "jordan-rivera", body: "Adds widgets", createdAt: "2026-10-04T09:00:00Z", url: "https://github.com/acme-co/widgets/pull/7" },
+      { kind: "review", id: "review:40", author: "alex", mine: false, state: "CHANGES_REQUESTED", body: "Please rename", createdAt: "2026-10-05T12:00:00Z", url: "https://github.com/acme-co/widgets/pull/7#pullrequestreview-40" },
+      { kind: "action", id: "E1", action: "force-pushed", actor: "jordan-rivera", detail: "1111111 to 2222222", createdAt: "2026-10-05T13:00:00Z", url: "https://github.com/acme-co/widgets/compare/1111111aaa..2222222bbb", color: null },
+      { kind: "action", id: "E2", action: "labeled", actor: "jordan-rivera", detail: "feature", createdAt: "2026-10-04T10:00:00Z", url: null, color: "a2eeef" },
+      { kind: "action", id: "E3", action: "cross-referenced", actor: "jordan-rivera", detail: "acme-co/gadgets#9 Use widgets", createdAt: "2026-10-04T11:00:00Z", url: "https://github.com/acme-co/gadgets/pull/9", color: null },
     ]);
+    expect(data.comments).toEqual({
+      "pr:7": { association: "MEMBER", edited: true, minimized: null, reactions: [{ content: "HEART", count: 2, mine: true }] },
+      "issue-comment:5": { association: null, edited: false, minimized: "OUTDATED", reactions: [] },
+      "review:40": { association: "COLLABORATOR", edited: false, minimized: null, reactions: [] },
+      "review-comment:10": { association: null, edited: false, minimized: null, reactions: [{ content: "THUMBS_UP", count: 1, mine: false }] },
+    });
+    expect(data.commits).toEqual({ abc: { verified: true, checks: "success" } });
   });
 
   it("resolves and reopens a GitHub review thread from any of its comments, marking the whole thread here", async () => {

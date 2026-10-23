@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ReactNode } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import { commitRangeKey, type DiffComment, type DiffDelta, type DiffFile, type SemanticChange, type SymbolLookup } from "../types";
+import { commitRangeKey, type ConversationEvent, type DiffComment, type DiffDelta, type DiffFile, type SemanticChange, type SymbolLookup } from "../types";
 import { otherLayout, readPreference, requestReload, setDiffPreferences, useDiffInstance, useDiffPreferences, writePreference } from "./state";
 import { DEFAULT_LABELS, type DiffSource, type DiffViewLabels } from "./source";
 import { CHANGES_STRIP, ChangesStrip, useDelta } from "./delta-strip";
@@ -53,7 +53,7 @@ import { threadCounts } from "./comments/thread-code";
 import { conversationItems } from "./conversation/conversation";
 import { ConversationView } from "./conversation/conversation-view";
 import { CONVERSATION_KEY_HELP, CONVERSATION_KEYMAP, type ConversationCommand } from "./conversation/conversation-keymap";
-import { useConversationEvents } from "./conversation/use-conversation-events";
+import { useConversationData } from "./conversation/use-conversation-data";
 import { useConversationMode } from "./conversation/use-conversation-mode";
 import { errorMessage, groupByPath, plural } from "./format";
 import { cn } from "./utils";
@@ -108,6 +108,7 @@ export interface DiffViewProps {
 
 const NO_PLACED_FINDINGS: PlacedFinding[] = [];
 const NO_THREADS: DiffThread[] = [];
+const NO_EVENTS: ConversationEvent[] = [];
 const SWITCH_TO_ALL_FIRST = "switch to All changes (gr) first";
 const NO_FILES: DiffFile[] = [];
 const NO_SEMANTICS: SemanticChange[] = [];
@@ -760,10 +761,11 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     runReviewCommand(command, count, filesEnv());
   };
 
-  const conversationEvents = useConversationEvents(source, refreshSignal, mode === "conversation");
+  const conversationData = useConversationData(source, refreshSignal, mode === "conversation");
+  const conversationEvents = conversationData.data?.events ?? NO_EVENTS;
   const conversation = useMemo(
-    () => conversationItems({ threads: comments.allThreads, github: comments.github, commits: commits?.commits ?? [], events: conversationEvents.events }),
-    [comments.allThreads, comments.github, commits, conversationEvents.events],
+    () => conversationItems({ threads: comments.allThreads, github: comments.github, commits: commits?.commits ?? [], events: conversationEvents }),
+    [comments.allThreads, comments.github, commits, conversationEvents],
   );
   const conversationMode = useConversationMode({
     keys,
@@ -771,6 +773,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     setMode,
     available: conversationAvailable,
     items: conversation,
+    pullRequest: conversationData.data?.pullRequest ?? null,
     narrativeAvailable,
     enterNarrative,
     threadById,
@@ -1245,8 +1248,9 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
               ) : mode === "conversation" ? (
                 <ConversationView
                   items={conversation}
+                  data={conversationData.data}
                   originals={threadById}
-                  error={conversationEvents.error}
+                  error={conversationData.error}
                   focusedKey={conversationMode.cursorKey}
                   folded={conversationMode.folded}
                   scrollRef={conversationMode.scrollRef}

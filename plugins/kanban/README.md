@@ -588,8 +588,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
   Resolved threads, and threads whose line the latest push changed
   (outdated), leave the diff unless you have an unsent reply in one; the
   summary bar counts them and the Conversation view (`gc`) lists every thread
-  under the review it was submitted in, between the PR's description,
-  commits, comments, reviews and events as on GitHub's Conversation tab, each
+  under the review it was submitted in, between the PR's summary,
+  description, commits, comments, reviews, events and merge status as on
+  GitHub's Conversation tab (read with one GraphQL query as the view opens), each
   over the hunk GitHub stored for it (synced with each comment's original
   lines and review), with Unresolve (`r`) to reopen a resolved one;
   the card panel's PR comments still list them too. Reply in

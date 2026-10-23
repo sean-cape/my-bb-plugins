@@ -1,6 +1,6 @@
 // The conversation view's model, as GitHub's Conversation tab lays a pull request out: the description, then commits,
 // comments, reviews with their threads, and changes to the pull request, oldest first. Pure, for the tests.
-import type { ConversationEvent, DiffCommit, GithubComment, ReviewVerdict } from "../../types";
+import type { ConversationEvent, DiffCommit, GithubComment, PullRequestSummary, ReviewVerdict } from "../../types";
 import type { DiffThread } from "../comments/threads";
 
 type OpenedEvent = Extract<ConversationEvent, { kind: "opened" }>;
@@ -37,7 +37,9 @@ export type ConversationItem =
 export type ConversationStop =
   | { key: string; kind: "item"; item: Exclude<ConversationItem, { kind: "commits" | "thread" }> }
   | { key: string; kind: "commit"; commit: ConversationCommit }
-  | { key: string; kind: "thread"; thread: DiffThread };
+  | { key: string; kind: "thread"; thread: DiffThread }
+  /** A row of the summary above the timeline or the status below it: the pull request, a linked issue, a check. */
+  | { key: string; kind: "link"; url: string | null };
 
 const VERDICTS: readonly string[] = ["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"] satisfies ReviewVerdict[];
 
@@ -123,8 +125,20 @@ export function conversationItems(input: {
   return items;
 }
 
-export function conversationStops(items: readonly ConversationItem[]): ConversationStop[] {
-  return items.flatMap((item): ConversationStop[] => {
+/** The summary's rows the cursor stops at: the pull request itself, then each issue it closes. */
+export function summaryStops(pr: PullRequestSummary | null): ConversationStop[] {
+  if (pr === null) return [];
+  return [{ key: "summary", kind: "link", url: pr.url }, ...pr.linkedIssues.map((issue): ConversationStop => ({ key: `issue:${issue.number}`, kind: "link", url: issue.url }))];
+}
+
+/** The status box's rows: the box itself (the checks page), then each check of the head commit. */
+export function statusStops(pr: PullRequestSummary | null): ConversationStop[] {
+  if (pr === null) return [];
+  return [{ key: "status", kind: "link", url: `${pr.url}/checks` }, ...(pr.checks?.runs ?? []).map((run, index): ConversationStop => ({ key: `check:${index}`, kind: "link", url: run.url }))];
+}
+
+export function conversationStops(items: readonly ConversationItem[], pr: PullRequestSummary | null = null): ConversationStop[] {
+  const timeline = items.flatMap((item): ConversationStop[] => {
     switch (item.kind) {
       case "commits":
         return item.commits.map((commit) => ({ key: commitKey(commit.commit), kind: "commit", commit }));
@@ -136,4 +150,5 @@ export function conversationStops(items: readonly ConversationItem[]): Conversat
         return [{ key: item.key, kind: "item", item }];
     }
   });
+  return [...summaryStops(pr), ...timeline, ...statusStops(pr)];
 }

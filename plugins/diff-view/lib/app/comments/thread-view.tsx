@@ -19,6 +19,7 @@ import { CommentBody } from "../suggestions/suggestion-diff";
 import { SuggestionBadge, SuggestionButtons } from "../suggestions/suggestion-actions";
 import { isInBatch, suggestionKeyHints } from "../suggestions/actions";
 import type { ThreadSuggestion } from "../suggestions/thread-suggestion";
+import { MetaBadges, Reactions, useCommentMeta } from "../conversation/comment-meta";
 
 /** How an entry's suggestion blocks draw: over the thread's lines today, with the applying one's badges. */
 interface EntrySuggestion {
@@ -91,6 +92,7 @@ function ThreadEntryView({
     if (editing) setDraft(body.current);
   }, [editing]);
   const [saving, setSaving] = useState(false);
+  const meta = useCommentMeta(entry.comment.id);
   if (entry.source === "github") {
     const { comment } = entry;
     return (
@@ -99,6 +101,7 @@ function ThreadEntryView({
           <Icon name="GitPullRequest" className="size-3 shrink-0" />
           <span className="font-medium text-foreground">{comment.author}</span>
           {comment.mine ? <Badge>you</Badge> : null}
+          <MetaBadges meta={meta} />
           <span>{relativeTime(Date.parse(comment.createdAt), now)}</span>
           {comment.addressedAt !== null ? <Badge tone="success">addressed</Badge> : null}
           <ExternalLink href={comment.url} title="Open on GitHub" className="ml-auto text-muted-foreground hover:text-foreground">
@@ -106,6 +109,7 @@ function ThreadEntryView({
           </ExternalLink>
         </div>
         {comment.body.trim() !== "" ? <EntryBody id={comment.id} body={comment.body} shown={shown} /> : <p className="text-xs italic text-muted-foreground">(no text)</p>}
+        <Reactions meta={meta} />
       </div>
     );
   }

@@ -1,6 +1,6 @@
 import { useContext, useMemo, type ReactNode, type RefObject } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import type { ConversationEvent, PullRequestAction, ReviewVerdict } from "../../types";
+import type { CommentMeta, ConversationData, ConversationEvent, PullRequestAction, ReviewVerdict } from "../../types";
 import { cn } from "../utils";
 import { relativeTime, shortSha } from "../format";
 import { githubCommitUrl } from "../links";
@@ -19,6 +19,10 @@ import { useNow } from "../comments/thread-view";
 import type { ThreadCode } from "../comments/thread-code";
 import type { DiffThread } from "../comments/threads";
 import { commitKey, threadKey, type ConversationCommit, type ConversationItem, type ConversationReview } from "./conversation";
+import { CheckMark, CommentMetaContext, MetaBadges, Reactions } from "./comment-meta";
+import { LabelChip, PullRequestHeader, PullRequestStatus } from "./conversation-summary";
+
+const NO_META: ConversationData["comments"] = {};
 
 /** Each place the cursor stops carries its key, for the cursor to find and scroll to. */
 export const CONVERSATION_STOP = "data-conversation-stop";
@@ -60,8 +64,10 @@ function CommentCard({
   url,
   mine,
   badges,
+  meta,
+  isAuthor = false,
   body,
-  folded,
+  folded: toggled,
   onToggle,
   now,
 }: {
@@ -74,11 +80,15 @@ function CommentCard({
   url: string | null;
   mine: boolean;
   badges?: ReactNode;
+  meta: CommentMeta | null;
+  isAuthor?: boolean;
   body: string;
+  /** Toggled from how it starts: open, or folded when GitHub hid it. */
   folded: boolean;
   onToggle: () => void;
   now: number;
 }) {
+  const folded = toggled !== (meta?.minimized != null);
   const firstLine = body.split("\n").find((text) => text.trim() !== "") ?? "";
   return (
     <div {...stopProps(stopKey, stopRef, focused)} className={cn("min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-card", focused && CURSOR_RING)}>
@@ -89,6 +99,7 @@ function CommentCard({
           <When at={at} now={now} />
         </button>
         {mine ? <Badge>you</Badge> : null}
+        <MetaBadges meta={meta} author={isAuthor} />
         {badges}
         {folded ? <span className="min-w-0 flex-1 truncate text-foreground">{firstLine}</span> : <span className="flex-1" />}
         {url !== null ? (
@@ -100,6 +111,7 @@ function CommentCard({
       {folded ? null : (
         <div className={cn("break-words px-3 py-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto", enter.fade, FAST)}>
           {body.trim() === "" ? <p className="text-xs italic text-muted-foreground">No description provided.</p> : <CommentBody body={body} expected={null} startLine={null} />}
+          <Reactions meta={meta} />
         </div>
       )}
     </div>
@@ -149,6 +161,7 @@ function ThreadBlock({ code, stopRef, inDiff, annotations, onOpen }: { code: Thr
 
 function CommitRows({
   commits,
+  meta,
   stopRef,
   focusedKey,
   repo,
@@ -156,6 +169,7 @@ function CommitRows({
   now,
 }: {
   commits: ConversationCommit[];
+  meta: ConversationData["commits"];
   stopRef: StopRef;
   focusedKey: string | null;
   repo: string | null;
@@ -180,6 +194,12 @@ function CommitRows({
             <span className="hidden shrink-0 text-muted-foreground sm:inline">
               <When at={entry.commit.date} now={now} />
             </span>
+            {meta[entry.commit.sha]?.verified === true ? (
+              <Badge tone="success" title="Signed with a verified signature">
+                Verified
+              </Badge>
+            ) : null}
+            {meta[entry.commit.sha]?.checks != null ? <CheckMark outcome={meta[entry.commit.sha]!.checks!} /> : null}
             {repo !== null ? (
               <ExternalLink href={githubCommitUrl(repo, entry.commit.sha)} title="Open on GitHub (gx)" className="shrink-0 font-mono text-muted-foreground hover:text-foreground">
                 {shortSha(entry.commit.sha)}
@@ -198,19 +218,46 @@ const ACTION: Record<PullRequestAction, { icon: string; text: (detail: string | 
   merged: { icon: "diff-view-merge", text: (detail) => (detail === null ? "merged this pull request" : `merged commit ${shortSha(detail)}`) },
   closed: { icon: "diff-view-circle-x", text: () => "closed this pull request" },
   reopened: { icon: "GitPullRequest", text: () => "reopened this pull request" },
-  "force-pushed": { icon: "diff-view-refresh", text: () => "force-pushed the branch" },
+  "force-pushed": { icon: "diff-view-refresh", text: (detail) => (detail === null ? "force-pushed the branch" : `force-pushed the branch from ${detail}`) },
   "ready-for-review": { icon: "diff-view-eye", text: () => "marked this pull request ready for review" },
   "converted-to-draft": { icon: "GitPullRequest", text: () => "marked this pull request as a draft" },
   "review-requested": { icon: "diff-view-eye", text: (detail) => (detail === null ? "requested a review" : `requested a review from ${detail}`) },
+  "review-request-removed": { icon: "diff-view-eye", text: (detail) => (detail === null ? "removed a review request" : `removed the review request for ${detail}`) },
+  "review-dismissed": { icon: "diff-view-circle-x", text: (detail) => (detail === null ? "dismissed a review" : `dismissed a review: ${detail}`) },
   renamed: { icon: "diff-view-pencil", text: (detail) => (detail === null ? "changed the title" : `changed the title to ${detail}`) },
   "branch-deleted": { icon: "diff-view-commit", text: () => "deleted the branch" },
+  "branch-restored": { icon: "diff-view-commit", text: () => "restored the branch" },
+  "base-changed": { icon: "diff-view-commit", text: (detail) => (detail === null ? "changed the base branch" : `changed the base branch from ${detail}`) },
+  labeled: { icon: "diff-view-pencil", text: () => "added the label" },
+  unlabeled: { icon: "diff-view-pencil", text: () => "removed the label" },
+  assigned: { icon: "diff-view-eye", text: (detail) => (detail === null ? "was assigned" : `assigned ${detail}`) },
+  unassigned: { icon: "diff-view-eye", text: (detail) => (detail === null ? "was unassigned" : `unassigned ${detail}`) },
+  milestoned: { icon: "diff-view-pencil", text: (detail) => `added this to the ${detail ?? ""} milestone` },
+  demilestoned: { icon: "diff-view-pencil", text: (detail) => `removed this from the ${detail ?? ""} milestone` },
+  "auto-merge-enabled": { icon: "diff-view-merge", text: () => "enabled auto-merge" },
+  "auto-merge-disabled": { icon: "diff-view-merge", text: () => "disabled auto-merge" },
+  "cross-referenced": { icon: "GitPullRequest", text: (detail) => (detail === null ? "mentioned this pull request" : `mentioned this pull request in ${detail}`) },
 };
 
 function ActionRow({ event, stopRef, focused, now }: { event: Extract<ConversationEvent, { kind: "action" }>; stopRef: StopRef; focused: boolean; now: number }) {
   const action = ACTION[event.action];
   return (
     <p {...stopProps(`action:${event.id}`, stopRef, focused)} className={cn("min-w-0 flex-1 rounded px-1 py-1 text-xs text-muted-foreground", focused && CURSOR_RING)}>
-      <span className="font-medium text-foreground">{event.actor}</span> {action.text(event.detail)} <When at={event.createdAt} now={now} />
+      <span className="font-medium text-foreground">{event.actor}</span> {event.action === "labeled" || event.action === "unlabeled" ? action.text(null) : action.text(event.detail)}{" "}
+      {(event.action === "labeled" || event.action === "unlabeled") && event.detail !== null ? (
+        <>
+          <LabelChip name={event.detail} color={event.color ?? ""} />{" "}
+        </>
+      ) : null}
+      <When at={event.createdAt} now={now} />
+      {event.url != null ? (
+        <>
+          {" "}
+          <ExternalLink href={event.url} title="Open on GitHub (gx)" className="hover:text-foreground">
+            <Icon name="ExternalLink" className="inline size-3" />
+          </ExternalLink>
+        </>
+      ) : null}
     </p>
   );
 }
@@ -232,6 +279,7 @@ function ItemRow({ marker, children }: { marker: ReactNode; children: ReactNode 
  */
 export function ConversationView({
   items,
+  data,
   originals,
   error,
   focusedKey,
@@ -247,6 +295,7 @@ export function ConversationView({
   onOpenThread,
 }: {
   items: readonly ConversationItem[];
+  data: ConversationData | null;
   originals: ReadonlyMap<string, DiffThread>;
   error: string | null;
   focusedKey: string | null;
@@ -267,6 +316,8 @@ export function ConversationView({
     return { ...actions, onReply: (thread, body, target) => actions.onReply(original(thread), body, target), onResolve: (thread, resolved) => actions.onResolve(original(thread), resolved) };
   }, [actions, originals]);
   const now = useNow();
+  const metaOf = (id: string) => data?.comments[id] ?? null;
+  const prAuthor = data?.pullRequest?.author ?? null;
   const thread = (entry: DiffThread) => {
     const code = codeOf(entry);
     return <ThreadBlock key={entry.id} code={code} stopRef={stopRef} inDiff={inDiff(entry.path)} annotations={annotationsFor(code)} onOpen={() => onOpenThread(entry)} />;
@@ -300,6 +351,8 @@ export function ConversationView({
               url={entry.url}
               mine={entry.mine}
               badges={addressed}
+              meta={metaOf(key)}
+              isAuthor={entry.author === prAuthor}
               body={entry.body}
               folded={folded.has(key)}
               onToggle={() => onToggle(key)}
@@ -325,6 +378,8 @@ export function ConversationView({
               at={item.event.createdAt}
               url={item.event.url}
               mine={false}
+              meta={metaOf(item.event.id)}
+              isAuthor
               body={item.event.body}
               folded={folded.has(item.key)}
               onToggle={() => onToggle(item.key)}
@@ -345,6 +400,8 @@ export function ConversationView({
               url={item.comment.url}
               mine={item.comment.mine}
               badges={item.comment.addressedAt !== null ? <Badge tone="success">addressed</Badge> : null}
+              meta={metaOf(item.comment.id)}
+              isAuthor={item.comment.author === prAuthor}
               body={item.comment.body}
               folded={folded.has(item.key)}
               onToggle={() => onToggle(item.key)}
@@ -363,7 +420,7 @@ export function ConversationView({
       case "commits":
         return (
           <ItemRow key={item.key} marker={<Marker icon="diff-view-commit" />}>
-            <CommitRows commits={item.commits} stopRef={stopRef} focusedKey={focusedKey} repo={repo} onOpen={onOpenCommit} now={now} />
+            <CommitRows commits={item.commits} meta={data?.commits ?? {}} stopRef={stopRef} focusedKey={focusedKey} repo={repo} onOpen={onOpenCommit} now={now} />
           </ItemRow>
         );
       case "action":
@@ -376,14 +433,18 @@ export function ConversationView({
   };
   return (
     <DiffCommentsContext.Provider value={scoped}>
+      <CommentMetaContext.Provider value={data?.comments ?? NO_META}>
       <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         <div className={cn("mx-auto flex max-w-5xl flex-col gap-2 px-4 py-3", enter.fade, FAST)}>
           {error !== null ? <p className="text-xs text-destructive">Could not read the pull request's reviews and events: {error}</p> : null}
+          {data?.pullRequest != null ? <PullRequestHeader pr={data.pullRequest} stopRef={stopRef} focusedKey={focusedKey} /> : null}
           {items.length === 0 ? <p className="text-sm text-muted-foreground">Nothing here yet: no commits, comments or reviews.</p> : null}
           {/* The rule runs behind the markers, down the middle of their column. */}
           <ol className="relative flex flex-col before:absolute before:bottom-2 before:left-3 before:top-2 before:w-px before:-translate-x-1/2 before:bg-border">{items.map(render)}</ol>
+          {data?.pullRequest != null ? <PullRequestStatus pr={data.pullRequest} stopRef={stopRef} focusedKey={focusedKey} /> : null}
         </div>
       </div>
+      </CommentMetaContext.Provider>
     </DiffCommentsContext.Provider>
   );
 }
