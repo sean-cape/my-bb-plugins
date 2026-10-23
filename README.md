@@ -51,7 +51,19 @@ The Activity page in the sidebar shows the same ranking. Details, limits, and th
 
 ## Install
 
-From a local checkout (rebuild after changes with `bb plugin build plugins/<name>`):
+Everything at once, from a clone (needs `bb`, `node`, `pnpm` and `npm` on PATH). It pulls, installs each plugin's
+dependencies, builds every plugin, installs it into bb or reloads it when bb already runs it from this checkout, links
+the Claude Code skills and subagents into `~/.claude`, and checks every plugin reports `running`. Run it again to
+upgrade:
+
+```sh
+node scripts/install.mjs                  # pull, then install or upgrade every plugin
+node scripts/install.mjs kanban diff-view # only these plugins
+node scripts/install.mjs --no-pull        # use the checkout as it is
+node scripts/install.mjs --registry https://registry.npmjs.org/   # if ~/.npmrc points at a registry you can't reach
+```
+
+One plugin from a local checkout (rebuild after changes with `bb plugin build plugins/<name>`):
 
 ```sh
 bb plugin build plugins/<name>
@@ -69,7 +81,8 @@ bb plugin install git:github.com/sean-cape/my-bb-plugins@main --plugin <name>
 `claude/` holds the Claude Code skills and subagents the kanban board's review loop runs: `code-review` with the
 `change-reviewer-*` subagents it spawns and the `triage-criteria.md` it reads, `apply-review`, `apply-pr-comments`,
 and the `grill-me` → `to-spec` → `to-tickets` → `implement` flow that writes the specs the reviews hold changes to.
-Link them into `~/.claude` from the main checkout (existing copies are moved to `~/.claude/backups`):
+`scripts/install.mjs` links them; to link them alone, run this from the main checkout (existing copies are moved to
+`~/.claude/backups`):
 
 ```sh
 node scripts/link-claude-config.mjs           # link
