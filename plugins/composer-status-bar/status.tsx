@@ -11,6 +11,7 @@ import { GLYPH, Glyph, useNerdFont } from "bb-nerd-font";
 import { type AnimationEventHandler, type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type Arrival, arrive, type Shown } from "./arrival.js";
+import { LandedBadge } from "./landed-badge.js";
 import {
   ANCHOR_ATTRIBUTE,
   COMPOSER,
@@ -47,6 +48,7 @@ export function FooterStatus() {
   const attributes = { [ANCHOR_ATTRIBUTE]: "" };
   return (
     <span ref={setAnchor} hidden {...attributes}>
+      {threadId !== null ? <LandedBadge anchor={anchor} threadId={threadId} /> : null}
       {threadId !== null ? (
         <StatusSegments
           slots={slots}

@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Composer status bar",
-    "description": "Packs the bar under a thread's composer tighter, hides its new-thread button, and adds the model, effort, context tokens, and usage-limit warnings.",
+    "description": "Packs the bar under a thread's composer tighter, hides its new-thread button, adds the model, effort, context tokens, and usage-limit warnings, and says beside the changes bar whether the branch has landed on its merge base.",
     "branding": {
       "icon": "ChartColumn"
     },
@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "bb-motion": "file:../motion/lib",
-    "bb-nerd-font": "file:../nerd-font/lib"
+    "bb-nerd-font": "file:../nerd-font/lib",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.15",
