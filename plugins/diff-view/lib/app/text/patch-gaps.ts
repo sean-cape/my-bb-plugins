@@ -37,7 +37,7 @@ export function gapRuns(gap: ExcerptGap): PatchLine[][] {
 
 /**
  * The rows a press opens: all, or a step's worth under the code above (`first`) or over the code below (`last`), which
- * stops where the patch's hunk does, so each press shows lines that run on from what is shown.
+ * stops where the patch's hunk does, so a press never spans the unchanged lines between two hunks.
  */
 export function gapPart(gap: ExcerptGap, part: FoldPart): PatchLine[] {
   if (part === "all") return gap.hidden;
