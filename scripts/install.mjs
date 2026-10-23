@@ -56,12 +56,14 @@ for (const tool of ["bb", "pnpm", "npm"]) {
 if (!flag("--no-pull")) {
   if (!run("git", ["rev-parse", "--abbrev-ref", "@{u}"]).ok) console.log("pull: skipped, the current branch has no upstream");
   else {
-    const pulled = run("git", ["pull", "--ff-only"]);
+    // A fast-forward merge rather than `git pull`: with pull.rebase set, pull refuses to run beside any local change.
+    const fetched = run("git", ["fetch"]);
+    const pulled = fetched.ok ? run("git", ["merge", "--ff-only", "@{u}"]) : fetched;
     if (!pulled.ok) {
       console.error(`pull failed; fix the checkout or run with --no-pull:\n${tail(pulled.output)}`);
       process.exit(1);
     }
-    console.log(`pull: ${pulled.output.split("\n").at(-1)}`);
+    console.log(`pull: ${pulled.output.split("\n").at(-1) || "up to date"}`);
   }
 }
 
