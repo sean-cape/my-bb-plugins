@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { INITIAL_LOOP_STATE, type FindingAnswer, type LoopState, type PathRule } from "../../shared/loop";
-import { reduce, type LoopAction, type LoopEvent, type ReviewedFinding } from "./reducer";
+import { INITIAL_LOOP_STATE, loopPhaseSchema, type FindingAnswer, type LoopState, type PathRule } from "../../shared/loop";
+import { passiveIdle, reduce, type LoopAction, type LoopEvent, type ReviewedFinding } from "./reducer";
 
 const noGates = { plan: false, findings: false, autoAccept: false };
 const sha = "0123456789abcdef0123456789abcdef01234567";
@@ -51,6 +51,12 @@ function run(events: LoopEvent[], from: LoopState = INITIAL_LOOP_STATE): { state
 }
 
 describe("loop reducer", () => {
+  it("counts a card thread's turn as passive only while the board has the work, or after it landed", () => {
+    const phases = Object.fromEntries(loopPhaseSchema.options.map((phase) => [phase, passiveIdle({ ...INITIAL_LOOP_STATE, monitored: true, phase })]));
+    expect(phases).toEqual({ idle: false, planning: false, building: false, checking: true, classifying: true, reviewing: true, fixing: false, paused: false, "needs-you": false, accepted: false, landed: true });
+    expect(passiveIdle({ ...INITIAL_LOOP_STATE, phase: "reviewing" })).toBe(false);
+  });
+
   it("starts building when monitored, adding the loop's columns and telling an existing thread", () => {
     const withThread = run([{ type: "monitor", hasThread: true, gates: noGates }]);
     expect(withThread.state).toMatchObject({ monitored: true, phase: "building", reason: null });
@@ -104,9 +110,9 @@ describe("loop reducer", () => {
   it("requests the reading plan's narrative at Needs you only at Read or Scrutinize", () => {
     const glance = run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(0), classified(2), { type: "review-started", reviewId: "rev1" }, reviewed("rev1", [])]);
     expect(glance.state.attention?.level).toBe("glance");
-    expect(glance.actions[5]).toEqual([{ type: "move", column: "review" }]);
+    expect(glance.actions[5]).toEqual([{ type: "move", column: "review" }, { type: "alert" }]);
     const scrutinize = run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(0), classified(5), { type: "review-started", reviewId: "rev1" }, reviewed("rev1", [])]);
-    expect(scrutinize.actions[5]).toEqual([{ type: "move", column: "review" }, { type: "spawn-narrative" }]);
+    expect(scrutinize.actions[5]).toEqual([{ type: "move", column: "review" }, { type: "alert" }, { type: "spawn-narrative" }]);
   });
 
   it("holds a level the user set, with the reason, until the head moves", () => {
@@ -127,7 +133,7 @@ describe("loop reducer", () => {
   it("moves a clean first review to Needs you as clean", () => {
     const { state, actions } = run([...reviewing, reviewed("rev1", [])]);
     expect(state).toMatchObject({ phase: "needs-you", reason: "clean", round: 0, rounds: [] });
-    expect(actions[5]).toEqual([{ type: "move", column: "review" }, { type: "spawn-narrative" }]);
+    expect(actions[5]).toEqual([{ type: "move", column: "review" }, { type: "alert" }, { type: "spawn-narrative" }]);
   });
 
   it("hands only the findings triaged apply to the card's thread, whatever their severity", () => {
@@ -173,7 +179,7 @@ describe("loop reducer", () => {
     const { state, actions } = run(threeRounds([finding("F1", "important"), finding("F2", "minor")]));
     expect(state).toMatchObject({ phase: "needs-you", reason: "cap", round: 3, openFindings: [] });
     expect(state.rounds.map((round) => round.reviewId)).toEqual(["rev1", "rev2", "rev3"]);
-    expect(actions.at(-1)).toEqual([{ type: "move", column: "review" }, { type: "spawn-narrative" }]);
+    expect(actions.at(-1)).toEqual([{ type: "move", column: "review" }, { type: "alert" }, { type: "spawn-narrative" }]);
   });
 
   it("ends clean at the cap when only minor findings are open, listing them", () => {
@@ -280,13 +286,13 @@ describe("loop reducer", () => {
     expect(actions[5]).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {}, severityFloor: null }]);
     expect(state).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_r2", failure: null });
     // The thread's output is what the user reads next, so no narrative is spent on the change.
-    expect(actions[7]).toEqual([{ type: "move", column: "review" }]);
+    expect(actions[7]).toEqual([{ type: "move", column: "review" }, { type: "alert" }]);
   });
 
   it("stops at a loop error without a retry when the review's output says why it has no report", () => {
     const { state, actions } = run([...reviewing, { type: "thread-failed", role: "review", reviewId: "rev1", threadId: "thr_r1", failure: "no code-review skill" }]);
     expect(state).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_r1", failure: "no code-review skill", retries: 0 });
-    expect(actions.at(-1)).toEqual([{ type: "move", column: "review" }]);
+    expect(actions.at(-1)).toEqual([{ type: "move", column: "review" }, { type: "alert" }]);
     // The next ready clears it.
     expect(run([ready(fixSha)], state).state).toMatchObject({ phase: "checking", failure: null, failedThreadId: null });
   });
@@ -321,7 +327,7 @@ describe("loop reducer", () => {
   it("escalates a second failure in a row with reason checks", () => {
     const { state, actions } = run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(1), ready(fixSha), checks(1, fixSha)]);
     expect(state).toMatchObject({ phase: "needs-you", reason: "checks", commit: fixSha });
-    expect(actions[4]).toEqual([{ type: "move", column: "review" }]);
+    expect(actions[4]).toEqual([{ type: "move", column: "review" }, { type: "alert" }]);
   });
 
   it("counts only failures in a row: a pass in between starts the count again", () => {
@@ -345,7 +351,7 @@ describe("loop reducer", () => {
     const { state, actions } = run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), failed("thr_c1"), failed("thr_c2")]);
     expect(actions[2]).toEqual([{ type: "spawn-checks", commit: sha, checkCommand: { command: "pnpm check", source: "project" } }]);
     expect(state).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_c2" });
-    expect(actions[3]).toEqual([{ type: "move", column: "review" }]);
+    expect(actions[3]).toEqual([{ type: "move", column: "review" }, { type: "alert" }]);
 
     // A retry that succeeds leaves the next step its own retry.
     expect(run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), failed("thr_c1"), checks(0), classified(3), { type: "thread-failed", role: "review", reviewId: null, threadId: null }]).actions[5]).toEqual([
@@ -549,7 +555,7 @@ describe("loop reducer", () => {
       const findings = [finding("F1", "important"), finding("F2", "minor")];
       const held = run([gated({ findings: true }), ...reviewing.slice(1), reviewed("rev1", findings)]);
       expect(held.state).toMatchObject({ phase: "needs-you", reason: "findings", round: 0, awaitingFindings: [{ id: "F1" }, { id: "F2" }] });
-      expect(held.actions.at(-1)).toEqual([{ type: "move", column: "review" }]);
+      expect(held.actions.at(-1)).toEqual([{ type: "move", column: "review" }, { type: "alert" }]);
 
       const approved = run([{ type: "approve-findings", findingIds: ["F1"], pr: false }], held.state);
       expect(approved.state).toMatchObject({ phase: "fixing", round: 1, awaitingFindings: [], openFindings: [{ id: "F2" }], rounds: [{ handed: ["F1"], owner: "loop" }] });

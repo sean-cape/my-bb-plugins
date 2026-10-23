@@ -149,7 +149,7 @@ describe("threadRowsForEntry", () => {
     ).toEqual(["pinned"]);
   });
 
-  it("lists unread finished then running Claude root threads across projects, skipping automation runs, most recent first", () => {
+  it("lists unread finished then running Claude root threads across projects, skipping running automation runs, most recent first", () => {
     const unread = [
       makeSidebarThread({
         id: "older",
@@ -227,6 +227,7 @@ describe("threadRowsForEntry", () => {
         resolveProjectId: createThreadProjectResolver(unread),
       }).map((row) => [row.thread.id, row.section]),
     ).toEqual([
+      ["automation-unread", "attention"],
       ["newer", "attention"],
       ["older", "attention"],
       ["running-claude", "running"],

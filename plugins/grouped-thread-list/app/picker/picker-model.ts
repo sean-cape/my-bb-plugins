@@ -304,9 +304,11 @@ function sectionedRows(
 const CLAUDE_CODE_PROVIDER_ID = "claude-code";
 const AUTOMATIONS_PLUGIN_ID = "automations";
 
+/** An automation run is unattended until it ends, so it never counts as a session the user is waiting on. */
 function isRunningClaudeThread(thread: SidebarThread): boolean {
   return (
     thread.parentThreadId == null &&
+    thread.originPluginId !== AUTOMATIONS_PLUGIN_ID &&
     thread.providerId === CLAUDE_CODE_PROVIDER_ID &&
     (thread.status === "active" || thread.status === "starting")
   );
@@ -315,7 +317,6 @@ function isRunningClaudeThread(thread: SidebarThread): boolean {
 /**
  * Root threads only, matching the unread dot the glyphs already show. Running
  * Claude sessions are listed too so the tab doubles as "what needs me soon".
- * Automation runs are left out so scheduled work doesn't crowd the list.
  */
 export function unreadThreads(
   threads: readonly SidebarThread[],
@@ -324,7 +325,6 @@ export function unreadThreads(
     .filter(
       (thread) =>
         isSidebarProjectThread(thread) &&
-        thread.originPluginId !== AUTOMATIONS_PLUGIN_ID &&
         (isUnreadDoneThread(thread) || isRunningClaudeThread(thread)),
     )
     .sort(compareStandardThreads);

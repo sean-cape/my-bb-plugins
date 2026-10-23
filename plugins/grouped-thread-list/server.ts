@@ -20,6 +20,7 @@ import {
   type PreferenceValue,
   type PreferenceValues,
 } from "./shared/preferences.js";
+import { quietAutomationRuns } from "./automation-runs.js";
 import { inspectFolder, openProjectFolder } from "./project-folders.js";
 
 const PREFERENCE_KV_PREFIX = "preference:";
@@ -156,6 +157,7 @@ const JSON_OPTION = {
 
 export default async function threadListPlugin(bb: BbPluginApi) {
   const store = createPreferenceStore(bb);
+  quietAutomationRuns(bb);
 
   bb.rpc.register(threadListRpcContract, {
     async listPreferences() {

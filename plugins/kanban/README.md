@@ -252,8 +252,12 @@ its PR is reviewed and its review findings and comments are handed to agents.
   Viewed. Change level (`L`) sets the level with a reason; it holds until
   the card's next ready at a new commit, and the reason is kept.
   Needs you is sorted by level, Scrutinize first, then by how long each card
-  has waited there. bb's plugin API has no notifications, so the column and
-  its chips are the signal. The handoff brief shows the tokens the card's
+  has waited there. The card's thread stays out of the unread list while the
+  board has the work: a turn that reports ready (or lands the change) is
+  marked read as it ends, before the push plugin's two-second wait, so it
+  sends nothing either. When the loop stops at Needs you, the thread is
+  marked unread again and open bb windows show a desktop notification (with
+  the permission the push plugin asked for) that opens it. The handoff brief shows the tokens the card's
   threads have used (its own, checks, classify, review, apply and narrative
   threads), read from Claude Code's transcripts every 30 seconds.
 - **Review PR** button on every PR card: spawns a review thread in a fresh

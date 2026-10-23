@@ -11,6 +11,7 @@ import {
 import type { PluginThreadEventPayloads, PluginTurnFailedEvent } from "@get-bb/plugin-sdk";
 import type { ReadingPlan } from "./shared/reading-plan";
 import plugin, { adfToText, defaultSelected, githubRepoFromRemote, newLineRangesFromPatch, parseNarrative, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CodeReviewThread, type CommentApply, type DiffComment, type Dump, type Finding, type Narrative, type NarrativeStory, type PrComment, type Review, type StructuralDiff, type SymbolLookup, type Ticket, type TicketDiff } from "./server";
+import { LOOP_STOPPED } from "./shared/events";
 import { loopStateSchema, openFindingsClause, phaseChip } from "./shared/loop";
 
 type Host = ReturnType<typeof createFakePluginHost>;
@@ -427,6 +428,8 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
         get: async ({ threadId }: { threadId: string }) =>
           makeThreadResponse({ id: threadId, projectId: "proj_acme", environmentId: `env_${threadId}`, status: threadStatuses.get(threadId) ?? "idle" }),
         updatePluginMetadata: async () => ({}),
+        markRead: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, projectId: "proj_acme" }),
+        markUnread: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, projectId: "proj_acme" }),
         output: async ({ threadId }: { threadId: string }) => ({ output: threadOutputs.get(threadId) ?? null }),
         retry: async () => ({ ok: true, delivery: "sent", attempt: 2, turnRequestId: "req_retry" }),
         queue: { list: async () => [] },
@@ -2250,6 +2253,30 @@ describe("monitored review loop", () => {
       expect(await card()).toMatchObject({ columnId: "review", loop: { phase: "needs-you", reason: "clean", round: 1, attention: { level: "read", reasons: ["risk 3: lookup cache (cache.ts)"] } } }),
     );
     expect(phaseChip((await card()).loop!)?.label).toBe("ready · Read");
+  });
+
+  it("marks the card's thread read after a turn that hands the work to the board, and unread with an alert when the loop stops for the user", async () => {
+    await monitoredCard();
+    const marked = (method: "threads.markRead" | "threads.markUnread") => (current().harness.inspection.sdk.callsTo(method) as Array<[{ threadId: string }]>).map(([args]) => args.threadId);
+    const alerts = () => current().harness.inspection.realtimeSignals.filter((signal) => signal.channel === LOOP_STOPPED).map((signal) => signal.payload);
+    const cardIdle = () => current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_1", projectId: "proj_acme" }), lastAssistantText: "Done." });
+
+    // Stopping while building, without reporting ready, leaves something for the user to see.
+    await cardIdle();
+    expect(marked("threads.markRead")).toEqual([]);
+    await ready();
+    await cardIdle();
+    expect(marked("threads.markRead")).toEqual(["thr_1"]);
+
+    await recordChecks("thr_2", 0);
+    await classify("thr_3", 3);
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "reviewing", reviewId: expect.any(String) }));
+    expect(alerts()).toEqual([]);
+    await completeReview("thr_4", reviewBody(sha, []), sha);
+    await vi.waitFor(() => expect(marked("threads.markUnread")).toEqual(["thr_1"]));
+    expect(alerts()).toEqual([{ threadId: "thr_1", title: "Cache lookups", body: expect.stringContaining("Checked and reviewed clean at 0123456") }]);
+    // The board's own threads are hidden, so they never reach the unread list to begin with.
+    expect(marked("threads.markRead")).toEqual(["thr_1"]);
   });
 
   it("checks a round of only minor findings without reviewing it again, and ends clean with the disputed one left open", async () => {

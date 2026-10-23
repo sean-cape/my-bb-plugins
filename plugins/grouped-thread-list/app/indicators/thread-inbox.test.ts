@@ -47,13 +47,13 @@ describe("buildThreadInbox", () => {
     });
   });
 
-  it("leaves out automation runs and hidden threads", () => {
+  it("lists an unread automation run like any thread, and leaves out hidden threads", () => {
     expect(
       inbox([
         makeSidebarThread({ id: "thr_automation", originPluginId: "automations" }),
         makeSidebarThread({ id: "thr_hidden", isHidden: true }),
       ]),
-    ).toEqual({ needsYou: [], running: [], pinned: [] });
+    ).toEqual({ needsYou: ["thr_automation"], running: [], pinned: [] });
   });
 
   it("lists pinned roots in pin order, without their children", () => {

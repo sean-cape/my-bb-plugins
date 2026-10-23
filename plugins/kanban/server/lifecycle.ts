@@ -28,6 +28,7 @@ export function registerThreadLifecycle(ctx: KanbanContext, { board, dumps, tour
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
     // Skills like code-review fan out to background agents, and the thread idles between their reports; only the idle after the last one is final.
     if (thread.activeBackgroundAgentCount > 0) return;
+    loop.quietIdle(thread.id);
     if (dumps.handleIdle(thread.id, lastAssistantText)) return;
     if (tour.handleIdle(thread.id, lastAssistantText)) return;
     if (loop.handleIdle(thread.id, lastAssistantText)) return;

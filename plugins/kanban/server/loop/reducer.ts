@@ -109,7 +109,9 @@ export type LoopAction =
   /** A newer ready replaced the commit being checked, classified or reviewed, so the threads still on the old one stop; `reviewId` is the loop's review, null before it started. */
   | { type: "stop-superseded"; reviewId: string | null }
   /** The narrative the reading plan steps through; the service skips it when one is current. */
-  | { type: "spawn-narrative" };
+  | { type: "spawn-narrative" }
+  /** The loop stopped for the user, usually long after the card's thread last ended a turn, so nothing else tells them: back to unread, with an alert. */
+  | { type: "alert" };
 
 export interface LoopStep {
   state: LoopState;
@@ -130,7 +132,7 @@ const LEVEL_OVERRIDES_KEPT = 20;
 function needsYou(state: LoopState, reason: NeedsYouReason): LoopStep {
   return {
     state: { ...state, phase: "needs-you", reason },
-    actions: [{ type: "move", column: COLUMN.review }, ...(narrated(effectiveLevel(state)) && !UNREAD_STOPS.has(reason) ? [{ type: "spawn-narrative" as const }] : [])],
+    actions: [{ type: "move", column: COLUMN.review }, { type: "alert" }, ...(narrated(effectiveLevel(state)) && !UNREAD_STOPS.has(reason) ? [{ type: "spawn-narrative" as const }] : [])],
   };
 }
 
@@ -155,6 +157,9 @@ function finish(state: LoopState, pr: boolean): LoopStep {
 const waiting = (state: LoopState): boolean => state.monitored && state.phase === "needs-you";
 
 const running = (state: LoopState): boolean => state.phase === "checking" || state.phase === "classifying" || state.phase === "reviewing";
+
+/** The card's thread ended its turn handing the work to the board, or after landing it, so the turn needs nothing from the user. */
+export const passiveIdle = (state: LoopState): boolean => state.monitored && (running(state) || state.phase === "landed");
 
 function failuresInARow(state: LoopState): number {
   let count = 0;
@@ -251,7 +256,7 @@ function route(stopped: LoopState, base: LoopState, reviewId: string, open: Loop
   if (stopped.round >= LOOP_ROUND_CAP) return needsYou(stopped, "cap");
   // No narrative: the user only picks findings here, and the loop carries on once they have.
   if (stopped.gates.findings) {
-    return { state: { ...stopped, phase: "needs-you", reason: "findings", reviewId, openFindings: keptOpen, awaitingFindings: open }, actions: [{ type: "move", column: COLUMN.review }] };
+    return { state: { ...stopped, phase: "needs-you", reason: "findings", reviewId, openFindings: keptOpen, awaitingFindings: open }, actions: [{ type: "move", column: COLUMN.review }, { type: "alert" }] };
   }
   return loopRound(stopped, base, reviewId, open, keptOpen);
 }

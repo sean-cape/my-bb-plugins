@@ -1,5 +1,6 @@
 import type { Ticket } from "../../shared/board";
-import { defaultGates, effectiveLevel, fixingRound, parseLoopState, unansweredFindings, type AttentionLevel, type CheckCommand, type Evidence, type FindingAnswer, type LoopGates } from "../../shared/loop";
+import { LOOP_STOPPED, type LoopStoppedPayload } from "../../shared/events";
+import { defaultGates, effectiveLevel, fixingRound, parseLoopState, phaseChip, unansweredFindings, type AttentionLevel, type CheckCommand, type Evidence, type FindingAnswer, type LoopGates } from "../../shared/loop";
 import { readingPlan as buildReadingPlan, type ReadingPlan } from "../../shared/reading-plan";
 import type { BoardStore } from "../board";
 import type { CardThreads } from "../card-threads";
@@ -17,7 +18,7 @@ import type { Tour } from "../tour";
 import { errorMessage, shortId, threadTitle } from "../util";
 import { REVIEW_FAILED_PREFIX, REVIEW_SKILL_MISSING, reviewGaveUp } from "../reviews/prompts";
 import { cardPromptText, checksPrompt, classifyPrompt, commentsPromptText, fixPromptText } from "./prompts";
-import { reduce, type CardPrompt, type LoopAction, type LoopEvent } from "./reducer";
+import { passiveIdle, reduce, type CardPrompt, type LoopAction, type LoopEvent } from "./reducer";
 
 /** How long a loop review's thread that went idle without its report has to stay idle before the review counts as failed. */
 const REPORT_WAIT_MS = 10 * 60_000;
@@ -148,7 +149,32 @@ export function createLoop(
           bb.log.warn(`could not start a narrative for ticket ${ticketId}: ${errorMessage(error)}`);
         }
         return;
+      case "alert":
+        await alert(ticketId);
+        return;
     }
+  }
+
+  async function alert(ticketId: string): Promise<void> {
+    const ticket = getTicket(ticketId);
+    if (ticket.threadId === null || ticket.loop === null) return;
+    try {
+      await bb.sdk.threads.markUnread({ threadId: ticket.threadId });
+    } catch (error) {
+      bb.log.warn(`could not mark the thread of ticket ${ticketId} unread: ${errorMessage(error)}`);
+    }
+    const payload: LoopStoppedPayload = { threadId: ticket.threadId, title: ticket.title, body: phaseChip(ticket.loop)?.title ?? "Needs you" };
+    bb.realtime.publish(LOOP_STOPPED, payload);
+  }
+
+  /**
+   * A card thread's turn that handed the work to the board needs nothing from the user, so it is marked read: that
+   * keeps it out of the unread list, and the push plugin, which waits two seconds before sending, skips a read thread.
+   */
+  function quietIdle(threadId: string): void {
+    const row = stmts.byThread.get(threadId);
+    if (row === undefined || !passiveIdle(parseLoopState(row.loop_state))) return;
+    bb.sdk.threads.markRead({ threadId }).catch((error: unknown) => bb.log.warn(`could not mark card thread ${threadId} read: ${errorMessage(error)}`));
   }
 
   async function promptCard(ticketId: string, prompt: CardPrompt): Promise<void> {
@@ -562,7 +588,7 @@ export function createLoop(
     }
   }
 
-  return { reconcileOnLoad, setMonitored, setGates, proposePlan, approvePlan, approveFindings, answerFindings, reportReady, recordChecks, handleIdle, threadFailed, questionAsked, reviewFinished, accept, reportLanded, sendBack, rethink, pullIn, decideDispute, setLevel, readingPlan };
+  return { reconcileOnLoad, setMonitored, setGates, proposePlan, approvePlan, approveFindings, answerFindings, reportReady, recordChecks, handleIdle, quietIdle, threadFailed, questionAsked, reviewFinished, accept, reportLanded, sendBack, rethink, pullIn, decideDispute, setLevel, readingPlan };
 }
 
 export type Loop = ReturnType<typeof createLoop>;

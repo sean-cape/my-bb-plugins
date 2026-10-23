@@ -23,7 +23,7 @@ no default shortcut and can be bound in bb's keyboard settings.
 
 The picker's left column lists Open folder…, Unassociated (bb's
 built-in personal project), Pinned, and Unread (finished threads you haven't opened
-since their latest response, plus Claude sessions with a prompt running, across all projects; automation runs are left out), then the current project under a
+since their latest response, plus Claude sessions with a prompt running, across all projects; a running automation run is left out, and the server marks a run read when it finishes, so only a failed run or one you replied to shows), then the current project under a
 "Current" label, then the other standard projects under "Projects" by most
 recent activity, each showing how long ago it was last active. The picker opens with Unread selected.
 "Current" is where you are: the routed thread's project (by root ancestor),

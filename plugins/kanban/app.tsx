@@ -11,6 +11,7 @@ import { withErrorBoundary } from "./ui/error-boundary";
 import { TicketTab } from "./ui/ticket-details";
 import { BoardPage } from "./ui/board-page";
 import { BoardHeader } from "./ui/board-header";
+import { LoopAlerts } from "./ui/loop-alerts";
 import { OpenCardCount } from "./ui/open-card-count";
 import { SettingsSection } from "./ui/settings-section";
 import { PLUGIN_ICONS, pluginIcon } from "./ui/icons";
@@ -30,6 +31,7 @@ export default definePluginApp((app) => {
     fixedTabs: [{ ...TICKET_TAB, title: "Card", icon: "PanelRight", component: withErrorBoundary("card panel", TicketTab), layout: "padded" }],
     experimental_sidebarAccessory: OpenCardCount,
   });
+  app.slots.experimental_appOverlay({ id: "loop-alerts", component: LoopAlerts });
   app.slots.settingsSection({
     id: "github-sync",
     title: "GitHub sync",

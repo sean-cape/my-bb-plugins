@@ -1,4 +1,7 @@
-import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import {
+  createFakePluginHost,
+  makeThreadResponse,
+} from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 import plugin from "./server.js";
 import { defaultPreferences } from "./shared/preferences.js";
@@ -121,5 +124,65 @@ describe("prefs CLI", () => {
       key: "activeProject",
       value: null,
     });
+  });
+});
+
+describe("automation runs", () => {
+  async function loaded() {
+    const host = createFakePluginHost({
+      pluginId: "grouped-thread-list",
+      sdk: {
+        threads: {
+          markRead: async ({ threadId }: { threadId: string }) =>
+            makeThreadResponse({ id: threadId }),
+        },
+      },
+    });
+    await plugin(host.bb);
+    const run = (id: string, extra: Record<string, unknown> = {}) =>
+      makeThreadResponse({ id, originPluginId: "automations", ...extra });
+    const marked = () =>
+      (
+        host.harness.inspection.sdk.callsTo("threads.markRead") as Array<
+          [{ threadId: string }]
+        >
+      ).map(([args]) => args.threadId);
+    return { host, run, marked };
+  }
+
+  it("marks the run's own turn read when it ends, but not a later turn the user starts", async () => {
+    const { host, run, marked } = await loaded();
+    await host.harness.behavior.emitThreadEvent("thread.idle", {
+      thread: run("thr_run", { activeBackgroundAgentCount: 1 }),
+      lastAssistantText: null,
+    });
+    expect(marked()).toEqual([]);
+    await host.harness.behavior.emitThreadEvent("thread.idle", {
+      thread: run("thr_run"),
+      lastAssistantText: "Wrote the summary.",
+    });
+    expect(marked()).toEqual(["thr_run"]);
+    await host.harness.behavior.emitThreadEvent("thread.idle", {
+      thread: run("thr_run"),
+      lastAssistantText: "Answered.",
+    });
+    expect(marked()).toEqual(["thr_run"]);
+  });
+
+  it("leaves a failed run, and threads the user started, unread", async () => {
+    const { host, run, marked } = await loaded();
+    await host.harness.behavior.emitThreadEvent("thread.failed", {
+      thread: run("thr_failed"),
+      error: "Turn failed",
+    });
+    await host.harness.behavior.emitThreadEvent("thread.idle", {
+      thread: run("thr_failed"),
+      lastAssistantText: "Retried.",
+    });
+    await host.harness.behavior.emitThreadEvent("thread.idle", {
+      thread: makeThreadResponse({ id: "thr_mine" }),
+      lastAssistantText: "Done.",
+    });
+    expect(marked()).toEqual([]);
   });
 });

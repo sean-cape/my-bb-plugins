@@ -18,6 +18,10 @@ Build every plugin to be driven from the keyboard, with vim-style keys wherever 
 
 Build key handling on `bb-vim-keys` (`plugins/vim-mode/lib`; start with its [README](plugins/vim-mode/lib/README.md)): one keymap in vim notation, `useKeyScope`/`bindKeyScope` for a surface with a root, `bindKeys` or `useKeyHandler` for anything else (content scripts over bb's DOM, nested lists), and its row and index cursors, pickers, menu keys and search pieces, rather than another copy of the text-box checks and `gg` timers. Each plugin's tests assert `keymapConflicts` and `unboundHelpKeys` on its keymaps. If the library lacks something a plugin needs, add it to the library rather than working around it in the plugin.
 
+## Background threads
+
+A thread should reach the user's unread list, and send a push, only when it needs something from them. Board workers and similar threads the user never opens are spawned `visibility: "hidden"`, which keeps them out of both. A visible thread that also does passive work (a kanban card's thread handing a commit to the board, an automation run) is marked read with `bb.sdk.threads.markRead` by the plugin that owns it, in its `thread.idle` handler, as soon as a turn that needs nothing ends. The push plugin waits two seconds before sending and skips a thread read since, so don't await anything slow first. When the work later needs the user, mark the thread unread with `markUnread`. Don't filter such threads out in a list's UI or change their notification level instead.
+
 ## Finishing work
 
 When a plugin change is done, land it and install it locally without waiting to be asked:
