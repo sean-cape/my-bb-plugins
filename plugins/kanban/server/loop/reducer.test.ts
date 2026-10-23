@@ -207,6 +207,11 @@ describe("loop reducer", () => {
     // A failing check still goes back to the thread, and the next passing one ends the loop.
     const failed = run([answer({ F1: fixed, F2: fixed }), ready(fixSha), checks(1, fixSha), ready(sha), checks(0, sha)], polish.state);
     expect(failed.state).toMatchObject({ phase: "needs-you", reason: "clean", openFindings: [] });
+    // A minor left open beside the round, here deselected at the findings gate, stays listed after it.
+    const gated: LoopEvent[] = [{ type: "monitor", hasThread: true, gates: { ...noGates, findings: true } }, ready(), checks(0), classified(3), { type: "review-started", reviewId: "rev1" }];
+    const approved = run([...gated, reviewed("rev1", [finding("F1", "minor"), finding("F2", "minor")]), { type: "approve-findings", findingIds: ["F1"], pr: false }]);
+    expect(approved.state.rounds).toMatchObject([{ handed: ["F1"], polish: true }]);
+    expect(run([answer({ F1: fixed }), ready(fixSha), checks(0, fixSha)], approved.state).state).toMatchObject({ phase: "needs-you", reason: "clean", openFindings: [{ id: "F2" }] });
     // A round with a serious finding is reviewed again.
     expect(run([...reviewing, reviewed("rev1", [finding("F1", "minor"), finding("F2", "important")])]).state.rounds).toMatchObject([{ polish: false }]);
   });

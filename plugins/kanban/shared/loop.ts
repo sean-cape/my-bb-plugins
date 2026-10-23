@@ -141,7 +141,7 @@ export const loopRoundSchema = z.object({
   comments: z.number().int().default(0),
   /** Only minor findings, so the fix is checked but not reviewed again, and the loop ends after it. */
   polish: z.boolean().default(false),
-  /** A polish round's handed findings, which list the ones it disputed as left open when the loop ends. */
+  /** A polish round's handed findings and the ones already open beside them, listed as left open when the loop ends: those not handed, and the handed ones disputed. */
   findings: z.array(loopFindingSchema).default([]),
 });
 export type LoopRound = z.infer<typeof loopRoundSchema>;

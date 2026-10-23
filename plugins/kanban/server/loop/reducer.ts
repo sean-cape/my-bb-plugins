@@ -208,12 +208,12 @@ function loopSignals(state: LoopState): { rounds: number; disputes: number; chec
   };
 }
 
-/** The disputed findings of a polish round stay open as minors, since no re-review judges them. */
+/** A polish round's disputed findings stay open, since no re-review judges them, and so do the ones left open beside it. */
 function polished(state: LoopState, pr: boolean): LoopStep | null {
   const round = state.rounds.at(-1);
   if (round === undefined || !round.polish || round.reviewId !== state.reviewId) return null;
-  const disputed = new Set(round.handed.filter((id) => round.answers[id]?.answer === "disputed"));
-  return finish({ ...state, openFindings: [...state.openFindings, ...round.findings.filter((finding) => disputed.has(finding.id))] }, pr);
+  const left = round.findings.filter((finding) => !round.handed.includes(finding.id) || round.answers[finding.id]?.answer === "disputed");
+  return finish({ ...state, openFindings: [...state.openFindings, ...left] }, pr);
 }
 
 /** The level is recomputed when the loop stops after a review, with what the rounds and the last review showed. */
@@ -251,14 +251,15 @@ function route(stopped: LoopState, base: LoopState, reviewId: string, open: Loop
   if (stopped.gates.findings) {
     return { state: { ...stopped, phase: "needs-you", reason: "findings", reviewId, openFindings: keptOpen, awaitingFindings: open }, actions: [{ type: "move", column: COLUMN.review }] };
   }
-  return loopRound(stopped, base, reviewId, open);
+  return loopRound(stopped, base, reviewId, open, keptOpen);
 }
 
 /**
  * A round of only minor findings is a polish round: re-reviewing a few nits costs more than they are worth, so the
  * fix is checked and the loop then ends, with the level the review that found them computed.
  */
-function loopRound(stopped: LoopState, base: LoopState, reviewId: string, open: LoopFinding[]): LoopStep {
+/** `leftOpen` are the findings already open beside the round's, which a polish round keeps listed since no review carries them. */
+function loopRound(stopped: LoopState, base: LoopState, reviewId: string, open: LoopFinding[], leftOpen: LoopFinding[]): LoopStep {
   const round = stopped.round + 1;
   const findingIds = open.map((finding) => finding.id);
   const polish = open.every((finding) => finding.severity === "minor");
@@ -272,7 +273,7 @@ function loopRound(stopped: LoopState, base: LoopState, reviewId: string, open: 
       reviewId,
       heldFindings: [],
       awaitingFindings: [],
-      rounds: [...stopped.rounds, { reviewId, handed: findingIds, answers: {}, owner: "loop", comments: 0, polish, findings: polish ? open : [] }],
+      rounds: [...stopped.rounds, { reviewId, handed: findingIds, answers: {}, owner: "loop", comments: 0, polish, findings: polish ? [...open, ...leftOpen] : [] }],
     },
     actions: [
       { type: "move", column: COLUMN.inProgress },
@@ -318,7 +319,7 @@ function approveFindings(state: LoopState, findingIds: string[], pr: boolean): L
   const approved = state.awaitingFindings.filter((finding) => findingIds.includes(finding.id));
   const next = { ...state, awaitingFindings: [], openFindings: [...state.openFindings, ...state.awaitingFindings.filter((finding) => !findingIds.includes(finding.id))] };
   if (approved.length === 0) return finish(next, pr);
-  return loopRound(next, next, state.reviewId, approved);
+  return loopRound(next, next, state.reviewId, approved, next.openFindings);
 }
 
 export function reduce(state: LoopState, event: LoopEvent): LoopStep {
