@@ -123,7 +123,7 @@ for (const plugin of plugins) {
   const fromHere = installedSources.get(plugin.name) === `path:${plugin.dir}`;
   const loaded = fromHere ? run("bb", ["plugin", "reload", plugin.name]) : run("bb", ["plugin", "install", `path:${repo}`, "--plugin", plugin.name, "--yes"]);
   if (!loaded.ok) fail(plugin, fromHere ? "reload" : "install", loaded.output);
-  else console.log(`${plugin.name}: ${fromHere ? "rebuilt and reloaded" : "installed"}`);
+  else console.log(`${plugin.name}: ${fromHere ? (prebuilt(plugin) ? "reloaded" : "rebuilt and reloaded") : "installed"}`);
 }
 
 const linked = run("node", [join(repo, "scripts", "link-claude-config.mjs")]);
