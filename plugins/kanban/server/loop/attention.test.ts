@@ -26,6 +26,13 @@ describe("attention level", () => {
     expect(attentionLevel({ ...quiet, files: [{ path: "src/list.ts", risk: 2, role: "key", lines: 1200, note: "" }] })).toMatchObject({ level: "scrutinize", reasons: expect.arrayContaining(["1200 lines changed"]) });
   });
 
+  it("reads ordinary logic under 100 lines at a glance, and longer or riskier changes closer", () => {
+    const logic = (lines: number, risk = 3) => ({ ...quiet, files: [{ path: "src/cache.ts", risk, role: "key" as const, lines, note: "lookup cache" }] });
+    expect(attentionLevel(logic(99))).toEqual({ level: "glance", reasons: ["risk 3 in 99 lines: lookup cache (src/cache.ts)"] });
+    expect(attentionLevel(logic(100))).toEqual({ level: "read", reasons: ["risk 3: lookup cache (src/cache.ts)"] });
+    expect(attentionLevel(logic(20, 4)).level).toBe("read");
+  });
+
   it("is raised by a path rule matching a changed file", () => {
     expect(attentionLevel({ ...quiet, pathRules: [{ glob: "src/**", level: "scrutinize" }] })).toMatchObject({
       level: "scrutinize",

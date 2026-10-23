@@ -114,12 +114,12 @@ export function commentsPromptText(ticket: Ticket, body: string): string {
  * A fix round: the review's findings triaged apply, which the card's thread fixes in one commit before reporting ready.
  * `round` is null for a round the user started, by pulling a finding back in or upholding a dispute.
  */
-export function fixPromptText(ticket: Ticket, round: number | null, reviewedCommit: string | null, findings: Finding[]): string {
+export function fixPromptText(ticket: Ticket, round: number | null, reviewedCommit: string | null, findings: Finding[], polish = false): string {
   const commit = ticket.pr === null ? "Commit the fixes on your branch (do not push)" : "Commit the fixes and push them to the PR branch (never force-push)";
   return [
     `The board's code review${reviewedCommit === null ? "" : ` of commit ${reviewedCommit}`} found ${findings.length === 1 ? "a finding" : `${findings.length} findings`} to fix in this change, "${ticket.title}". ${round === null ? "The user sent them to fix themselves, overruling triage or the dispute you made, so fix them rather than disputing again; this round doesn't count toward the loop's cap." : `This is round ${round} of the review loop.`}`,
     "",
-    "Fix exactly these findings, and nothing beyond them. A finding's locations are every instance of its bug class: fix the class in full, at every instance, but add no refactors, features or clean-ups the findings don't ask for. The next review checks that the fix commits stay within these findings.",
+    `Fix exactly these findings, and nothing beyond them. A finding's locations are every instance of its bug class: fix the class in full, at every instance, but add no refactors, features or clean-ups the findings don't ask for. ${polish ? "These are all minor, so the board re-runs the checks on the fix but doesn't review it again." : "The next review checks that the fix commits stay within these findings."}`,
     "",
     ...findingLines(findings),
     "Answer every finding before reporting ready: `bb kanban answer F1,F3 fixed` for the ones you fixed, and `bb kanban answer F2 disputed --reason \"<why>\"` for one you are sure is wrong or not this change's to fix, which you then leave as it is. The next review judges each dispute; one it rejects goes to the user, so dispute only with a reason that holds up.",

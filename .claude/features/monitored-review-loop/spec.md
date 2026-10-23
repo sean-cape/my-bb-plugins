@@ -253,6 +253,8 @@ flowchart LR
 - **Default selection** for manual applies becomes the findings triaged apply. This replaces the importance/scope heuristic. Old reviews without triage keep the heuristic.
 - **Routing**, decided in the reducer:
   - **Start a fix round:** in the first round, any finding triaged apply, whatever its severity. After it, only a critical or important finding starts a round, and the open minors go with it; a re-review left with only minors ends the loop as if clean, with the minors listed, as does reaching the cap with only minors open. All of a round's findings go in one fix prompt.
+  - **Polish rounds:** a round whose findings are all minor is checked but not re-reviewed; the loop ends clean once its checks pass, with the minors the thread disputed listed as open.
+  - **Size:** ordinary logic (risk 3) under 100 changed lines is Glance, so it gets a Quick review; a check failure under a command the thread then replaced doesn't count toward the level.
   - **Severity floor:** the re-reviews after the first round ask the code-review skill for critical and important findings only, skipping the style finder, since a new minor can't start a round there.
   - **Deferred findings:** listed with make-a-card, never routed. A deferred critical finding raises the attention level to at least Read.
   - **Dropped findings:** listed collapsed with their reasons, never routed.

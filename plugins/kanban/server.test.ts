@@ -2052,7 +2052,7 @@ describe("monitored review loop", () => {
 
   /** The classify thread `threadId` scores every changed file `risk`. */
   async function classify(threadId: string, risk: number): Promise<void> {
-    const body = ["Scored.", "```json kanban-classify", JSON.stringify({ files: [{ path: "cache.ts", risk, role: "key", lines: 40, note: "lookup cache" }] }), "```"].join("\n");
+    const body = ["Scored.", "```json kanban-classify", JSON.stringify({ files: [{ path: "cache.ts", risk, role: "key", lines: 150, note: "lookup cache" }] }), "```"].join("\n");
     await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadId, projectId: "proj_acme" }), lastAssistantText: body });
   }
   const ready = (commit = sha, ...extra: string[]) => current().harness.behavior.runCli(["ready", "--commit", commit, "--evidence", evidence, ...extra], ctx("thr_1"));
@@ -2198,7 +2198,7 @@ describe("monitored review loop", () => {
     await completeReview(
       "thr_4",
       reviewBody(sha, [
-        { id: "F1", severity: "minor", title: "Misleading name", locations: [{ file: "cache.ts", startLine: 3 }], confidence: 90, triage: { decision: "apply", reason: "" } },
+        { id: "F1", severity: "important", title: "Misleading name", locations: [{ file: "cache.ts", startLine: 3 }], confidence: 90, triage: { decision: "apply", reason: "" } },
         { id: "F2", severity: "important", title: "No eviction", locations: [], confidence: 90, triage: { decision: "defer", reason: "separate work" } },
         { id: "F3", severity: "critical", title: "Old race", locations: [], confidence: 90, preExisting: true },
       ]),
@@ -2229,6 +2229,24 @@ describe("monitored review loop", () => {
       expect(await card()).toMatchObject({ columnId: "review", loop: { phase: "needs-you", reason: "clean", round: 1, attention: { level: "read", reasons: ["risk 3: lookup cache (cache.ts)"] } } }),
     );
     expect(phaseChip((await card()).loop!)?.label).toBe("ready · Read");
+  });
+
+  it("checks a round of only minor findings without reviewing it again, and ends clean with the disputed one left open", async () => {
+    await reviewingCard();
+    const apply = { confidence: 90, triage: { decision: "apply", reason: "" } };
+    await idle("thr_4", reviewBody(sha, [
+      { id: "F1", severity: "minor", title: "Misleading name", locations: [], ...apply },
+      { id: "F2", severity: "minor", title: "Magic number", locations: [], ...apply },
+    ]));
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "fixing", rounds: [{ handed: ["F1", "F2"], polish: true }] }));
+    await current().harness.behavior.runCli(["answer", "F1", "fixed"], ctx("thr_1"));
+    await current().harness.behavior.runCli(["answer", "F2", "disputed", "--reason", "The number is named two lines up"], ctx("thr_1"));
+    await ready(fixSha);
+    const spawnedBefore = spawned.length;
+    // The fix's checks thread is the last one spawned.
+    await recordChecks(`thr_${spawned.length}`, 0);
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "clean", commit: fixSha, openFindings: [{ id: "F2", severity: "minor", title: "Magic number" }] }));
+    expect(spawned).toHaveLength(spawnedBefore);
   });
 
   it("takes the card thread's dispute to the re-review, leaves it unapplied, and escalates a rejected important one", async () => {

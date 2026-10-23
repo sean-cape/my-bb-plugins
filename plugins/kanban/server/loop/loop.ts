@@ -160,7 +160,7 @@ export function createLoop(
       if (row === undefined) return;
       const review = rowToReview(row);
       const findings = (review.report?.findings ?? []).filter((finding) => prompt.findingIds.includes(finding.id));
-      text = fixPromptText(ticket, prompt.byUser === true ? null : prompt.round, review.commitSha, findings);
+      text = fixPromptText(ticket, prompt.byUser === true ? null : prompt.round, review.commitSha, findings, prompt.polish === true);
     } else if (prompt.kind === "comments") {
       const comments = diffComments.pendingLocalComments(ticket);
       if (comments.length === 0) return;
@@ -440,7 +440,7 @@ export function createLoop(
 
   async function recordChecks(run: ChecksRunRow, exitCode: number, outputTail: string): Promise<void> {
     stmts.completeChecksRun.run(exitCode, outputTail, Date.now(), run.id);
-    await dispatch(run.ticket_id, { type: "checks-result", commit: run.commit_sha, exitCode, outputTail });
+    await dispatch(run.ticket_id, { type: "checks-result", commit: run.commit_sha, exitCode, outputTail, pr: getTicket(run.ticket_id).pr !== null });
   }
 
   /** A checks thread that goes idle without recording a result never ran the checks; a classify thread hands its scores back in its final message. */

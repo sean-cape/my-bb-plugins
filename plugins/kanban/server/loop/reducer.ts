@@ -43,7 +43,7 @@ export type LoopEvent =
   | { type: "approve-plan"; plan: string }
   /** The card's thread committed its work and says it's verified. */
   | { type: "ready"; commit: string; evidence: Evidence; checkCommand: CheckCommand }
-  | { type: "checks-result"; commit: string; exitCode: number; outputTail: string }
+  | { type: "checks-result"; commit: string; exitCode: number; outputTail: string; pr: boolean }
   /** `pathRules` are the project's, at the time. */
   | { type: "classified"; commit: string; classification: Classification; pathRules: PathRule[] }
   | { type: "review-started"; reviewId: string }
@@ -83,8 +83,8 @@ export type CardPrompt =
   /** `edited` when the user changed the plan the thread proposed, or wrote one it never proposed. */
   | { kind: "plan-approved"; plan: string; edited: boolean }
   | { kind: "checks-failed"; commit: string; command: string; exitCode: number; outputTail: string }
-  /** `byUser` marks a round the user started, which `round` doesn't count. */
-  | { kind: "fix"; round: number; reviewId: string; findingIds: string[]; byUser?: true }
+  /** `byUser` marks a round the user started, which `round` doesn't count; `polish` one the loop won't review again. */
+  | { kind: "fix"; round: number; reviewId: string; findingIds: string[]; byUser?: true; polish?: true }
   /** The user's unsent diff comments, which the service reads when it sends them. */
   | { kind: "comments" }
   /** `auto` when the auto-accept gate accepted the change, not the user. */
@@ -198,12 +198,22 @@ function classified(state: LoopState, commit: string, classification: Classifica
   return { state: next, actions: [reviewAction(next, commit)] };
 }
 
+/** A failure under a check command the thread later replaced was the command's, not the code's, so it isn't a signal. */
 function loopSignals(state: LoopState): { rounds: number; disputes: number; checkFailures: number } {
+  const command = state.checkCommand?.command ?? null;
   return {
     rounds: state.round,
     disputes: state.rounds.reduce((sum, round) => sum + Object.values(round.answers).filter((answer) => answer.answer === "disputed").length, 0),
-    checkFailures: state.checks.filter((outcome) => !outcome.passed).length,
+    checkFailures: state.checks.filter((outcome) => !outcome.passed && (outcome.command === null || outcome.command === command)).length,
   };
+}
+
+/** The disputed findings of a polish round stay open as minors, since no re-review judges them. */
+function polished(state: LoopState, pr: boolean): LoopStep | null {
+  const round = state.rounds.at(-1);
+  if (round === undefined || !round.polish || round.reviewId !== state.reviewId) return null;
+  const disputed = new Set(round.handed.filter((id) => round.answers[id]?.answer === "disputed"));
+  return finish({ ...state, openFindings: [...state.openFindings, ...round.findings.filter((finding) => disputed.has(finding.id))] }, pr);
 }
 
 /** The level is recomputed when the loop stops after a review, with what the rounds and the last review showed. */
@@ -244,14 +254,29 @@ function route(stopped: LoopState, base: LoopState, reviewId: string, open: Loop
   return loopRound(stopped, base, reviewId, open);
 }
 
+/**
+ * A round of only minor findings is a polish round: re-reviewing a few nits costs more than they are worth, so the
+ * fix is checked and the loop then ends, with the level the review that found them computed.
+ */
 function loopRound(stopped: LoopState, base: LoopState, reviewId: string, open: LoopFinding[]): LoopStep {
   const round = stopped.round + 1;
   const findingIds = open.map((finding) => finding.id);
+  const polish = open.every((finding) => finding.severity === "minor");
   return {
-    state: { ...base, phase: "fixing", reason: null, round, reviewId, heldFindings: [], awaitingFindings: [], rounds: [...stopped.rounds, { reviewId, handed: findingIds, answers: {}, owner: "loop", comments: 0 }] },
+    state: {
+      ...base,
+      ...(polish ? { attention: stopped.attention } : {}),
+      phase: "fixing",
+      reason: null,
+      round,
+      reviewId,
+      heldFindings: [],
+      awaitingFindings: [],
+      rounds: [...stopped.rounds, { reviewId, handed: findingIds, answers: {}, owner: "loop", comments: 0, polish, findings: polish ? open : [] }],
+    },
     actions: [
       { type: "move", column: COLUMN.inProgress },
-      { type: "prompt-card", prompt: { kind: "fix", round, reviewId, findingIds } },
+      { type: "prompt-card", prompt: { kind: "fix", round, reviewId, findingIds, ...(polish ? { polish: true as const } : {}) } },
     ],
   };
 }
@@ -265,7 +290,7 @@ function userRound(state: LoopState, reviewId: string, findingIds: string[]): Lo
       reason: null,
       humanRounds: state.humanRounds + 1,
       heldFindings: [],
-      rounds: [...state.rounds, { reviewId, handed: findingIds, answers: {}, owner: "user", comments: 0 }],
+      rounds: [...state.rounds, { reviewId, handed: findingIds, answers: {}, owner: "user", comments: 0, polish: false, findings: [] }],
     },
     actions: [
       { type: "move", column: COLUMN.inProgress },
@@ -339,9 +364,11 @@ export function reduce(state: LoopState, event: LoopEvent): LoopStep {
     case "checks-result": {
       if (state.phase !== "checking" || state.commit !== event.commit) return stay(state);
       const passed = event.exitCode === 0;
-      const recorded = { ...state, checks: [...state.checks, { commit: event.commit, exitCode: event.exitCode, passed }] };
+      const recorded = { ...state, checks: [...state.checks, { commit: event.commit, exitCode: event.exitCode, passed, command: state.checkCommand?.command ?? null }] };
       if (!state.monitored) return stay({ ...recorded, phase: "idle" });
       // Only a change not yet classified is, so the user's rounds don't classify again; a rethink clears the level.
+      const polish = passed ? polished(recorded, event.pr) : null;
+      if (polish !== null) return polish;
       if (passed && state.attention === null) return { state: { ...recorded, phase: "classifying", reason: null, retries: 0 }, actions: [{ type: "spawn-classify", commit: event.commit }] };
       if (passed) {
         return { state: { ...recorded, phase: "reviewing", reason: null, reviewId: null, retries: 0 }, actions: [reviewAction(state, event.commit)] };
@@ -442,7 +469,7 @@ export function reduce(state: LoopState, event: LoopEvent): LoopStep {
     case "send-back": {
       if (!waiting(state) || event.comments === 0) return stay(state);
       // Logged as a round on the last review, so the next review is the incremental one of what the comments changed.
-      const rounds = state.reviewId === null ? state.rounds : [...state.rounds, { reviewId: state.reviewId, handed: [], answers: {}, owner: "user" as const, comments: event.comments }];
+      const rounds = state.reviewId === null ? state.rounds : [...state.rounds, { reviewId: state.reviewId, handed: [], answers: {}, owner: "user" as const, comments: event.comments, polish: false, findings: [] }];
       return {
         state: { ...state, phase: "building", reason: null, humanRounds: state.humanRounds + 1, heldFindings: [], awaitingFindings: [], rounds },
         actions: [

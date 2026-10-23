@@ -7,7 +7,7 @@ const sha = "0123456789abcdef0123456789abcdef01234567";
 const fixSha = "fedcba9876543210fedcba9876543210fedcba98";
 const evidence = { commands: [{ command: "pnpm test", exitCode: 0, outputTail: "42 passed" }], screenshots: [] };
 const ready = (commit = sha): LoopEvent => ({ type: "ready", commit, evidence, checkCommand: { command: "pnpm check", source: "project" } });
-const checks = (exitCode: number, commit = sha): LoopEvent => ({ type: "checks-result", commit, exitCode, outputTail: exitCode === 0 ? "ok" : "1 failed" });
+const checks = (exitCode: number, commit = sha): LoopEvent => ({ type: "checks-result", commit, exitCode, outputTail: exitCode === 0 ? "ok" : "1 failed", pr: false });
 
 const finding = (
   id: string,
@@ -31,7 +31,7 @@ const answer = (answers: Record<string, FindingAnswer>): LoopEvent => ({ type: "
 const fixed = { answer: "fixed" } as const;
 const disputed = { answer: "disputed", reason: "The cache is per-request" } as const;
 const reviewed = (reviewId: string, findings: ReviewedFinding[], notCovered: string[] = []): LoopEvent => ({ type: "review-completed", reviewId, findings, notCovered, pathRules: [], pr: false });
-const file = (path: string, risk: number, lines = 10) => ({ path, risk, role: "key" as const, lines, note: "" });
+const file = (path: string, risk: number, lines = 150) => ({ path, risk, role: "key" as const, lines, note: "" });
 const classified = (risk = 2, pathRules: PathRule[] = []): LoopEvent => ({ type: "classified", commit: sha, classification: { files: [file("src/a.ts", risk)] }, pathRules });
 /** A monitored card whose first ready commit passed its checks, was classified, and whose review `rev1` started. */
 const reviewing: LoopEvent[] = [{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(0), classified(3), { type: "review-started", reviewId: "rev1" }];
@@ -134,7 +134,7 @@ describe("loop reducer", () => {
     expect(state).toMatchObject({ phase: "fixing", round: 1, reviewId: "rev1", rounds: [{ reviewId: "rev1", handed: ["F1"] }] });
     expect(actions[5]).toEqual([
       { type: "move", column: "in-progress" },
-      { type: "prompt-card", prompt: { kind: "fix", round: 1, reviewId: "rev1", findingIds: ["F1"] } },
+      { type: "prompt-card", prompt: { kind: "fix", round: 1, reviewId: "rev1", findingIds: ["F1"], polish: true } },
     ]);
 
     // Nothing to apply is clean, even with deferred, dropped and pre-existing findings standing.
@@ -193,6 +193,30 @@ describe("loop reducer", () => {
     expect(afterFirst([finding("F1", "minor"), finding("F2", "important")]).state).toMatchObject({ phase: "fixing", round: 2, rounds: [{}, { reviewId: "rev2", handed: ["F1", "F2"] }] });
     // The first review's minors still start a round of their own.
     expect(run([...reviewing, reviewed("rev1", [finding("F1", "minor")])]).state).toMatchObject({ phase: "fixing", round: 1 });
+  });
+
+  it("checks a round of only minor findings and ends without a re-review, leaving the disputed ones open", () => {
+    const polish = run([...reviewing, reviewed("rev1", [finding("F1", "minor"), finding("F2", "minor")], ["the drag preview"])]);
+    expect(polish.state).toMatchObject({ phase: "fixing", round: 1, rounds: [{ handed: ["F1", "F2"], polish: true }] });
+    expect(polish.actions.at(-1)).toContainEqual({ type: "prompt-card", prompt: { kind: "fix", round: 1, reviewId: "rev1", findingIds: ["F1", "F2"], polish: true } });
+    // The level the review that found them computed holds, since no later review recomputes it.
+    expect(polish.state.attention?.reasons).toContain("1 thing the checks don't cover");
+    const { state, actions } = run([answer({ F1: fixed, F2: disputed }), ready(fixSha), checks(0, fixSha)], polish.state);
+    expect(state).toMatchObject({ phase: "needs-you", reason: "clean", commit: fixSha, openFindings: [{ id: "F2", severity: "minor", title: "Finding F2" }] });
+    expect(actions.at(-1)).not.toContainEqual(expect.objectContaining({ type: "spawn-review" }));
+    // A failing check still goes back to the thread, and the next passing one ends the loop.
+    const failed = run([answer({ F1: fixed, F2: fixed }), ready(fixSha), checks(1, fixSha), ready(sha), checks(0, sha)], polish.state);
+    expect(failed.state).toMatchObject({ phase: "needs-you", reason: "clean", openFindings: [] });
+    // A round with a serious finding is reviewed again.
+    expect(run([...reviewing, reviewed("rev1", [finding("F1", "minor"), finding("F2", "important")])]).state.rounds).toMatchObject([{ polish: false }]);
+  });
+
+  it("doesn't count a failure under a check command the thread then replaced toward the level", () => {
+    const replaced: LoopEvent = { type: "ready", commit: sha, evidence, checkCommand: { command: "cd app && pnpm check", source: "agent" } };
+    const { state } = run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(1), replaced, checks(0), classified(2)]);
+    expect(state.attention).toEqual({ level: "glance", reasons: ["risk 2: src/a.ts"] });
+    const same = run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), checks(1), ready(), checks(0), classified(2)]);
+    expect(same.state.attention).toEqual({ level: "read", reasons: ["risk 2: src/a.ts", "checks failed once"] });
   });
 
   describe("answers and disputes", () => {

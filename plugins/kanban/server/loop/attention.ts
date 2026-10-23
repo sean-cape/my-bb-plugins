@@ -19,6 +19,8 @@ const RANK: Record<AttentionLevel, number> = { glance: 0, read: 1, scrutinize: 2
 /** Lines added and removed past which a change needs a closer look. */
 const READ_LINES = 300;
 const SCRUTINIZE_LINES = 1000;
+/** A change this small with ordinary logic at most reads at a glance, since a quick review covers it. */
+const SMALL_LINES = 100;
 
 function riskLevel(risk: number): AttentionLevel {
   return risk >= 5 ? "scrutinize" : risk >= 3 ? "read" : "glance";
@@ -50,8 +52,9 @@ export function attentionLevel(signals: AttentionSignals): Attention {
     raised.push({ level: "read", reason: "the files' risk wasn't classified" });
   } else if (files.length > 0) {
     const riskiest = files.reduce((top, file) => (file.risk > top.risk ? file : top));
-    raised.push({ level: riskLevel(riskiest.risk), reason: `risk ${riskiest.risk}: ${riskiest.note === "" ? riskiest.path : `${riskiest.note} (${riskiest.path})`}` });
     const lines = files.reduce((sum, file) => sum + file.lines, 0);
+    const level = riskiest.risk === 3 && lines < SMALL_LINES ? "glance" : riskLevel(riskiest.risk);
+    raised.push({ level, reason: `risk ${riskiest.risk}${level === "glance" && riskiest.risk === 3 ? ` in ${plural(lines, "line")}` : ""}: ${riskiest.note === "" ? riskiest.path : `${riskiest.note} (${riskiest.path})`}` });
     if (lines > READ_LINES) raised.push({ level: lines > SCRUTINIZE_LINES ? "scrutinize" : "read", reason: `${lines} lines changed` });
     for (const rule of signals.pathRules) {
       const matched = files.find((file) => globMatches(rule.glob, file.path));

@@ -76,7 +76,8 @@ export const checkCommandSchema = z.object({ command: z.string().min(1), source:
 export type CheckCommand = z.infer<typeof checkCommandSchema>;
 
 /** One re-run of the checks, as the loop remembers it. */
-export const checksOutcomeSchema = z.object({ commit: z.string(), exitCode: z.number().int(), passed: z.boolean() });
+/** `command` is the check command that ran; null in outcomes stored before it was kept. */
+export const checksOutcomeSchema = z.object({ commit: z.string(), exitCode: z.number().int(), passed: z.boolean(), command: z.string().nullable().default(null) });
 export type ChecksOutcome = z.infer<typeof checksOutcomeSchema>;
 
 /** The classify thread's score of one changed file. */
@@ -138,6 +139,10 @@ export const loopRoundSchema = z.object({
   answers: z.record(z.string(), findingAnswerSchema).default({}),
   owner: z.enum(["loop", "user"]).default("loop"),
   comments: z.number().int().default(0),
+  /** Only minor findings, so the fix is checked but not reviewed again, and the loop ends after it. */
+  polish: z.boolean().default(false),
+  /** A polish round's handed findings, which list the ones it disputed as left open when the loop ends. */
+  findings: z.array(loopFindingSchema).default([]),
 });
 export type LoopRound = z.infer<typeof loopRoundSchema>;
 

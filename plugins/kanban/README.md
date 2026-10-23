@@ -150,7 +150,11 @@ its PR is reviewed and its review findings and comments are handed to agents.
   first passing checks start a short hidden classify thread that scores each
   changed file's risk (1–5) and role; with the project's path rules, it sets
   the attention level (Glance, Read or Scrutinize, with its reasons), which
-  picks the review's depth: Quick, Standard or Deep. A classify thread that
+  picks the review's depth: Quick, Standard or Deep. Ordinary logic (risk 3)
+  under 100 changed lines counts as Glance, so a small change gets a Quick
+  review, and a failing check counts toward the level only while the thread
+  keeps the same check command (a failure it fixed by changing the command
+  was the command's, not the code's). A classify thread that
   fails twice leaves the review at Standard. Failing checks go back to the
   card's thread with the output and no review is run, and a second failure in
   a row stops the loop at Needs you. Every finding the review triaged apply,
@@ -167,7 +171,10 @@ its PR is reviewed and its review findings and comments are handed to agents.
   stops it with reason "not converging". A clean review moves the card to
   Needs you. Minor findings start the first round like any other, but after
   it only a critical or important finding starts another (the open minors go
-  with it); a re-review left with only minors ends clean with them listed.
+  with it); a re-review left with only minors ends clean with them listed. A
+  round of only minor findings is a polish round: its fix is checked but not
+  reviewed again, and the loop ends clean once the checks pass, listing the
+  minors the thread disputed as left open.
   After three fix rounds the loop stops: at Needs you with reason "cap" while
   a critical or important finding is open, or as clean with the open minors
   listed. A checks or review thread that fails (after a review's resumes), is
