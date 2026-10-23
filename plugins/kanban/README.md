@@ -590,7 +590,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   summary bar counts them and the Conversation view (`gc`) lists every thread
   under the review it was submitted in, between the PR's summary,
   description, commits, comments, reviews, events and merge status as on
-  GitHub's Conversation tab (read with one GraphQL query as the view opens), each
+  GitHub's Conversation tab (read with one GraphQL query as the view opens;
+  comments posted, edited, deleted or reacted to there go to GitHub at once), each
   over the hunk GitHub stored for it (synced with each comment's original
   lines and review), with Unresolve (`r`) to reopen a resolved one;
   the card panel's PR comments still list them too. Reply in

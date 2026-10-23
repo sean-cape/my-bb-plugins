@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ReactNode } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import { commitRangeKey, type ConversationEvent, type DiffComment, type DiffDelta, type DiffFile, type SemanticChange, type SymbolLookup } from "../types";
+import { commitRangeKey, type CommentMeta, type ConversationEvent, type DiffComment, type DiffDelta, type DiffFile, type ReactionContent, type SemanticChange, type SymbolLookup } from "../types";
 import { otherLayout, readPreference, requestReload, setDiffPreferences, useDiffInstance, useDiffPreferences, writePreference } from "./state";
 import { DEFAULT_LABELS, type DiffSource, type DiffViewLabels } from "./source";
 import { CHANGES_STRIP, ChangesStrip, useDelta } from "./delta-strip";
@@ -55,6 +55,8 @@ import { ConversationView } from "./conversation/conversation-view";
 import { CONVERSATION_KEY_HELP, CONVERSATION_KEYMAP, type ConversationCommand } from "./conversation/conversation-keymap";
 import { useConversationData } from "./conversation/use-conversation-data";
 import { useConversationMode } from "./conversation/use-conversation-mode";
+import { useConversationWriting } from "./conversation/use-conversation-writing";
+import { EMOJI, REACTION_ORDER, reactionName } from "./conversation/comment-meta";
 import { errorMessage, groupByPath, plural } from "./format";
 import { cn } from "./utils";
 import { rangesOverlap } from "./ranges";
@@ -248,7 +250,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   const { viewed, collapsed, markViewed: markFileViewed, toggleCollapsed, expand, setCollapsedPaths } = useFileMarks(source, diff, (file) => hideWhitespace && whitespaceOnly.has(file.path));
   const reader = useNarrativeReader({ story: narrative.story, instanceKey, currentPaths, viewed });
   const [keys] = useState(createReviewKeys);
-  const [overlay, setOverlay] = useState<{ kind: "help" } | { kind: "files" } | { kind: "steps" } | { kind: "symbols"; names: string[]; pick: (name: string) => void } | { kind: "blame"; path: string; span: LineSpan; anchor: DOMRect | null } | { kind: "commits" } | { kind: "search" } | { kind: "fileFilter"; anchor: DOMRect } | null>(null);
+  const [overlay, setOverlay] = useState<{ kind: "help" } | { kind: "files" } | { kind: "steps" } | { kind: "symbols"; names: string[]; pick: (name: string) => void } | { kind: "blame"; path: string; span: LineSpan; anchor: DOMRect | null } | { kind: "commits" } | { kind: "search" } | { kind: "fileFilter"; anchor: DOMRect } | { kind: "reactions"; meta: CommentMeta } | null>(null);
   const [lastSearch, setLastSearch] = useState<string | null>(null);
   const [active] = useState(createActivePath);
   const [composer, setComposer] = useState<({ path: string } & ComposerAnchor) | null>(null);
@@ -767,6 +769,8 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     () => conversationItems({ threads: comments.allThreads, github: comments.github, commits: commits?.commits ?? [], events: conversationEvents }),
     [comments.allThreads, comments.github, commits, conversationEvents],
   );
+  const openReactions = useCallback((meta: CommentMeta) => setOverlay({ kind: "reactions", meta }), []);
+  const conversationWriter = useConversationWriting({ actions: source.conversationActions, notify, openReactions });
   const conversationMode = useConversationMode({
     keys,
     mode,
@@ -774,6 +778,8 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     available: conversationAvailable,
     items: conversation,
     pullRequest: conversationData.data?.pullRequest ?? null,
+    data: conversationData.data,
+    writer: conversationWriter,
     narrativeAvailable,
     enterNarrative,
     threadById,
@@ -1262,6 +1268,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                   onToggle={conversationMode.toggle}
                   onOpenCommit={conversationMode.openCommit}
                   onOpenThread={conversationMode.openThread}
+                  writing={conversationWriter.writing}
                 />
               ) : (
                 <>
@@ -1408,6 +1415,25 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                     reader.setLastSearch(query.trim() === "" ? null : query);
                     const [chapterIndex, stepIndex] = id.split(":").map(Number);
                     turnTo({ chapter: chapterIndex!, step: stepIndex! });
+                  }}
+                  onClose={closeOverlay}
+                />
+              ) : null}
+              {overlay?.kind === "reactions" ? (
+                <Picker
+                  label="React"
+                  placeholder="React with…"
+                  rank={(query) =>
+                    REACTION_ORDER.filter((content) => reactionName(content).includes(query.toLowerCase())).map((content) => {
+                      const mine = overlay.meta.reactions.some((reaction) => reaction.content === content && reaction.mine);
+                      return { id: content, label: `${EMOJI[content]}  ${reactionName(content)}`, detail: mine ? "yours: Enter takes it back" : undefined };
+                    })
+                  }
+                  onPick={(content) => {
+                    closeOverlay();
+                    const reaction = content as ReactionContent;
+                    const mine = overlay.meta.reactions.some((entry) => entry.content === reaction && entry.mine);
+                    if (overlay.meta.subject !== null) conversationWriter.writing?.react(overlay.meta.subject, reaction, !mine);
                   }}
                   onClose={closeOverlay}
                 />

@@ -133,7 +133,7 @@ const reactionSchema = z.object({
 });
 export type Reaction = z.infer<typeof reactionSchema>;
 
-export const commentMetaSchema = z.object({ association: z.string().nullable(), edited: z.boolean(), minimized: z.string().nullable(), reactions: z.array(reactionSchema) });
+export const commentMetaSchema = z.object({ association: z.string().nullable(), edited: z.boolean(), minimized: z.string().nullable(), reactions: z.array(reactionSchema), subject: z.string().nullable() });
 export type CommentMeta = z.infer<typeof commentMetaSchema>;
 
 const checkOutcomeSchema = z.enum(["success", "failure", "pending", "neutral", "skipped"]);
@@ -162,6 +162,7 @@ export const pullRequestSummarySchema = z.object({
 export type PullRequestSummary = z.infer<typeof pullRequestSummarySchema>;
 
 export const conversationDataSchema = z.object({
+  viewer: z.string().nullable(),
   pullRequest: pullRequestSummarySchema.nullable(),
   events: z.array(conversationEventSchema),
   comments: z.record(z.string(), commentMetaSchema),

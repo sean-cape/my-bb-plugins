@@ -1,7 +1,7 @@
 // The conversation as a mode of the changes view: entering and leaving it (`gc`), the cursor over its rows, and what
 // the keys do there. The thread keys act on the thread under the cursor as they do on a line's in the diff.
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DiffCommentTarget, LineRange, PullRequestSummary } from "../../types";
+import type { CommentMeta, ConversationData, DiffCommentTarget, LineRange, PullRequestSummary } from "../../types";
 import { githubCommitUrl } from "../links";
 import type { NarrativePatchFile } from "../../narrative";
 import type { Cursor } from "../keys/nav";
@@ -14,6 +14,7 @@ import { threadCode, type ThreadCode } from "../comments/thread-code";
 import type { DiffThread } from "../comments/threads";
 import { commitKey, conversationStops, type ConversationCommit, type ConversationItem, type ConversationStop } from "./conversation";
 import type { ConversationCommand } from "./conversation-keymap";
+import type { useConversationWriting } from "./use-conversation-writing";
 
 const NO_FINDINGS: PatchAnnotationProps["findings"] = [];
 const NOT_A_THREAD = "That key acts on comment threads (c goes to the next one)";
@@ -25,6 +26,8 @@ export interface ConversationModeOptions {
   available: boolean;
   items: readonly ConversationItem[];
   pullRequest: PullRequestSummary | null;
+  data: ConversationData | null;
+  writer: ReturnType<typeof useConversationWriting>;
   narrativeAvailable: boolean;
   enterNarrative: () => void;
   threadById: ReadonlyMap<string, DiffThread>;
@@ -60,12 +63,36 @@ function stopUrl(stop: ConversationStop, repo: string | null): string | null {
     case "comment":
       return item.comment.url;
     case "action":
+      return item.event.url ?? null;
+  }
+}
+
+/** The GitHub comment a stop stands for, as the writing keys act on it; null for commits, events and the summary. */
+function commentAt(stop: ConversationStop | null, data: ConversationData | null): { id: string; body: string; mine: boolean; deletable: boolean; meta: CommentMeta | null } | null {
+  if (stop === null) return null;
+  const meta = (id: string) => data?.comments[id] ?? null;
+  if (stop.kind === "thread") {
+    const root = stop.thread.entries[0]!;
+    if (root.source !== "github") return null;
+    // Inline comments are edited from GitHub's own thread; here they take quotes and reactions.
+    return { id: root.comment.id, body: root.comment.body, mine: false, deletable: false, meta: meta(root.comment.id) };
+  }
+  if (stop.kind !== "item") return null;
+  const { item } = stop;
+  switch (item.kind) {
+    case "opened":
+      return { id: item.event.id, body: item.event.body, mine: data?.viewer != null && data.viewer === item.event.author, deletable: false, meta: meta(item.event.id) };
+    case "comment":
+      return { id: item.comment.id, body: item.comment.body, mine: item.comment.mine, deletable: true, meta: meta(item.comment.id) };
+    case "review":
+      return { id: item.review.id, body: item.review.body, mine: item.review.mine, deletable: false, meta: meta(item.review.id) };
+    case "action":
       return null;
   }
 }
 
 export function useConversationMode(options: ConversationModeOptions) {
-  const { keys, mode, items, pullRequest, files, threadById, currentPaths, notify } = options;
+  const { keys, mode, items, pullRequest, data, writer, files, threadById, currentPaths, notify } = options;
   const stops = useMemo(() => conversationStops(items, pullRequest), [items, pullRequest]);
   // Null keeps the cursor on the first entry until the reader moves it: the PR's description and reviews load after
   // the view opens, and land before what was first until then.
@@ -167,7 +194,9 @@ export function useConversationMode(options: ConversationModeOptions) {
         moveTo(0);
         return;
       case "bottom":
+        // The status box's last rows (mergeability) are no stop, so the scroll goes to the very end.
         moveTo(stops.length - 1, "end");
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
         return;
       case "page": {
         const scroller = scrollRef.current;
@@ -221,10 +250,40 @@ export function useConversationMode(options: ConversationModeOptions) {
         else options.openUrl(url);
         return;
       }
+      case "comment":
+        if (writer.writing === null) notify("This conversation only reads; comment on GitHub (gx)");
+        else writer.focusComposer();
+        return;
+      case "quote": {
+        const comment = commentAt(current, data);
+        if (writer.writing === null) notify("This conversation only reads; comment on GitHub (gx)");
+        else if (comment === null || comment.body.trim() === "") notify("No comment here to quote");
+        else writer.quote(comment.body);
+        return;
+      }
+      case "react": {
+        const comment = commentAt(current, data);
+        if (writer.writing === null) notify("Reactions need a pull request");
+        else if (comment?.meta?.subject == null) notify("No comment here to react to");
+        else writer.writing.pickReaction(comment.meta);
+        return;
+      }
+      case "edit":
+      case "delete": {
+        if (current?.kind === "thread") {
+          runThreadCommand(command, original(current.thread), options.filesEnv());
+          return;
+        }
+        const comment = commentAt(current, data);
+        if (comment === null) notify(NOT_A_THREAD);
+        else if (writer.writing === null || !comment.mine) notify(command.kind === "edit" ? "Only your own comments can be edited" : "Only your own comments can be deleted");
+        else if (command.kind === "edit") writer.edit(current!.key, comment.id);
+        else if (!comment.deletable) notify("GitHub keeps reviews and the description; e edits them");
+        else writer.remove(comment.id);
+        return;
+      }
       case "reply":
       case "resolve":
-      case "edit":
-      case "delete":
       case "move":
       case "openThread":
       case "applySuggestion":

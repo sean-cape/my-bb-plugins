@@ -142,6 +142,7 @@ function stubGithub(options: {
     const method = typeof input === "object" && input !== null && "method" in input ? (input as Request).method : (init?.method ?? "GET");
     if (method === "POST" && url.endsWith("/graphql")) {
       const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, string | number | null> };
+      if (/\b(add|remove)Reaction\(/u.test(request.query)) return json({ data: { reaction: { clientMutationId: null } } });
       if (request.query.includes("timelineItems(")) return json({ data: { viewer: { login: "sean" }, repository: { pullRequest: options.conversation?.pr ?? null } } });
       if (request.query.includes("reviewThreads(first: 50")) {
         return json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ comments: { nodes: options.conversation?.threadComments ?? [] } }] } } } } });
@@ -296,6 +297,8 @@ function stubGithub(options: {
         ],
       );
     }
+    if (/\/issues\/comments\/\d+$/u.test(path)) return method === "DELETE" ? new Response(null, { status: 204 }) : json({});
+    if (method === "POST" && /\/issues\/\d+\/comments$/u.test(path)) return json({ id: 77 });
     const issueComments = /\/repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments/u.exec(url);
     if (issueComments !== null) {
       return json(
@@ -3446,11 +3449,35 @@ describe("diff comment threads", () => {
     ]);
   });
 
+  it("writes in the PR's conversation: posts, edits, deletes and reacts on GitHub, then resyncs the comments", async () => {
+    const fetchMock = stubGithub({ requested: [searchItem("acme-co/widgets", 7)] });
+    vi.stubGlobal("fetch", fetchMock);
+    await load({ autoStartThreads: false });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const card = (await board()).tickets[0]!;
+    const calls = () => fetchMock.mock.calls.map(([input, init]) => `${init?.method ?? "GET"} ${String(input).replace("https://api.github.com", "").split("?")[0]}`);
+    const before = calls().length;
+    await current().harness.behavior.callRpc("pr_comment_post", { ticketId: card.id, body: "Looks good" });
+    await current().harness.behavior.callRpc("pr_comment_edit", { ticketId: card.id, id: "issue-comment:5", body: "Looks great" });
+    await current().harness.behavior.callRpc("pr_comment_edit", { ticketId: card.id, id: "pr:7", body: "Adds widgets, faster" });
+    await current().harness.behavior.callRpc("pr_comment_delete", { ticketId: card.id, id: "issue-comment:5" });
+    await current().harness.behavior.callRpc("pr_reaction_toggle", { ticketId: card.id, subject: "IC_5", content: "HEART", add: true });
+    const writes = calls().slice(before).filter((call) => !call.startsWith("GET") && !call.endsWith("/graphql"));
+    expect(writes).toEqual(["POST /repos/acme-co/widgets/issues/7/comments", "PATCH /repos/acme-co/widgets/issues/comments/5", "PATCH /repos/acme-co/widgets/pulls/7", "DELETE /repos/acme-co/widgets/issues/comments/5"]);
+    const posted = fetchMock.mock.calls.find(([input, init]) => init?.method === "POST" && String(input).endsWith("/issues/7/comments"));
+    expect(JSON.parse(String(posted![1]!.body))).toEqual({ body: "Looks good" });
+    const reaction = fetchMock.mock.calls.find(([, init]) => String(init?.body ?? "").includes("addReaction("));
+    expect(JSON.parse(String(reaction![1]!.body)).variables).toEqual({ subject: "IC_5", content: "HEART" });
+    // Each change but the reaction pulls the comments again, so the board shows what GitHub now has.
+    expect(calls().slice(before).filter((call) => call === "GET /repos/acme-co/widgets/issues/7/comments")).toHaveLength(4);
+    await expect(current().harness.behavior.callRpc("pr_comment_delete", { ticketId: card.id, id: "review:40" })).rejects.toThrow(/Only a comment can be deleted/u);
+  });
+
   it("reads the PR's conversation: its facts, description, submitted reviews, changes and badges, leaving out drafts", async () => {
     const meta = (extra: Record<string, unknown> = {}) => ({ authorAssociation: "NONE", lastEditedAt: null, isMinimized: false, minimizedReason: null, reactionGroups: [], ...extra });
     const actor = (id: string, at: string) => ({ id, createdAt: at, actor: { login: "jordan-rivera" } });
     const pr = {
-      number: 7, state: "OPEN", isDraft: false, merged: false, url: "https://github.com/acme-co/widgets/pull/7", createdAt: "2026-10-04T09:00:00Z", body: "Adds widgets",
+      id: "PR_7", number: 7, state: "OPEN", isDraft: false, merged: false, url: "https://github.com/acme-co/widgets/pull/7", createdAt: "2026-10-04T09:00:00Z", body: "Adds widgets",
       ...meta({ authorAssociation: "MEMBER", lastEditedAt: "2026-10-04T09:30:00Z", reactionGroups: [{ content: "HEART", viewerHasReacted: true, reactors: { totalCount: 2 } }, { content: "EYES", viewerHasReacted: false, reactors: { totalCount: 0 } }] }),
       author: { login: "jordan-rivera" }, baseRefName: "main", headRefName: "widgets", commits: { totalCount: 2 },
       reviewDecision: "CHANGES_REQUESTED", mergeable: "CONFLICTING", mergeStateStatus: "DIRTY",
@@ -3465,8 +3492,8 @@ describe("diff comment threads", () => {
       ] } } } }] },
       timelineItems: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
         { __typename: "PullRequestCommit", commit: { oid: "abc", signature: { isValid: true }, statusCheckRollup: { state: "SUCCESS" } } },
-        { __typename: "IssueComment", databaseId: 5, ...meta({ isMinimized: true, minimizedReason: "OUTDATED" }) },
-        { __typename: "PullRequestReview", databaseId: 40, ...meta({ authorAssociation: "COLLABORATOR" }), state: "CHANGES_REQUESTED", body: "Please rename", submittedAt: "2026-10-05T12:00:00Z", url: "https://github.com/acme-co/widgets/pull/7#pullrequestreview-40", author: { login: "alex" } },
+        { __typename: "IssueComment", id: "IC_5", databaseId: 5, ...meta({ isMinimized: true, minimizedReason: "OUTDATED" }) },
+        { __typename: "PullRequestReview", id: "PRR_40", databaseId: 40, ...meta({ authorAssociation: "COLLABORATOR" }), state: "CHANGES_REQUESTED", body: "Please rename", submittedAt: "2026-10-05T12:00:00Z", url: "https://github.com/acme-co/widgets/pull/7#pullrequestreview-40", author: { login: "alex" } },
         { __typename: "PullRequestReview", databaseId: 41, ...meta(), state: "PENDING", body: "draft", submittedAt: null, url: "", author: { login: "sean" } },
         { __typename: "HeadRefForcePushedEvent", ...actor("E1", "2026-10-05T13:00:00Z"), beforeCommit: { oid: "1111111aaa" }, afterCommit: { oid: "2222222bbb" } },
         { __typename: "LabeledEvent", ...actor("E2", "2026-10-04T10:00:00Z"), label: { name: "feature", color: "a2eeef" } },
@@ -3474,7 +3501,7 @@ describe("diff comment threads", () => {
         { __typename: "SubscribedEvent", id: "E4" },
       ] },
     };
-    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 7)], conversation: { pr, threadComments: [{ databaseId: 10, ...meta({ reactionGroups: [{ content: "THUMBS_UP", viewerHasReacted: false, reactors: { totalCount: 1 } }] }) }] } }));
+    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 7)], conversation: { pr, threadComments: [{ id: "PRRC_10", databaseId: 10, ...meta({ reactionGroups: [{ content: "THUMBS_UP", viewerHasReacted: false, reactors: { totalCount: 1 } }] }) }] } }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sync_now", null);
     const card = (await board()).tickets[0]!;
@@ -3498,12 +3525,13 @@ describe("diff comment threads", () => {
       { kind: "action", id: "E3", action: "cross-referenced", actor: "jordan-rivera", detail: "acme-co/gadgets#9 Use widgets", createdAt: "2026-10-04T11:00:00Z", url: "https://github.com/acme-co/gadgets/pull/9", color: null },
     ]);
     expect(data.comments).toEqual({
-      "pr:7": { association: "MEMBER", edited: true, minimized: null, reactions: [{ content: "HEART", count: 2, mine: true }] },
-      "issue-comment:5": { association: null, edited: false, minimized: "OUTDATED", reactions: [] },
-      "review:40": { association: "COLLABORATOR", edited: false, minimized: null, reactions: [] },
-      "review-comment:10": { association: null, edited: false, minimized: null, reactions: [{ content: "THUMBS_UP", count: 1, mine: false }] },
+      "pr:7": { association: "MEMBER", edited: true, minimized: null, reactions: [{ content: "HEART", count: 2, mine: true }], subject: "PR_7" },
+      "issue-comment:5": { association: null, edited: false, minimized: "OUTDATED", reactions: [], subject: "IC_5" },
+      "review:40": { association: "COLLABORATOR", edited: false, minimized: null, reactions: [], subject: "PRR_40" },
+      "review-comment:10": { association: null, edited: false, minimized: null, reactions: [{ content: "THUMBS_UP", count: 1, mine: false }], subject: "PRRC_10" },
     });
     expect(data.commits).toEqual({ abc: { verified: true, checks: "success" } });
+    expect(data.viewer).toBe("sean");
   });
 
   it("resolves and reopens a GitHub review thread from any of its comments, marking the whole thread here", async () => {

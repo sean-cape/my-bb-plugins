@@ -1,19 +1,20 @@
 import type { CheckOutcome, CommentMeta, ConversationData, ConversationEvent, PullRequestSummary, Reaction } from "../../shared/comments";
 import type { BoardStore } from "../board";
 import type { KanbanContext } from "../context";
-import { NO_GITHUB_TOKEN, githubGraphql, resolveToken } from "../github";
+import { NO_GITHUB_TOKEN, githubGraphql, githubPost, githubRequest, resolveToken } from "../github";
+import type { PrComments } from "./pr-comments";
 
 const REACTIONS = "reactionGroups { content viewerHasReacted reactors { totalCount } }";
-const COMMENT_META = `databaseId authorAssociation lastEditedAt isMinimized minimizedReason ${REACTIONS}`;
+const COMMENT_META = `id databaseId authorAssociation lastEditedAt isMinimized minimizedReason ${REACTIONS}`;
 const ACTOR = "id createdAt actor { login }";
-const REVIEWER = "requestedReviewer { __typename ... on User { login } ... on Team { name } }";
+const REVIEWER = "requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { name } ... on Mannequin { login } }";
 
 /** The pull request's facts and one page of its timeline; the facts are read again with each page, which costs little. */
 export const CONVERSATION_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
   viewer { login }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      number state isDraft merged url createdAt body lastEditedAt authorAssociation ${REACTIONS}
+      id number state isDraft merged url createdAt body lastEditedAt authorAssociation ${REACTIONS}
       author { login }
       baseRefName headRefName
       commits { totalCount }
@@ -81,6 +82,8 @@ interface ReactionGroup {
   reactors: { totalCount: number };
 }
 export interface GraphqlCommentMeta {
+  /** The node id reactions are added to. */
+  id?: string;
   databaseId?: number | null;
   authorAssociation?: string | null;
   lastEditedAt?: string | null;
@@ -102,7 +105,6 @@ interface CheckContext {
 }
 export interface GraphqlTimelineNode extends GraphqlCommentMeta {
   __typename?: string;
-  id?: string;
   createdAt?: string;
   actor?: Login | null;
   author?: Login | null;
@@ -191,6 +193,7 @@ export function commentMeta(node: GraphqlCommentMeta): CommentMeta {
     edited: node.lastEditedAt != null,
     minimized: node.isMinimized === true ? (node.minimizedReason ?? "hidden") : null,
     reactions: reactions(node.reactionGroups),
+    subject: node.id ?? null,
   };
 }
 
@@ -314,16 +317,71 @@ export function conversationData(pr: GraphqlPullRequest, timeline: readonly (Gra
         ? null
         : { outcome: outcomeOfState(rollup.state) ?? "neutral", runs: rollup.contexts.nodes.filter((context): context is CheckContext => context !== null).map(checkRun) },
   };
-  return { pullRequest, events, comments, commits };
+  return { viewer, pullRequest, events, comments, commits };
 }
 
-/** A PR card's conversation, read from GitHub each time the changes page shows it. */
-export function createPrConversation(ctx: KanbanContext, { board }: { board: BoardStore }) {
-  const { settings } = ctx;
+/** A comment id as the conversation names it, split into its kind and GitHub's number. */
+function parseCommentId(id: string): { kind: "issue-comment" | "review" | "pr"; number: number } {
+  const match = /^(issue-comment|review|pr):(\d+)$/u.exec(id);
+  if (match === null) throw new Error(`Not a pull request comment: ${id}`);
+  return { kind: match[1] as "issue-comment" | "review" | "pr", number: Number(match[2]) };
+}
+
+/** A PR card's conversation, read from GitHub each time the changes page shows it, and what the user writes in it. */
+export function createPrConversation(ctx: KanbanContext, { board, prComments }: { board: BoardStore; prComments: PrComments }) {
+  const { settings, stmts, publish, bb } = ctx;
+
+  /** The card's PR and a token, for a change the user makes on GitHub. */
+  async function target(ticketId: string) {
+    const { pr } = board.getTicket(ticketId);
+    if (pr === null) throw new Error("This card has no pull request");
+    const auth = await resolveToken(settings);
+    if (auth === null) throw new Error(NO_GITHUB_TOKEN);
+    return { pr, token: auth.token, base: `/repos/${pr.repo}` };
+  }
+
+  /** After a change: the synced comments catch up, and the open changes page refetches through the board event. */
+  async function settle(ticketId: string, token: string): Promise<void> {
+    const row = stmts.byId.get(ticketId);
+    if (row !== undefined) await prComments.syncPrComments(row, token).catch((error: unknown) => bb.log.warn(`could not refresh comments for ${row.pr_repo}#${row.pr_number}: ${String(error)}`));
+    publish();
+  }
+
+  async function postComment(ticketId: string, body: string): Promise<void> {
+    if (body.trim() === "") throw new Error("The comment is empty");
+    const { pr, token, base } = await target(ticketId);
+    await githubPost(`${base}/issues/${pr.number}/comments`, token, { body });
+    await settle(ticketId, token);
+  }
+
+  /** Rewrites a PR-level comment, a review's summary, or the description; GitHub refuses what isn't the user's to edit. */
+  async function editComment(ticketId: string, id: string, body: string): Promise<void> {
+    const { kind, number } = parseCommentId(id);
+    const { pr, token, base } = await target(ticketId);
+    if (kind === "issue-comment") await githubRequest("PATCH", `${base}/issues/comments/${number}`, token, { body });
+    else if (kind === "review") await githubRequest("PUT", `${base}/pulls/${pr.number}/reviews/${number}`, token, { body });
+    else await githubRequest("PATCH", `${base}/pulls/${pr.number}`, token, { body });
+    await settle(ticketId, token);
+  }
+
+  async function deleteComment(ticketId: string, id: string): Promise<void> {
+    const { kind, number } = parseCommentId(id);
+    if (kind !== "issue-comment") throw new Error("Only a comment can be deleted; reviews and the description stay");
+    const { token, base } = await target(ticketId);
+    await githubRequest("DELETE", `${base}/issues/comments/${number}`, token);
+    await settle(ticketId, token);
+  }
+
+  async function toggleReaction(ticketId: string, subject: string, content: string, add: boolean): Promise<void> {
+    const { token } = await target(ticketId);
+    const mutation = add ? "addReaction" : "removeReaction";
+    await githubGraphql(`mutation($subject: ID!, $content: ReactionContent!) { ${mutation}(input: { subjectId: $subject, content: $content }) { clientMutationId } }`, { subject, content }, token);
+    publish();
+  }
 
   async function prConversation(ticketId: string): Promise<ConversationData> {
     const { pr } = board.getTicket(ticketId);
-    if (pr === null) return { pullRequest: null, events: [], comments: {}, commits: {} };
+    if (pr === null) return { viewer: null, pullRequest: null, events: [], comments: {}, commits: {} };
     const auth = await resolveToken(settings);
     if (auth === null) throw new Error(NO_GITHUB_TOKEN);
     const [owner, name] = pr.repo.split("/");
@@ -361,5 +419,5 @@ export function createPrConversation(ctx: KanbanContext, { board }: { board: Boa
     return conversationData(timeline.pr, timeline.nodes, threadMeta, timeline.viewer);
   }
 
-  return { prConversation };
+  return { prConversation, postComment, editComment, deleteComment, toggleReaction };
 }

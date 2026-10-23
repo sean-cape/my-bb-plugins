@@ -93,7 +93,13 @@ plugins embed.
   box, without its button: the review decision, each check of the head
   commit, and whether the branch merges cleanly. The host provides all this
   (kanban does for PR cards); without it the view shows the commits and
-  threads alone. Each GitHub thread sits
+  threads alone. Where the host takes writing (kanban's PR cards), a comment
+  box ends the view: `i` focuses it, ⌘↩ posts the comment to the pull
+  request, Escape goes back to the keys keeping the draft; `Q` quotes the
+  comment under the cursor into it; `e` rewrites your own comment, review
+  summary or description in place; `dd` twice deletes your own comment; and
+  `+` (or the +☺ button) picks a reaction, while clicking one you left takes
+  it back. Each GitHub thread sits
   under the review it was submitted in, over the hunk GitHub stored when it
   was left; a thread started here stands at its first comment over today's
   lines around it (or under its file's name when the diff no longer shows

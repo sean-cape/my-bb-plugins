@@ -315,6 +315,26 @@ export const rpcContract = defineRpcContract({
     input: z.object({ ticketId: z.string() }).strict(),
     output: conversationDataSchema,
   },
+  /** Posts a comment on the card's PR as the signed-in user. */
+  pr_comment_post: {
+    input: z.object({ ticketId: z.string(), body: z.string() }).strict(),
+    output: z.null(),
+  },
+  /** Rewrites one of the user's PR comments (`issue-comment:<n>`), review summaries (`review:<n>`) or the description (`pr:<n>`). */
+  pr_comment_edit: {
+    input: z.object({ ticketId: z.string(), id: z.string(), body: z.string() }).strict(),
+    output: z.null(),
+  },
+  /** Deletes one of the user's PR comments (`issue-comment:<n>`) on GitHub. */
+  pr_comment_delete: {
+    input: z.object({ ticketId: z.string(), id: z.string() }).strict(),
+    output: z.null(),
+  },
+  /** Adds or takes back the user's reaction on a GitHub comment, review or pull request, by its node id. */
+  pr_reaction_toggle: {
+    input: z.object({ ticketId: z.string(), subject: z.string(), content: z.enum(["THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"]), add: z.boolean() }).strict(),
+    output: z.null(),
+  },
   comment_set_selected: {
     input: z.object({ id: z.string(), selected: z.boolean().nullable() }).strict(),
     output: prCommentSchema,

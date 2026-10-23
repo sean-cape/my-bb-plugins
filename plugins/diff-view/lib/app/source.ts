@@ -3,6 +3,7 @@ import type {
   BlameLine,
   CommitRange,
   ConversationData,
+  ReactionContent,
   DiffCommits,
   DiffComment,
   DiffCommentTarget,
@@ -84,6 +85,17 @@ export interface DiffSource {
   commits?(): Promise<DiffCommits>;
   /** The pull request's summary, description, reviews, changes and badges for the conversation view, which otherwise shows the commits and comments alone. */
   conversation?(): Promise<ConversationData>;
+  /**
+   * What the reader writes in the conversation, on GitHub: a comment on the pull request, edits to their own comments,
+   * review summaries and description (by comment id), deleting their comments, and reactions (by `CommentMeta.subject`).
+   * Without it the conversation only reads.
+   */
+  conversationActions?: {
+    post(body: string): Promise<void>;
+    edit(id: string, body: string): Promise<void>;
+    remove(id: string): Promise<void>;
+    react(subject: string, content: ReactionContent, add: boolean): Promise<void>;
+  };
 }
 
 /** Copy that names where comments live, so each host can speak in its own terms. */

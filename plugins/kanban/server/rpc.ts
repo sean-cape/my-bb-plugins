@@ -155,6 +155,22 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
       return prComments.listComments(ticketId);
     },
     pr_conversation: ({ ticketId }) => prConversation.prConversation(ticketId),
+    pr_comment_post: async ({ ticketId, body }) => {
+      await prConversation.postComment(ticketId, body);
+      return null;
+    },
+    pr_comment_edit: async ({ ticketId, id, body }) => {
+      await prConversation.editComment(ticketId, id, body);
+      return null;
+    },
+    pr_comment_delete: async ({ ticketId, id }) => {
+      await prConversation.deleteComment(ticketId, id);
+      return null;
+    },
+    pr_reaction_toggle: async ({ ticketId, subject, content, add }) => {
+      await prConversation.toggleReaction(ticketId, subject, content, add);
+      return null;
+    },
     comment_set_selected: ({ id, selected }) => prComments.setSelected(id, selected),
     comment_set_addressed: ({ id, addressed }) => prComments.setAddressed(id, addressed),
     comment_set_resolved: ({ id, resolved }) => prComments.setResolved(id, resolved),

@@ -4,17 +4,23 @@ import { REVIEW_KEYMAP, type ReviewCommand } from "../keys/keymap";
 /** The review keys that mean the same over the conversation's rows as over the diff's lines. */
 const SHARED_KEYS = [
   "j", "<Down>", "k", "<Up>", "gg", "G", "<C-d>", "<C-u>", "<C-f>", "<C-b>", "c", "C", "zz", "zt", "zb", "za", "<CR>",
-  "a", "r", "e", "dd", "M", "gx", "go", "A", "B", "gB", "T", "R", "s", "S", "?", "<Esc>", "gc", "H", "gr", "gl",
+  "a", "r", "e", "dd", "M", "gx", "go", "i", "A", "B", "gB", "T", "R", "s", "S", "?", "<Esc>", "gc", "H", "gr", "gl",
 ];
 
 export type ConversationCommand =
   | ReviewCommand
   /** The files view at the row: a thread's line, or the commit alone. */
-  | { kind: "openInFiles" };
+  | { kind: "openInFiles" }
+  /** The reaction picker for the comment under the cursor. */
+  | { kind: "react" }
+  /** The comment under the cursor, quoted into the comment box. */
+  | { kind: "quote" };
 
 export const CONVERSATION_KEYMAP: Keymap<ConversationCommand> = {
   ...Object.fromEntries(SHARED_KEYS.map((key) => [key, REVIEW_KEYMAP[key]!])),
   gf: { kind: "openInFiles" },
+  "+": { kind: "react" },
+  Q: { kind: "quote" },
 };
 
 export const CONVERSATION_KEY_HELP: readonly KeyHelpSection[] = [
@@ -32,6 +38,16 @@ export const CONVERSATION_KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["gr"], action: "Pick commits to read in the files view" },
       { keys: ["gc"], action: "Back to the files or the narrative, where you were" },
       { keys: ["S"], action: "Switch to the narrative review" },
+    ],
+  },
+  {
+    title: "Write",
+    keys: [
+      { keys: ["i"], action: "Comment on the pull request: the box at the end (⌘↩ posts to GitHub, Esc keeps the draft)" },
+      { keys: ["Q"], action: "Quote the comment under the cursor into the box" },
+      { keys: ["+"], action: "React to the comment under the cursor (pick one; again takes yours back)" },
+      { keys: ["e"], action: "Edit your comment, review summary or description under the cursor (⌘↩ saves, Esc cancels)" },
+      { keys: ["dd"], action: "Delete your comment under the cursor (dd twice)" },
     ],
   },
   {

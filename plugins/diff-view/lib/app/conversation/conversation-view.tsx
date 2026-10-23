@@ -1,6 +1,6 @@
-import { useContext, useMemo, type ReactNode, type RefObject } from "react";
+import { useContext, useMemo, useState, type ReactNode, type RefObject } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import type { CommentMeta, ConversationData, ConversationEvent, PullRequestAction, ReviewVerdict } from "../../types";
+import type { CommentMeta, ConversationData, ConversationEvent, PullRequestAction, ReactionContent, ReviewVerdict } from "../../types";
 import { cn } from "../utils";
 import { relativeTime, shortSha } from "../format";
 import { githubCommitUrl } from "../links";
@@ -20,6 +20,7 @@ import type { ThreadCode } from "../comments/thread-code";
 import type { DiffThread } from "../comments/threads";
 import { commitKey, threadKey, type ConversationCommit, type ConversationItem, type ConversationReview } from "./conversation";
 import { CheckMark, CommentMetaContext, MetaBadges, Reactions } from "./comment-meta";
+import { Button, COMPACT } from "../ui/button";
 import { LabelChip, PullRequestHeader, PullRequestStatus } from "./conversation-summary";
 
 const NO_META: ConversationData["comments"] = {};
@@ -69,6 +70,7 @@ function CommentCard({
   body,
   folded: toggled,
   onToggle,
+  editing = null,
   now,
 }: {
   stopKey: string;
@@ -86,9 +88,11 @@ function CommentCard({
   /** Toggled from how it starts: open, or folded when GitHub hid it. */
   folded: boolean;
   onToggle: () => void;
+  /** Set while the reader rewrites the comment. */
+  editing?: { save: (body: string) => Promise<void>; cancel: () => void } | null;
   now: number;
 }) {
-  const folded = toggled !== (meta?.minimized != null);
+  const folded = toggled !== (meta?.minimized != null) && editing === null;
   const firstLine = body.split("\n").find((text) => text.trim() !== "") ?? "";
   return (
     <div {...stopProps(stopKey, stopRef, focused)} className={cn("min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-card", focused && CURSOR_RING)}>
@@ -108,13 +112,100 @@ function CommentCard({
           </ExternalLink>
         ) : null}
       </div>
-      {folded ? null : (
+      {editing !== null ? (
+        <EditBox initial={body} save={editing.save} cancel={editing.cancel} />
+      ) : folded ? null : (
         <div className={cn("break-words px-3 py-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto", enter.fade, FAST)}>
           {body.trim() === "" ? <p className="text-xs italic text-muted-foreground">No description provided.</p> : <CommentBody body={body} expected={null} startLine={null} />}
           <Reactions meta={meta} />
         </div>
       )}
     </div>
+  );
+}
+
+/** Rewriting a comment in place: ⌘↩ saves, Escape (or Cancel) leaves it as it was. */
+function EditBox({ initial, save, cancel }: { initial: string; save: (body: string) => Promise<void>; cancel: () => void }) {
+  const [draft, setDraft] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    if (draft.trim() === "" || draft === initial) {
+      cancel();
+      return;
+    }
+    setSaving(true);
+    try {
+      await save(draft);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div data-escape-cancels="always" className={cn("flex flex-col gap-1.5 px-3 py-2", enter.fade, FAST)}>
+      <textarea
+        autoFocus
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        rows={Math.min(16, Math.max(4, draft.split("\n").length + 1))}
+        className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void submit();
+        }}
+      />
+      <div className="flex gap-2">
+        <Button type="button" className={COMPACT} disabled={saving || draft.trim() === ""} onClick={() => void submit()}>
+          Update comment
+        </Button>
+        <Button type="button" variant="ghost" className={COMPACT} data-escape-cancel="" onClick={cancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** What the reader writes in the conversation; null where the source takes nothing. */
+export interface ConversationWriting {
+  /** The stop whose comment is being rewritten. */
+  editingKey: string | null;
+  save: (key: string, body: string) => Promise<void>;
+  cancelEdit: () => void;
+  draft: string;
+  setDraft: (draft: string) => void;
+  posting: boolean;
+  post: () => void;
+  composerRef: RefObject<HTMLTextAreaElement | null>;
+  react: (subject: string, content: ReactionContent, add: boolean) => void;
+  pickReaction: (meta: CommentMeta) => void;
+}
+
+/** GitHub's comment box at the end of the conversation: i focuses it, ⌘↩ posts, Escape goes back to the keys keeping the draft. */
+function Composer({ writing }: { writing: ConversationWriting }) {
+  const { draft, setDraft, posting, post, composerRef } = writing;
+  return (
+    <section className="mt-3 flex flex-col gap-1.5 rounded-md border border-border bg-card px-3 py-2">
+      <label className="text-xs font-medium text-muted-foreground" htmlFor="conversation-composer">
+        Add a comment
+      </label>
+      <textarea
+        id="conversation-composer"
+        ref={composerRef}
+        value={draft}
+        placeholder="Leave a comment on the pull request (i)"
+        onChange={(event) => setDraft(event.target.value)}
+        rows={Math.min(16, Math.max(3, draft.split("\n").length + 1))}
+        className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") post();
+        }}
+      />
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-muted-foreground">Markdown · ⌘↩ posts to GitHub · Esc keeps the draft</span>
+        <Button type="button" className={cn(COMPACT, "ml-auto")} disabled={posting || draft.trim() === ""} onClick={post}>
+          {posting ? "Posting…" : "Comment"}
+        </Button>
+      </div>
+    </section>
   );
 }
 
@@ -293,6 +384,7 @@ export function ConversationView({
   onToggle,
   onOpenCommit,
   onOpenThread,
+  writing,
 }: {
   items: readonly ConversationItem[];
   data: ConversationData | null;
@@ -309,6 +401,7 @@ export function ConversationView({
   onToggle: (key: string) => void;
   onOpenCommit: (commit: ConversationCommit) => void;
   onOpenThread: (thread: DiffThread) => void;
+  writing: ConversationWriting | null;
 }) {
   const actions = useContext(DiffCommentsContext);
   const scoped = useMemo<DiffCommentActions>(() => {
@@ -318,6 +411,11 @@ export function ConversationView({
   const now = useNow();
   const metaOf = (id: string) => data?.comments[id] ?? null;
   const prAuthor = data?.pullRequest?.author ?? null;
+  const editingOf = (key: string) => (writing !== null && writing.editingKey === key ? { save: (body: string) => writing.save(key, body), cancel: writing.cancelEdit } : null);
+  const metaContext = useMemo(
+    () => ({ meta: data?.comments ?? NO_META, react: writing?.react ?? null, pick: writing?.pickReaction ?? null }),
+    [data, writing?.react, writing?.pickReaction],
+  );
   const thread = (entry: DiffThread) => {
     const code = codeOf(entry);
     return <ThreadBlock key={entry.id} code={code} stopRef={stopRef} inDiff={inDiff(entry.path)} annotations={annotationsFor(code)} onOpen={() => onOpenThread(entry)} />;
@@ -356,6 +454,7 @@ export function ConversationView({
               body={entry.body}
               folded={folded.has(key)}
               onToggle={() => onToggle(key)}
+              editing={editingOf(key)}
               now={now}
             />
           )}
@@ -383,6 +482,7 @@ export function ConversationView({
               body={item.event.body}
               folded={folded.has(item.key)}
               onToggle={() => onToggle(item.key)}
+              editing={editingOf(item.key)}
               now={now}
             />
           </ItemRow>
@@ -405,6 +505,7 @@ export function ConversationView({
               body={item.comment.body}
               folded={folded.has(item.key)}
               onToggle={() => onToggle(item.key)}
+              editing={editingOf(item.key)}
               now={now}
             />
           </ItemRow>
@@ -433,7 +534,7 @@ export function ConversationView({
   };
   return (
     <DiffCommentsContext.Provider value={scoped}>
-      <CommentMetaContext.Provider value={data?.comments ?? NO_META}>
+      <CommentMetaContext.Provider value={metaContext}>
       <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         <div className={cn("mx-auto flex max-w-5xl flex-col gap-2 px-4 py-3", enter.fade, FAST)}>
           {error !== null ? <p className="text-xs text-destructive">Could not read the pull request's reviews and events: {error}</p> : null}
@@ -442,6 +543,7 @@ export function ConversationView({
           {/* The rule runs behind the markers, down the middle of their column. */}
           <ol className="relative flex flex-col before:absolute before:bottom-2 before:left-3 before:top-2 before:w-px before:-translate-x-1/2 before:bg-border">{items.map(render)}</ol>
           {data?.pullRequest != null ? <PullRequestStatus pr={data.pullRequest} stopRef={stopRef} focusedKey={focusedKey} /> : null}
+          {writing !== null ? <Composer writing={writing} /> : null}
         </div>
       </div>
       </CommentMetaContext.Provider>

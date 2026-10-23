@@ -223,6 +223,8 @@ export interface CommentMeta {
   minimized: string | null;
   /** Only the reactions anyone left. */
   reactions: Reaction[];
+  /** GitHub's node id for the comment, which reactions are left on; null when unknown. */
+  subject: string | null;
 }
 
 /** A check's outcome as the conversation draws it. */
@@ -253,6 +255,8 @@ export interface PullRequestSummary {
 
 /** Everything the conversation view reads from a source beyond its commits and synced comments. */
 export interface ConversationData {
+  /** The signed-in user's login, whose comments can be edited. */
+  viewer: string | null;
   pullRequest: PullRequestSummary | null;
   events: ConversationEvent[];
   /** Badges and reactions by comment id: `issue-comment:<n>`, `review-comment:<n>`, `review:<n>`, or the opened event's id for the description. */

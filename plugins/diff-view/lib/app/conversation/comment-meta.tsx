@@ -4,12 +4,18 @@ import { createContext, useContext } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { CheckOutcome, CommentMeta, ReactionContent } from "../../types";
 import { cn } from "../utils";
+import { PRESS } from "../ui/motion";
 import { Badge } from "../ui/badge";
 
-export const CommentMetaContext = createContext<Readonly<Record<string, CommentMeta>>>({});
+/** Badges by comment id, and the reader's reaction toggle where the source takes reactions. */
+export const CommentMetaContext = createContext<{ meta: Readonly<Record<string, CommentMeta>>; react: ((subject: string, content: ReactionContent, add: boolean) => void) | null; pick: ((meta: CommentMeta) => void) | null }>({
+  meta: {},
+  react: null,
+  pick: null,
+});
 
 export function useCommentMeta(id: string): CommentMeta | null {
-  return useContext(CommentMetaContext)[id] ?? null;
+  return useContext(CommentMetaContext).meta[id] ?? null;
 }
 
 const ASSOCIATION: Record<string, string> = {
@@ -44,7 +50,7 @@ export function MetaBadges({ meta, author }: { meta: CommentMeta | null; author?
   );
 }
 
-const EMOJI: Record<ReactionContent, string> = {
+export const EMOJI: Record<ReactionContent, string> = {
   THUMBS_UP: "👍",
   THUMBS_DOWN: "👎",
   LAUGH: "😄",
@@ -55,20 +61,44 @@ const EMOJI: Record<ReactionContent, string> = {
   EYES: "👀",
 };
 
+export const REACTION_ORDER = Object.keys(EMOJI) as ReactionContent[];
+
+export function reactionName(content: ReactionContent): string {
+  return content.toLowerCase().replace("_", " ");
+}
+
+/** The reactions under a comment; with a source that takes them, each toggles the reader's own and + adds another (+ from the keys). */
 export function Reactions({ meta }: { meta: CommentMeta | null }) {
-  if (meta === null || meta.reactions.length === 0) return null;
+  const { react, pick } = useContext(CommentMetaContext);
+  if (meta === null) return null;
+  const subject = meta.subject;
+  const live = react !== null && subject !== null;
+  if (meta.reactions.length === 0 && !live) return null;
   return (
     <div className="flex flex-wrap gap-1 pt-1">
       {meta.reactions.map((reaction) => (
-        <span
+        <button
+          type="button"
           key={reaction.content}
-          title={reaction.mine ? "You reacted" : undefined}
-          className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 text-[11px] tabular-nums", reaction.mine ? "border-primary/50 bg-primary/10 text-foreground" : "border-border text-muted-foreground")}
+          disabled={!live}
+          title={live ? (reaction.mine ? "Take back your reaction" : `React with ${reactionName(reaction.content)}`) : reaction.mine ? "You reacted" : undefined}
+          onClick={() => react?.(subject!, reaction.content, !reaction.mine)}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-1.5 text-[11px] tabular-nums",
+            PRESS,
+            reaction.mine ? "border-primary/50 bg-primary/10 text-foreground" : "border-border text-muted-foreground",
+            live && "hover:bg-state-hover",
+          )}
         >
-          <span aria-label={reaction.content.toLowerCase().replace("_", " ")}>{EMOJI[reaction.content]}</span>
+          <span aria-label={reactionName(reaction.content)}>{EMOJI[reaction.content]}</span>
           {reaction.count}
-        </span>
+        </button>
       ))}
+      {live && pick !== null ? (
+        <button type="button" title="Add a reaction (+)" onClick={() => pick(meta)} className={cn("inline-flex items-center rounded-full border border-border px-1.5 text-[11px] text-muted-foreground hover:bg-state-hover hover:text-foreground", PRESS)}>
+          +☺
+        </button>
+      ) : null}
     </div>
   );
 }

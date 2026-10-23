@@ -35,7 +35,7 @@ export function createServices(ctx: KanbanContext) {
   const viewed = createViewedMarks(ctx, { changes });
   const deltas = createDiffDelta(ctx, { changes, viewed });
   const prComments = createPrComments(ctx, { board, threads, projects, codeReviewThreads });
-  const prConversation = createPrConversation(ctx, { board });
+  const prConversation = createPrConversation(ctx, { board, prComments });
   const pendingReview = createPendingReview(ctx, { board, changes });
   const diffComments = createDiffComments(ctx, { board, subjects, changes, prComments, pendingReview });
   const reviews = createReviews(ctx, { board, threads, projects, codeReviewThreads });
