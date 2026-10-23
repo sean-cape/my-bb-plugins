@@ -201,7 +201,7 @@ export interface ControlDescription {
 
 /**
  * A control described without its content: a test id; a link's page; a row by its kind and the list
- * it sits in; a long or badge-filled button, or one in the conversation with no label, by its tag
+ * it sits in; a long or badge-filled button, or one in the conversation without an aria-label, by its tag
  * and container; else its name with numbers and file names blanked, plus the thing it sits in
  * (`Cancel in kanban card`) when one is marked.
  */
@@ -226,13 +226,13 @@ export function describeControl(element: Element): ControlDescription {
     const key = `${kind} in ${container}`;
     return { key, label: key };
   }
-  const named = element.getAttribute("aria-label") ?? element.getAttribute("title");
+  // In the conversation a button's text and its tooltip are what it shows (a command bb ran, a question the agent asked); only a label names it.
+  const conversation = closestThrough(element, CONVERSATION) !== null;
+  const named = element.getAttribute("aria-label") ?? (conversation ? null : element.getAttribute("title"));
   const raw = named ?? ownText(element);
   const label = generalize(raw, false);
   const composite = named === null && textBearingDescendants(element) >= COMPOSITE_PARTS;
-  // In the conversation a button's text is what it shows (a command bb ran, an answer the agent offered); only a label names it.
-  const conversation = named === null && closestThrough(element, CONVERSATION) !== null;
-  if (label === "" || label.length > NAME_LENGTH || composite || conversation) {
+  if (label === "" || label.length > NAME_LENGTH || composite || (conversation && named === null)) {
     const key = `<${tag}> in ${container}`;
     return { key, label: key };
   }

@@ -156,18 +156,19 @@ describe("control names", () => {
     expect(describeControl(run)).toEqual({ key: "<button> in Timeline", label: "<button> in Timeline" });
   });
 
-  it("names a control in the conversation only by its label, never by the text it shows or a message's headings", () => {
+  it("names a control in the conversation only by its aria-label, never by the text or tooltip it shows or a message's headings", () => {
     html(`
       <div data-timeline-row-list="top-level">
         <div data-timeline-row-id="r1"><button id="tool">Ran make deploy</button><button id="copy" aria-label="Copy message">⧉</button></div>
         <section><h3>Root cause</h3><ul><li><button id="expand" aria-label="Expand">▸</button></li></ul></section>
       </div>
-      <section data-testid="user-question-banner"><fieldset><button id="answer" aria-pressed="false">Use the widget cache</button></fieldset></section>`);
+      <section data-testid="user-question-banner"><button id="tab" aria-pressed="true" title="Which cache should the widgets use?">Cache</button><fieldset><button id="answer" aria-pressed="false">Use the widget cache</button></fieldset></section>`);
     const by = (id: string) => document.getElementById(id)!;
     expect(controlKey(by("tool"))).toBe("<button> in timeline row");
     expect(controlKey(by("copy"))).toBe("Copy message in timeline row");
     expect(controlKey(by("expand"))).toBe("Expand");
     expect(controlKey(by("answer"))).toBe("<button> in user-question-banner");
+    expect(controlKey(by("tab"))).toBe("<button> in user-question-banner");
   });
 
   it("names a container by its label up to a colon, past which it names what the region shows", () => {

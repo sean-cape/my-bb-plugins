@@ -20,7 +20,7 @@ shows (`Browser preview controls: <page title>`). An element with a marker or id
 keyed by that type and its container whatever its role (`ticket in kanban column list`). A row's own text (a thread title, a card name, a meeting) is never stored,
 and neither is a label longer than a name or made of several badges. In bb's conversation (the timeline and the
 question, approval, and plan banners) a control's text is what the agent or the user wrote, a command bb ran or an
-answer offered, so only an `aria-label` or `title` names it there, and a message's headings never name a section. Nothing in the log should identify what you
+answer offered, and its `title` tooltip often repeats it, so only an `aria-label` names it there, and a message's headings never name a section. Nothing in the log should identify what you
 were working on, only what you did with it.
 
 Each event also carries the plugin (from bb's `data-bb-plugin` root around it, or the key library's bundle id;
