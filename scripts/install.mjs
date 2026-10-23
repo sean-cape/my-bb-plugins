@@ -12,7 +12,7 @@
 // worktree breaks once the worktree is cleaned up. It keeps going past a plugin that fails and lists the failures at
 // the end, exiting 1.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,6 +30,14 @@ const wanted = args.filter((arg, index) => !arg.startsWith("--") && (registryInd
 function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, { cwd: repo, encoding: "utf8", ...options });
   return { ok: result.status === 0, output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim(), error: result.error };
+}
+
+function realPath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 /** The last lines of a failed step's output, enough to see why without the whole log. */
@@ -52,6 +60,17 @@ for (const tool of ["bb", "pnpm", "npm"]) {
     process.exit(2);
   }
 }
+
+const pnpmVersion = run("pnpm", ["--version"]).output.split("\n").at(-1);
+const [pnpmMajor, pnpmMinor] = pnpmVersion.split(".").map(Number);
+// The plugins' pnpm settings (overrides, allowBuilds) live in pnpm-workspace.yaml, which pnpm only reads from 10.6;
+// an older pnpm ignores the overrides and rejects every frozen lockfile.
+if (pnpmMajor < 10 || (pnpmMajor === 10 && pnpmMinor < 6)) {
+  console.error(`pnpm ${pnpmVersion} is too old: the plugins need pnpm 10.6 or newer, which reads their pnpm-workspace.yaml.`);
+  process.exit(2);
+}
+const storePath = run("pnpm", ["store", "path"]);
+const pnpmStore = storePath.ok ? realPath(storePath.output.split("\n").at(-1)) : null;
 
 if (!flag("--no-pull")) {
   if (!run("git", ["rev-parse", "--abbrev-ref", "@{u}"]).ok) console.log("pull: skipped, the current branch has no upstream");
@@ -89,13 +108,48 @@ const prebuilt = (plugin) => run("git", ["ls-files", "--error-unmatch", join(plu
 /** `npm ci` deletes node_modules before it fetches anything, so a registry failure would leave none; it only sets up a fresh one. */
 const npmArgs = (dir) => (existsSync(join(dir, "node_modules")) ? ["install"] : ["ci"]);
 
+/**
+ * Why pnpm will delete a plugin's node_modules and install it again, or null when it can reuse it. pnpm only
+ * rebuilds a node_modules it made itself, when its layout (which changes between majors) or store differs.
+ */
+function modulesPurgeReason(dir) {
+  let modules;
+  try {
+    modules = JSON.parse(readFileSync(join(dir, "node_modules", ".modules.yaml"), "utf8"));
+  } catch {
+    return null;
+  }
+  const builtBy = modules.packageManager ?? "an unknown pnpm";
+  if (Number.parseInt(builtBy.split("@")[1], 10) !== pnpmMajor) return `node_modules was installed by ${builtBy}, and this is pnpm ${pnpmVersion}`;
+  if (pnpmStore !== null && modules.storeDir !== undefined && realPath(modules.storeDir) !== pnpmStore) {
+    return `node_modules links into the pnpm store at ${modules.storeDir}, and this pnpm uses ${pnpmStore}`;
+  }
+  return null;
+}
+
+/** What to do about a failed pnpm install whose output names a cause this script knows. */
+function pnpmHint(output) {
+  if (output.includes('"pnpm" field in package.json is no longer read')) return "move the package.json \"pnpm\" field into the plugin's pnpm-workspace.yaml";
+  if (/ERR_PNPM_(OUTDATED_LOCKFILE|LOCKFILE_CONFIG_MISMATCH)/.test(output)) {
+    return "pnpm-lock.yaml doesn't match package.json and pnpm-workspace.yaml; this script never rewrites a lockfile, so run `pnpm install` in the plugin and commit the updated lockfile";
+  }
+  if (output.includes("ERR_PNPM_IGNORED_BUILDS")) return "a dependency's build script isn't approved; list it under allowBuilds in the plugin's pnpm-workspace.yaml (true to run it, false to skip it)";
+  return null;
+}
+
 // Every plugin's dependencies go in before any build, those of plugins not asked for too: the shared libraries
 // (`plugins/*/lib`) resolve their own imports through the node_modules of the plugin that holds them.
 for (const plugin of allPlugins) {
   if (prebuilt(plugin)) continue;
   let installed;
   if (existsSync(join(plugin.dir, "pnpm-lock.yaml"))) {
-    installed = run("pnpm", ["install", "--frozen-lockfile", ...(registry === null ? [] : [`--config.registry=${registry}`])], { cwd: plugin.dir });
+    const purgeReason = modulesPurgeReason(plugin.dir);
+    if (purgeReason !== null) console.log(`${plugin.name}: warning: ${purgeReason}, so pnpm deletes node_modules and installs it from scratch`);
+    // Without a TTY pnpm can't ask before deleting node_modules, and aborts unless told not to ask.
+    const pnpmArgs = ["install", "--frozen-lockfile", "--config.confirm-modules-purge=false", ...(registry === null ? [] : [`--config.registry=${registry}`])];
+    installed = run("pnpm", pnpmArgs, { cwd: plugin.dir });
+    const hint = installed.ok ? null : pnpmHint(installed.output);
+    if (hint !== null) installed.output += `\nhint: ${hint}`;
   } else if (existsSync(join(plugin.dir, "package-lock.json"))) {
     installed = run("npm", [...npmArgs(plugin.dir), "--no-audit", "--no-fund", ...(registry === null ? [] : [`--registry=${registry}`])], { cwd: plugin.dir });
   } else {

@@ -1,0 +1,3 @@
+overrides:
+  bb-motion: link:../motion/lib
+  bb-vim-keys: link:../vim-mode/lib

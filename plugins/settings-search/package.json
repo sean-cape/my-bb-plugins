@@ -28,12 +28,6 @@
     "typescript": "^5.7.0",
     "vitest": "^4.1.1"
   },
-  "pnpm": {
-    "overrides": {
-      "bb-motion": "link:../motion/lib",
-      "bb-vim-keys": "link:../vim-mode/lib"
-    }
-  },
   "scripts": {
     "build": "bb plugin build",
     "test": "vitest run",

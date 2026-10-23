@@ -1,0 +1,8 @@
+overrides:
+  bb-diff-view: link:../diff-view/lib
+  bb-motion: link:../motion/lib
+  bb-nerd-font: link:../nerd-font/lib
+  bb-vim-keys: link:../vim-mode/lib
+
+allowBuilds:
+  better-sqlite3: true

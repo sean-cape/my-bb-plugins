@@ -55,14 +55,6 @@
     "vaul": "^1.1.2",
     "vitest": "^5.0.3"
   },
-  "pnpm": {
-    "overrides": {
-      "bb-diff-view": "link:../diff-view/lib",
-      "bb-motion": "link:../motion/lib",
-      "bb-nerd-font": "link:../nerd-font/lib",
-      "bb-vim-keys": "link:../vim-mode/lib"
-    }
-  },
   "scripts": {
     "build": "bb plugin build",
     "test": "vitest run",

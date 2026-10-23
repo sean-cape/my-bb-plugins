@@ -51,10 +51,10 @@ The Activity page in the sidebar shows the same ranking. Details, limits, and th
 
 ## Install
 
-Everything at once, from a clone (needs `bb`, `node`, `pnpm` and `npm` on PATH). It pulls, installs each plugin's
-dependencies, builds every plugin, installs it into bb or reloads it when bb already runs it from this checkout, links
-the Claude Code skills and subagents into `~/.claude`, and checks every plugin reports `running`. Run it again to
-upgrade:
+Everything at once, from a clone (needs `bb`, `node`, `pnpm` 10.6 or newer and `npm` on PATH). It pulls, installs
+each plugin's dependencies, builds every plugin, installs it into bb or reloads it when bb already runs it from this
+checkout, links the Claude Code skills and subagents into `~/.claude`, and checks every plugin reports `running`. Run
+it again to upgrade:
 
 ```sh
 node scripts/install.mjs                  # pull, then install or upgrade every plugin

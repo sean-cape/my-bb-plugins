@@ -1,0 +1,6 @@
+overrides:
+  bb-motion: link:../motion/lib
+  bb-vim-keys: link:../vim-mode/lib
+
+allowBuilds:
+  better-sqlite3: true

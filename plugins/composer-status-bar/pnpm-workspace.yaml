@@ -1,0 +1,3 @@
+overrides:
+  bb-motion: link:../motion/lib
+  bb-nerd-font: link:../nerd-font/lib
