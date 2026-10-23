@@ -256,6 +256,15 @@ export function parseLoopState(raw: string | null): LoopState {
   }
 }
 
+const OPEN_MINORS_SHOWN = 3;
+
+/** The open minor findings by id and title, the first three and then how many more. */
+export function openMinorsList(findings: LoopFinding[]): string {
+  const shown = findings.slice(0, OPEN_MINORS_SHOWN).map((finding) => `${finding.id} ${finding.title}`);
+  const more = findings.length - shown.length;
+  return more === 0 ? shown.join(", ") : `${shown.join(", ")}, +${more} more`;
+}
+
 /** The chip a monitored card shows on the board: the loop's phase, or why it needs you. */
 export function phaseChip(loop: LoopState): { label: string; tone: "neutral" | "accent" | "warning" | "danger" | "success"; title: string } | null {
   if (!loop.monitored) return null;
@@ -278,7 +287,7 @@ export function phaseChip(loop: LoopState): { label: string; tone: "neutral" | "
       return { label: `fixing r${loop.round}`, tone: "accent", title: `The card's thread is fixing round ${loop.round}'s findings` };
     case "needs-you":
       if (loop.reason === "clean" || loop.reason === null) {
-        const minors = loop.openFindings.length === 0 ? "" : `; ${loop.openFindings.length} minor finding${loop.openFindings.length === 1 ? "" : "s"} left open: ${loop.openFindings.map((finding) => `${finding.id} ${finding.title}`).join(", ")}`;
+        const minors = loop.openFindings.length === 0 ? "" : `; ${loop.openFindings.length} minor finding${loop.openFindings.length === 1 ? "" : "s"} left open: ${openMinorsList(loop.openFindings)}`;
         const effective = effectiveLevel(loop);
         const level = effective === null ? "" : ` · ${ATTENTION_LEVEL_LABEL[effective]}`;
         const why = loop.levelOverride === null ? (loop.attention?.reasons ?? []) : [`you set it: ${loop.levelOverride.reason}`];
