@@ -79,7 +79,7 @@ Give every reviewer these reporting rules verbatim:
 
 With the severity floor `important`, give this rule in place of the one about nits:
 
-> - **Report only what would be critical or important.** A real bug, a missing test on a plausible path, a security or data problem, work beyond the change's intent, or a broken written rule with real consequences. Leave out style issues, code smells, nits and polish; this review does not report minor findings.
+> - **Report only what would be critical or important.** A real bug, a security or data problem, work beyond the change's intent, or a broken written rule with real consequences. Leave out style issues, code smells, nits and polish, and missing or weaker tests unless the untested code has a bug you can show; this review does not report minor findings.
 > - **Not covered.** End your report with a `Not covered` list: what in your area neither the project's tests nor your review could check. Lead each entry with its kind: `Untested:` (a changed path no test exercises), `UI only:` (behaviour that only shows when the app runs: rendering, layout, focus, animation), or `Unverified:` (something you could not confirm from the code, such as runtime data, an external service, or a premise outside the repo), then name the file or behaviour. Write `Not covered: nothing` when there is nothing. A missing test the change should add is a finding, not an entry here.
 
 For `change-reviewer-spec` (only when spawned), also include the path to the matched feature directory (`.claude/features/<feature>/`) from Step 2 — this agent reads the `spec.md` and `tickets/` files there itself.
@@ -113,14 +113,16 @@ A candidate's category is its reviewer's short name (Step 7): a CLAUDE.md-compli
 
 Every candidate from the scope finder, and every "scope creep" candidate from the spec reviewer, has category **`scope`**; when both name the same extra work, merge them into one candidate flagged by both. A scope candidate names the hunks beyond the intent as its instances, and its fix is to remove them or split them into a separate change, never to improve them.
 
-With the severity floor `important`, drop every candidate that is minor (style candidates included) here, before verification, and say in the Change Summary how many the floor left out. They are not verified, reported or filtered.
+With the severity floor `important`, drop every candidate that is minor (style candidates included) here, and every testing candidate that names no bug in the untested code, before verification, and say in the Change Summary how many the floor left out. They are not verified, reported or filtered.
+
+Number the candidates `C1`, `C2`, … so the verifiers' verdicts can name them.
 
 Also merge the reviewers' `Not covered` lists into one **not-covered list**, each entry once, keeping its `Untested:`, `UI only:` or `Unverified:` lead.
 
 ## Step 5: Verify every finding
 
-Spawn one `general-purpose` verifier agent per candidate, all in ONE message so they run in parallel (adapted from Anthropic's official code-review plugin, whose verifier scores each issue 0–100). Each verifier's prompt must include:
-- The candidate finding in full.
+Group the candidates by the file of their first location, at most five to a group (split a larger one), and spawn one `general-purpose` verifier agent per group, all in ONE message so they run in parallel (adapted from Anthropic's official code-review plugin, whose verifier scores each issue 0–100). A verifier per candidate would read the same file once for each; a verifier still judges each of its candidates on its own. Each verifier's prompt must include:
+- Each candidate finding of its group in full, with its `C` number.
 - The review range and the pre-existing range from Step 1, and the **base**: the sha of `git merge-base <from> <to>` for the pre-existing range (not the review range), so the base is where the whole change started. Resolve all three to literal refs or shas first: a verifier's shell has none of your shell variables, so a range like `origin/$BASE...HEAD` must reach it as `origin/main...HEAD`.
 - The paths (not contents) of the CLAUDE.md and AGENTS.md files that apply: the repository root's, and any in a directory that holds a changed file.
 - For a `scope` candidate, the intent from Step 1 and the spec directory's path, if any (and the fix findings, when the candidate is about a fix commit).
@@ -149,10 +151,10 @@ and this pre-existing rule verbatim:
 
 > After scoring, decide `preExisting`. Run `git diff -U0 <pre-existing range> -- <file>` for each location's file and read the new-side hunk ranges (`+start,count`). The finding is **introduced** (`preExisting: false`) when any location's lines overlap an added or changed new-side line, when a whole-file location names a file the diff changes, or when the change caused the problem in code it did not touch (a caller broken by a changed signature, an old path the change makes reachable). It is **pre-existing** (`preExisting: true`) only when no location overlaps the diff and the same problem is there at the base, the merge base of the pre-existing range you were given (`git show <base>:<file>`). A real pre-existing problem keeps its full score.
 
-The verifier's final message is only:
+The verifier's final message is only one verdict per candidate of its group:
 
 ```json
-{ "confidence": 0-100, "preExisting": true | false, "verification": "<one sentence: what you checked and what you found>" }
+[{ "id": "C1", "confidence": 0-100, "preExisting": true | false, "verification": "<one sentence: what you checked and what you found>" }]
 ```
 
 Then sort the candidates:
@@ -161,7 +163,7 @@ Then sort the candidates:
 
 Drop from a finding any location its verifier's sentence says does not hold; the rest stay as its instances.
 
-You do not override a verifier's verdict. If a verifier fails or returns no verdict, spawn it once more; if it fails again, the finding is **unverified**: keep it with the verified findings, in its severity section, with `"confidence": null`, `"preExisting": false` and `"verification": null`, write `unverified` where its line would show the confidence, and say so in the Change Summary.
+You do not override a verifier's verdict. If a verifier fails, or returns no verdict for some of its candidates, spawn one more verifier for the candidates left without one; a candidate it also leaves without a verdict is **unverified**: keep it with the verified findings, in its severity section, with `"confidence": null`, `"preExisting": false` and `"verification": null`, write `unverified` where its line would show the confidence, and say so in the Change Summary.
 
 ## Step 6: Score and triage
 
@@ -276,6 +278,6 @@ The trailing fenced block has the info string `json review-findings` and contain
 
 - You do NOT review or verify code yourself. You ONLY orchestrate, triage and compile; the verifiers decide each finding's confidence and whether it is pre-existing.
 - Neither you nor sub-agents make code changes. Report only. (A finding's `suggestion` describes an edit; it is not one.)
-- All applicable reviewers MUST be spawned in parallel in a single message, and so must all the verifiers. The depth decides only which finders run: every depth verifies and triages every finding the same way.
+- All applicable reviewers MUST be spawned in parallel in a single message, and so must all the verifiers (one per group of candidates, Step 5). The depth decides only which finders run: every depth verifies and triages every finding the same way.
 - Every finding is verified, whatever its severity. Never leave one out of the report: it is either reported or filtered. The one exception is a minor candidate under the severity floor `important`, which Step 4 drops before verification. That includes style and code-smell findings, which are reported as minor, and findings triage defers or drops, which stay in the report with their decision.
 - Triage follows `~/.claude/skills/triage-criteria.md`. Low priority alone is never a reason to drop.

@@ -20,7 +20,8 @@ Low-stakes personal plugin work: speed over ceremony.
 
 ## Making the worktree runnable
 
-A fresh worktree has no node_modules. Give each plugin a real `node_modules/` dir of symlinks to the main checkout's,
+bb runs the repository's `.bb-env-setup.sh` in each new worktree, which does this; in a worktree made before it, run
+`bash .bb-env-setup.sh` from the root. By hand: a fresh worktree has no node_modules. Give each plugin a real `node_modules/` dir of symlinks to the main checkout's,
 keeping main's relative links (`../../diff-view/lib` and the like) relative so the shared libs (`bb-diff-view`,
 `bb-motion`, `bb-nerd-font`, `bb-vim-keys`) resolve to your worktree, and skipping `.vite`, `.vitest` and `.vite-temp`
 (from the worktree root; add the plugins you need):
