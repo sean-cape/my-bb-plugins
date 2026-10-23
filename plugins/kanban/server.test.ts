@@ -2081,11 +2081,25 @@ describe("monitored review loop", () => {
     const prompt = String(spawned[1]!.prompt);
     expect(prompt).toContain(`git checkout --detach ${sha}`);
     expect(prompt).toContain("( pnpm check )");
-    expect(prompt).toContain("bb kanban checks-record --exit-code \"$code\" --output-stdin");
+    expect(prompt).toContain('log=$(mktemp "${TMPDIR:-/tmp}/kanban-checks.XXXXXX")');
+    expect(prompt).toContain('tail -n 200 "$log" >"$log.tail"; bb kanban checks-record --exit-code "$code" --output-file "$log.tail"');
     expect(await card()).toMatchObject({
       columnId: "checking",
       loop: { phase: "checking", commit: sha, checkCommand: { command: "pnpm check", source: "project" }, evidence: { commands: [{ command: "pnpm test", exitCode: 0, outputTail: "42 passed" }], screenshots: [] } },
     });
+  });
+
+  it("reads a multi-line evidence file and checks output file, relative to the caller's directory", async () => {
+    await monitoredCard();
+    const dir = await mkdtemp(join(tmpdir(), "kanban-evidence-"));
+    await writeFile(join(dir, "evidence.json"), JSON.stringify({ commands: [{ command: "pnpm test", exitCode: 0, outputTail: "42 passed" }] }, null, 2));
+    await writeFile(join(dir, "tail.log"), "ok 1\nok 2\n");
+    expect((await current().harness.behavior.runCli(["ready", "--commit", sha, "--evidence-file", "evidence.json"], { ...ctx("thr_1"), cwd: dir })).exitCode).toBe(0);
+    expect((await card()).loop).toMatchObject({ phase: "checking", evidence: { commands: [{ command: "pnpm test", outputTail: "42 passed" }] } });
+    expect((await current().harness.behavior.runCli(["checks-record", "--exit-code", "1", "--output-file", join(dir, "tail.log")], ctx("thr_2"))).exitCode).toBe(0);
+    expect((await current().harness.behavior.runCli(["checks-record", "--exit-code", "1", "--output-file", "missing.log"], { ...ctx("thr_2"), cwd: dir })).exitCode).not.toBe(0);
+    await vi.waitFor(() => expect(sentTexts().at(-1)!.text).toContain("ok 1\nok 2"));
+    await rm(dir, { recursive: true });
   });
 
   it("starts its worker threads owned by the card's thread rather than as its children, with the card thread's provider and options", async () => {
@@ -2427,11 +2441,16 @@ describe("monitored review loop", () => {
     const ticket = await monitoredCard();
     await current().harness.behavior.callRpc("ticket_set_monitored", { id: ticket.id, monitored: false });
     await current().harness.behavior.callRpc("ticket_set_monitored", { id: ticket.id, monitored: true, gates: { plan: true, findings: false, autoAccept: false } });
-    expect(sentTexts().at(-1)!.text).toContain("bb kanban plan --plan-stdin");
+    expect(sentTexts().at(-1)!.text).toContain("bb kanban plan --plan-file <that file>");
     expect((await ready()).exitCode).not.toBe(0);
 
-    expect((await current().harness.behavior.runCli(["plan", "--plan", "Memoize lookups"], ctx("thr_1"))).exitCode).toBe(0);
-    expect(await card()).toMatchObject({ columnId: "review", loop: { phase: "planning", proposedPlan: "Memoize lookups" } });
+    // bb's --plan-stdin takes one line, so a Markdown plan comes from a file.
+    const dir = await mkdtemp(join(tmpdir(), "kanban-plan-"));
+    await writeFile(join(dir, "plan.md"), "Memoize lookups\n\n- per request\n");
+    expect((await current().harness.behavior.runCli(["plan", "--plan-file", "plan.md", "--plan", "x"], { ...ctx("thr_1"), cwd: dir })).exitCode).not.toBe(0);
+    expect((await current().harness.behavior.runCli(["plan", "--plan-file", "plan.md"], { ...ctx("thr_1"), cwd: dir })).exitCode).toBe(0);
+    expect(await card()).toMatchObject({ columnId: "review", loop: { phase: "planning", proposedPlan: "Memoize lookups\n\n- per request" } });
+    await rm(dir, { recursive: true });
     await current().harness.behavior.callRpc("loop_approve_plan", { id: ticket.id, plan: "Memoize lookups per request" });
     expect(await card()).toMatchObject({ columnId: "in-progress", loop: { phase: "building", plan: "Memoize lookups per request" } });
     expect(sentTexts().at(-1)!.text).toContain("with their edits");

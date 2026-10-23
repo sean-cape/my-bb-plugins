@@ -29,7 +29,7 @@ const ROLE_INSTRUCTIONS = new Map<string, (row: TicketRow) => string>([
   [
     "checks",
     (row) =>
-      `This thread re-runs the checks of ${ticketLabel(row)} at the commit its agent reported ready. Change, commit and push nothing, do not move the card, never post to GitHub, and record the result with \`bb kanban checks-record --exit-code <code> --output-stdin\`.`,
+      `This thread re-runs the checks of ${ticketLabel(row)} at the commit its agent reported ready. Change, commit and push nothing, do not move the card, never post to GitHub, and record the result with \`bb kanban checks-record --exit-code <code> --output-file <path>\`.`,
   ],
   [
     "classify",

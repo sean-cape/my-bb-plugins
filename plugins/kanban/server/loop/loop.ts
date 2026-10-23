@@ -322,7 +322,7 @@ export function createLoop(
     if (!state.monitored) return { ticket, checkCommand: null };
     if (state.phase === "planning") {
       throw new LoopTurnError(
-        state.proposedPlan === null ? `The plan gate holds ticket ${ticket.id}: propose a plan with \`bb kanban plan --plan-stdin\` and wait for its approval first` : `Ticket ${ticket.id}'s plan is waiting on the user's approval; wait for it before building`,
+        state.proposedPlan === null ? `The plan gate holds ticket ${ticket.id}: propose a plan with \`bb kanban plan --plan-file <path>\` and wait for its approval first` : `Ticket ${ticket.id}'s plan is waiting on the user's approval; wait for it before building`,
       );
     }
     if (state.phase === "accepted" || state.phase === "landed") {

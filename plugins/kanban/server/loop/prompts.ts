@@ -9,7 +9,7 @@ const CHECKS_TAIL_LINES = 200;
 
 /** What the plan gate holds a card's thread to before it builds anything. */
 const PLAN_GATE =
-  "The plan gate is on: before writing any code, propose your plan for this card with `bb kanban plan --plan-stdin`, giving it as Markdown on stdin (the approach, the files you expect to change, how you will verify it), then stop and wait. The board sends you the approved plan, possibly edited by the user; build to that. Until then, `bb kanban ready` is refused.";
+  "The plan gate is on: before writing any code, propose your plan for this card: write it as Markdown to a file outside the repository (the approach, the files you expect to change, how you will verify it) and run `bb kanban plan --plan-file <that file>`, then stop and wait. The board sends you the approved plan, possibly edited by the user; build to that. Until then, `bb kanban ready` is refused.";
 
 /**
  * What a monitored card's thread is held to, in its instructions and when monitoring starts. `checkCommand` is the
@@ -19,14 +19,14 @@ export function builderContract(isPr: boolean, checkCommand: string | null, plan
   const commit = isPr ? "commit it and push it to the PR branch (never force-push)" : "commit it on your branch (do not push)";
   const checks =
     checkCommand === null
-      ? "run the project's checks (choose the command that builds, lints and tests it; the project sets none)"
+      ? "run the project's checks (choose one command that builds, lints and tests it from the repository root of a fresh worktree, setup included; the project sets none, and the board re-runs it exactly as you name it)"
       : `run the project's check command \`${checkCommand}\``;
   const agentChosen = checkCommand === null ? ' --check-command "<the command you ran>"' : "";
   return [
     "The board monitors this card and runs its review loop, so never move the card yourself; the board moves it.",
     ...(planning ? [PLAN_GATE] : []),
     `When the work is done, ${commit}, ${checks} and fix what fails.`,
-    `Then finish with \`bb kanban ready --commit "$(git rev-parse HEAD)"${agentChosen} --evidence-stdin\`, giving on stdin JSON evidence of how you verified the work: \`{"commands":[{"command":"…","exitCode":0,"outputTail":"its last lines"}],"screenshots":["/absolute/path.png"]}\` (screenshots for UI changes).`,
+    `Then write JSON evidence of how you verified the work to a file outside the repository, \`{"commands":[{"command":"…","exitCode":0,"outputTail":"its last lines"}],"screenshots":["/absolute/path.png"]}\` (screenshots for UI changes), and finish with \`bb kanban ready --commit "$(git rev-parse HEAD)"${agentChosen} --evidence-file <that file>\`.`,
     "Then stop: the board re-runs the checks in a fresh worktree and reviews the commit, and sends failing checks or the findings to fix back to this thread.",
     "Only those prompts from the board start new work. A notice that some other thread finished is for your information: never fix what it reports or report ready because of it.",
   ].join(" ");
@@ -86,7 +86,7 @@ export function cardPromptText(prompt: Exclude<CardPrompt, { kind: "fix" | "comm
         `The user stopped the board's review loop on "${ticket.title}" to rethink the approach: the way it is built looks wrong, and patching it round by round won't fix that.`,
         "",
         planning
-          ? "Step back from the current implementation and reconsider the approach. Propose a new plan with `bb kanban plan --plan-stdin`, saying what you would change, what you would keep and why, and wait for its approval before rebuilding."
+          ? "Step back from the current implementation and reconsider the approach. Propose a new plan with `bb kanban plan --plan-file <path>`, saying what you would change, what you would keep and why, and wait for its approval before rebuilding."
           : "Step back from the current implementation and reconsider the approach. Propose a new one to the user, saying what you would change, what you would keep and why, and wait for their go-ahead before rebuilding.",
         "",
         "Once approved, build it and finish as before; the loop counts its rounds again from that ready.",
@@ -131,7 +131,8 @@ export function fixPromptText(ticket: Ticket, round: number | null, reviewedComm
 /** A short hidden thread that re-runs the check command at the reported commit, independently of the agent that wrote it. */
 export function checksPrompt(ticket: Ticket, commit: string, command: string): string {
   const { preamble, steps } = commitCheckout(ticket, commit);
-  const run = `log=$(mktemp); ( ${command} ) >"$log" 2>&1; code=$?; tail -n ${CHECKS_TAIL_LINES} "$log" | bb kanban checks-record --exit-code "$code" --output-stdin`;
+  // A bare mktemp writes where the sandbox forbids on macOS, and `--output-stdin` takes only one line.
+  const run = `log=$(mktemp "\${TMPDIR:-/tmp}/kanban-checks.XXXXXX"); ( ${command} ) >"$log" 2>&1; code=$?; tail -n ${CHECKS_TAIL_LINES} "$log" >"$log.tail"; bb kanban checks-record --exit-code "$code" --output-file "$log.tail"`;
   return [
     `Re-run the checks of "${ticket.title}" at commit ${commit}. Its agent reported the work ready; this run checks that independently, so report what the command does and change nothing.`,
     "",

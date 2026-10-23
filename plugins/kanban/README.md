@@ -202,7 +202,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
   and one that finishes on its own. They are chosen as monitoring turns on (`bb kanban monitor on --gates
   plan,findings,auto-accept|none`): plan approval (on by default for Jira
   cards) holds the card in `planning` until its thread proposes a plan with
-  `bb kanban plan --plan-stdin` and you approve it, edited or not, with `Y`; the
+  `bb kanban plan --plan-file <path>` and you approve it, edited or not, with `Y`; the
   approved plan goes to the thread and into every review's card intent.
   Findings approval stops each round at Needs you (`approve rN`) until you
   untick findings and approve the rest with `Y`; the unticked stay open.
@@ -663,9 +663,9 @@ bb kanban set-parent <ticket-id> <parent-id|none>
 bb kanban start-subtasks [--ticket <id>] [--sequential]
 bb kanban move <column-id> [--ticket <id>]
 bb kanban monitor on|off [--ticket <id>] [--gates plan,findings,auto-accept|none]
-bb kanban plan --plan-stdin
-bb kanban ready --commit <sha> [--evidence-stdin] [--screenshot <path>] [--check-command "<cmd>"]
-bb kanban checks-record --exit-code <n> [--output-stdin]
+bb kanban plan --plan-file <path>
+bb kanban ready --commit <sha> [--evidence-file <path>] [--screenshot <path>] [--check-command "<cmd>"]
+bb kanban checks-record --exit-code <n> [--output-file <path>]
 bb kanban review [--ticket <id>] [--project <id>] [--full]
 bb kanban review-show [--ticket <id>]
 bb kanban apply-review [--ticket <id>] [--no-push]

@@ -24,12 +24,12 @@ page, its Todo list view, and `bb kanban` read and write the same data.
 | `bb kanban review [--ticket <id>] [--project <id>] [--full] [--depth quick\|standard\|deep]` | Start a code-review thread for the card's PR, or for a card without one, for the commits its thread made beyond its merge base: a fresh worktree checks the PR head (or the thread's HEAD) out detached and runs the `code-review` skill at the depth (Quick: correctness, CLAUDE.md compliance, scope, style; Standard, the default: adds testing and git history; Deep: adds security). Inside a thread, defaults to that thread's card. |
 | `bb kanban review-record --commit <sha> [--base <branch>] [--head <branch>]` | Run from a review thread after checking the commit out: records which commit the review covers. |
 | `bb kanban monitor on\|off [--ticket <id>] [--gates plan,findings,auto-accept\|none]` | Turn a card's review loop on or off. A monitored card is checked and routed by the board itself; off stops the loop after its current step. Turn it on for a card you create for a larger task. `--gates` picks the gates; by default only a Jira card's plan waits for approval. |
-| `bb kanban plan --plan-stdin` | Run from a monitored card's own thread while its plan gate holds it: proposes your plan (Markdown on stdin), then stop and wait for the approved plan. |
-| `bb kanban ready --commit <sha> --evidence-stdin [--screenshot <path>] [--check-command "<cmd>"]` | Run from a monitored card's own thread once its work is committed and verified (see below). |
+| `bb kanban plan --plan-file <path>` | Run from a monitored card's own thread while its plan gate holds it: proposes your plan (a Markdown file), then stop and wait for the approved plan. |
+| `bb kanban ready --commit <sha> --evidence-file <path> [--screenshot <path>] [--check-command "<cmd>"]` | Run from a monitored card's own thread once its work is committed and verified (see below). |
 | `bb kanban landed [--ticket <id>]` | Run from a monitored local card's own thread after the user accepted it and you landed it with the project's finishing steps: the board moves the card to Done. |
-| `bb kanban checks-record --exit-code <n> --output-stdin` | Run from a checks thread: records the check command's exit code and the tail of its output. |
+| `bb kanban checks-record --exit-code <n> --output-file <path>` | Run from a checks thread: records the check command's exit code and the tail of its output. |
 | `bb kanban review-show [--ticket <id>]` | Print the latest persisted review (findings + reviewed commit). |
-| `bb kanban narrative-check --report-stdin < draft.json` | Run from a narrative thread: checks a draft kanban-narrative report parses and that its steps (and revision steps) cover every changed line; lists what they miss. |
+| `bb kanban narrative-check --report-file draft.json` | Run from a narrative thread: checks a draft kanban-narrative report parses and that its steps (and revision steps) cover every changed line; lists what they miss. |
 | `bb kanban narrative-context` | Run from a narrative thread: prints the earlier narrative's steps and the delta a revision chapter must explain. |
 | `bb kanban apply-review [--ticket <id>] [--no-push]` | Apply the selected findings with the `apply-review` skill, all of them without confirmation. A PR review starts a thread that commits and (unless `--no-push`) pushes to the PR branch; a local review is sent to the card's own thread, which commits without pushing. |
 | `bb kanban review-applied [--review <id>] --commit <sha> [--pushed] [--skipped F2,F5]` | Run from the thread applying the findings after committing: records the commit (`--pushed` when it was pushed) and marks every finding it was handed applied, except the `--skipped` ones it could not apply. |
@@ -48,7 +48,7 @@ page, its Todo list view, and `bb kanban` read and write the same data.
 | `bb kanban remove <ticket-id>` | Delete a card. The thread is kept. |
 | `bb kanban sync` | Pull open GitHub PRs into the board now. |
 
-Add `--json` to any command when the output drives code.
+Add `--json` to any command when the output drives code. A `--<name>-stdin` option reads exactly one line; anything longer goes in a file passed with `--<name>-file`.
 
 ## Procedure for a thread that is a card
 
@@ -66,21 +66,25 @@ The thread instructions say when the card is monitored. Then the board moves
 the card, never you, and the loop starts from your ready report:
 
 0. If the instructions say the plan gate is on, first propose a plan with
-   `bb kanban plan --plan-stdin` and stop; build only once the board sends the
+   `bb kanban plan --plan-file <path>` and stop; build only once the board sends the
    approved plan, and build to that version.
 1. Commit the work (on a PR card, push it to the PR branch; never force-push).
 2. Run the project's check command, named in the instructions. When the
    project sets none, choose the command that builds, lints and tests it.
    Fix what fails.
-3. Report it, with JSON evidence on stdin of how you verified the work:
+3. Report it, with JSON evidence of how you verified the work in a file
+   outside the repository:
 
    ```
-   bb kanban ready --commit "$(git rev-parse HEAD)" --evidence-stdin <<'EOF'
+   cat >"$TMPDIR/evidence.json" <<'EOF'
    {"commands":[{"command":"pnpm test","exitCode":0,"outputTail":"42 passed"}],"screenshots":["/abs/path/after.png"]}
    EOF
+   bb kanban ready --commit "$(git rev-parse HEAD)" --evidence-file "$TMPDIR/evidence.json"
    ```
 
-   Add `--check-command "<cmd>"` when the project sets no check command.
+   Add `--check-command "<cmd>"` when the project sets no check command. The
+   board re-runs it from the repository root of a fresh worktree, so it has to
+   work from there, setup included.
 4. Stop. The board re-runs the checks at that commit in a fresh worktree. If
    they fail, their output comes back to this thread: fix it, commit, and
    report ready again.
@@ -89,7 +93,7 @@ the card, never you, and the loop starts from your ready report:
 
 A checks thread checks the reported commit out detached, prepares the
 worktree, runs the check command once and records the result with
-`bb kanban checks-record --exit-code <n> --output-stdin`. It changes nothing
+`bb kanban checks-record --exit-code <n> --output-file <path>`. It changes nothing
 and never tries to fix a failure.
 
 ## Planning threads

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { locationLabel } from "bb-diff-view/line-range";
@@ -91,6 +93,22 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
     }
     return gates;
   }
+
+  /**
+   * bb's `--<name>-stdin` takes exactly one line, so a multi-line value (a plan, a checks log, pretty-printed JSON)
+   * comes from `--<name>-file` instead, a path relative to the caller's directory.
+   */
+  async function valueOrFile(name: string, inline: string | undefined, file: string | undefined, cwd: string | undefined): Promise<string | undefined> {
+    if (file === undefined) return inline;
+    if (inline !== undefined) throw new PluginCliError(`Pass --${name} or --${name}-file, not both.`, { code: "conflicting_options" });
+    try {
+      return await readFile(resolve(cwd ?? process.cwd(), file), "utf8");
+    } catch (error) {
+      throw new PluginCliError(`Could not read ${file}: ${error instanceof Error ? error.message : String(error)}`, { code: "unreadable_file" });
+    }
+  }
+
+  const fileOption = (name: string, what: string) => ({ type: "string", description: `A file holding ${what}, relative to the current directory; use it for anything longer than one line` }) as const;
 
   function parseEvidence(raw: string | undefined, screenshots: readonly string[]): Evidence {
     let json: unknown = {};
@@ -384,10 +402,14 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
         }),
         plan: cliCommand({
           summary: "Propose a monitored card's plan while its plan gate holds it (run by the card's own thread): the user approves or edits it before you build",
-          options: { ...ticketOption, plan: { type: "string", stdin: true, required: true, description: "The plan as Markdown; --plan-stdin reads it from stdin" } },
+          options: {
+            ...ticketOption,
+            plan: { type: "string", stdin: true, description: "The plan as Markdown on one line; --plan-stdin reads that line from stdin" },
+            "plan-file": fileOption("plan", "the plan as Markdown"),
+          },
           async run({ options }, ctx) {
             const ticket = ticketForContext(options.ticket, ctx.threadId);
-            const plan = options.plan.trim();
+            const plan = ((await valueOrFile("plan", options.plan, options["plan-file"], ctx.cwd)) ?? "").trim();
             if (plan === "" || plan.length > PLAN_MAX_LENGTH) throw new PluginCliError(`The plan must be 1 to ${PLAN_MAX_LENGTH} characters`, { code: "invalid_plan" });
             try {
               await proposePlan(ticket.id, plan);
@@ -406,8 +428,9 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
             evidence: {
               type: "string",
               stdin: true,
-              description: 'JSON evidence of how the work was verified: {"commands":[{"command","exitCode","outputTail"}],"screenshots":["/path.png"]}; --evidence-stdin reads it from stdin',
+              description: 'JSON evidence of how the work was verified: {"commands":[{"command","exitCode","outputTail"}],"screenshots":["/path.png"]}; --evidence-stdin reads one line of it from stdin',
             },
+            "evidence-file": fileOption("evidence", "the JSON evidence"),
             screenshot: { type: "string", repeatable: true, description: "Path of a screenshot showing a UI change (repeatable)" },
             "check-command": { type: "string", description: "The check command you ran; needed only when the project sets none" },
             json: { type: "boolean", description: "Emit JSON" },
@@ -415,7 +438,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
           async run({ options }, ctx) {
             const ticket = ticketForContext(options.ticket, ctx.threadId);
             if (!COMMIT_SHA.test(options.commit)) throw new PluginCliError(`"${options.commit}" is not a commit sha.`, { code: "invalid_commit" });
-            const evidence = parseEvidence(options.evidence, options.screenshot);
+            const evidence = parseEvidence(await valueOrFile("evidence", options.evidence, options["evidence-file"], ctx.cwd), options.screenshot);
             let result: Awaited<ReturnType<typeof reportReady>>;
             try {
               result = await reportReady(ticket.id, { commit: options.commit, evidence, checkCommand: options["check-command"] ?? null });
@@ -483,7 +506,8 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
           summary: "Record the result of re-running a monitored card's checks (run by the checks thread itself)",
           options: {
             "exit-code": { type: "integer", min: 0, max: 255, required: true, description: "The check command's exit code" },
-            output: { type: "string", stdin: true, description: "The tail of the command's output; --output-stdin reads it from stdin" },
+            output: { type: "string", stdin: true, description: "The tail of the command's output on one line; --output-stdin reads that line from stdin" },
+            "output-file": fileOption("output", "the tail of the command's output"),
             run: { type: "string", description: "Checks run id; defaults to the run owned by the current thread" },
           },
           async run({ options }, ctx) {
@@ -492,7 +516,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
             if (row === undefined) {
               throw new PluginCliError("No checks run found for this thread.", { code: "no_checks_for_thread", hint: "Run this from the checks thread, or pass --run <id>." });
             }
-            await recordChecks(row, options["exit-code"], options.output ?? "");
+            await recordChecks(row, options["exit-code"], (await valueOrFile("output", options.output, options["output-file"], ctx.cwd)) ?? "");
             return { exitCode: 0, stdout: `Recorded exit code ${options["exit-code"]} for the checks of ${row.commit_sha.slice(0, 7)}` };
           },
         }),
@@ -535,13 +559,14 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
         "narrative-check": cliCommand({
           summary: "Check a draft kanban-narrative report: it parses, and its steps cover every changed line (run by the narrative thread itself)",
           options: {
-            report: { type: "string", required: true, stdin: true, description: "The report JSON (the body of the kanban-narrative block); --report-stdin reads it from stdin" },
+            report: { type: "string", stdin: true, description: "The report JSON (the body of the kanban-narrative block) on one line; --report-stdin reads that line from stdin" },
+            "report-file": fileOption("report", "the report JSON"),
             narrative: { type: "string", description: "Narrative id; defaults to the one the current thread is writing" },
           },
           async run({ options }, ctx) {
             let result: { ok: boolean; text: string };
             try {
-              result = services.tour.checkNarrative(options.narrative, ctx.threadId, options.report);
+              result = services.tour.checkNarrative(options.narrative, ctx.threadId, (await valueOrFile("report", options.report, options["report-file"], ctx.cwd)) ?? "");
             } catch (error) {
               throw new PluginCliError(String(error instanceof Error ? error.message : error), { code: "no_narrative", hint: "Run this from the narrative thread, or pass --narrative <id>." });
             }

@@ -35,7 +35,7 @@ the change is for and how its parts fit, then cover the details.
      one or two short steps at the end.
 3. Write the steps (see the step sections below).
 4. Simplify the narration with the `asd-ste100` skill (see Plain English below).
-5. Check coverage: `bb kanban narrative-check --report-stdin < narrative.json`.
+5. Check coverage: `bb kanban narrative-check --report-file narrative.json`.
    It lists every uncovered range with its lines, and any path that isn't in the
    diff. Fix them and re-run until it passes. Write the file in your scratch
    space, not in the repository.
