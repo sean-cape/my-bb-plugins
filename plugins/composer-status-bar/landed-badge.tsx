@@ -3,15 +3,20 @@ import { cx, enter, speed } from "bb-motion";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Landed, rpcContract } from "./contract.js";
-import { COMPOSER, LANDED_ATTRIBUTE, LANDED_HOST_ATTRIBUTE } from "./footer-style.js";
+import { COMPOSER, LANDED_ATTRIBUTE } from "./footer-style.js";
 import { landedLabel } from "./landed-label.js";
 
-// bb's changes bar ("Committed · 8 files, +208 -24") toggles the composer's git section; no plugin contract names it.
+// bb's changes bar toggles the composer's git section; no plugin contract names it. Its first span is the label
+// ("Committed · 8 files, +208 -24"); an empty one after it holds the expand chevron.
 const GIT_TOGGLE = "#thread-prompt-banner-git-toggle";
+const TOGGLE_LABEL = `${GIT_TOGGLE} > span:not([${LANDED_ATTRIBUTE}])`;
 // Work lands from other threads and checkouts, which change nothing this composer sees.
 const REFRESH_MS = 15_000;
 
-/** A slot right after the changes bar's label, and that label, whose stats change as the branch does. */
+/**
+ * A slot inside the changes bar right after its label, before the chevron, so the badge reads as part of the bar and
+ * opens it like the rest; and the label's text, whose stats change as the branch does.
+ */
 function useChangesBar(anchor: HTMLElement | null): { slot: HTMLElement | null; label: string | null } {
   const [bar, setBar] = useState<{ slot: HTMLElement | null; label: string | null }>({ slot: null, label: null });
   useEffect(() => {
@@ -19,19 +24,18 @@ function useChangesBar(anchor: HTMLElement | null): { slot: HTMLElement | null; 
     if (!root) return;
     let slot: HTMLElement | null = null;
     const sync = () => {
-      const toggle = root.querySelector<HTMLElement>(GIT_TOGGLE);
-      if (toggle === null) {
+      const label = root.querySelector<HTMLElement>(TOGGLE_LABEL);
+      if (label === null) {
         slot?.remove();
         slot = null;
-      } else if (slot === null || slot.previousElementSibling !== toggle) {
+      } else if (slot === null || slot.previousElementSibling !== label) {
         slot?.remove();
         slot = document.createElement("span");
         slot.setAttribute(LANDED_ATTRIBUTE, "");
-        toggle.setAttribute(LANDED_HOST_ATTRIBUTE, "");
-        toggle.after(slot);
+        label.after(slot);
       }
-      const label = toggle?.textContent ?? null;
-      setBar((current) => (current.slot === slot && current.label === label ? current : { slot, label }));
+      const text = label?.textContent ?? null;
+      setBar((current) => (current.slot === slot && current.label === text ? current : { slot, label: text }));
     };
     const observer = new MutationObserver(sync);
     observer.observe(root, { childList: true, subtree: true, characterData: true });
@@ -39,7 +43,6 @@ function useChangesBar(anchor: HTMLElement | null): { slot: HTMLElement | null; 
     return () => {
       observer.disconnect();
       slot?.remove();
-      root.querySelector(GIT_TOGGLE)?.removeAttribute(LANDED_HOST_ATTRIBUTE);
       setBar({ slot: null, label: null });
     };
   }, [anchor]);

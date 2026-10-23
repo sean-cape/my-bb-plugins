@@ -4,9 +4,8 @@ export const ANCHOR_ATTRIBUTE = "data-composer-status-anchor";
 export const PART_ATTRIBUTE = "data-composer-status-part";
 /** On the composer while the footer shows its model picker, so bb's copy in the prompt box can step aside. */
 export const PICKER_ATTRIBUTE = "data-composer-status-picker";
-/** The badge beside bb's changes bar saying whether the branch has landed, and the bar toggle it follows. */
+/** The badge in bb's changes bar saying whether the branch has landed. */
 export const LANDED_ATTRIBUTE = "data-composer-status-landed";
-export const LANDED_HOST_ATTRIBUTE = "data-composer-status-landed-host";
 export type PartName = "model-picker" | "model" | "effort-separator" | "effort" | "limit" | "tokens-used";
 const STYLE_ATTRIBUTE = "data-composer-status-bar";
 // Phone widths keep bb's touch-sized footer.
@@ -214,16 +213,10 @@ export const FOOTER_CSS = `
 ${COMPOSER} *:has(> [${ANCHOR_ATTRIBUTE}]) {
   display: none !important;
 }
-/* bb's changes bar toggle fills its row; it shrinks to its label so the landed badge reads as part of it, and the
-   badge takes the slack so the merge-base picker stays at the right. */
-[${LANDED_HOST_ATTRIBUTE}] {
-  flex: 0 1 auto !important;
-  padding-right: 0.25rem !important;
-}
+/* Inside bb's changes bar, after its truncating label; the label gives way first. */
 [${LANDED_ATTRIBUTE}] {
   display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
   font-size: 0.75rem;
   white-space: nowrap;
