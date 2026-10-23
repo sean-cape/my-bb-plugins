@@ -528,7 +528,8 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     const key = `${latestDelta.fromSha}..${latestDelta.toSha}`;
     if (first === undefined || readPreference(landed) === key) return;
     const placed = initialCursor.current?.placed ?? null;
-    if (keys.get().cursor !== null && keys.get().cursor !== placed) return;
+    const cursor = keys.get().cursor;
+    if (cursor !== null && !samePlace(cursor, placed)) return;
     writePreference(landed, key);
     // The initial cursor would otherwise go back to the first file once its rows arrive.
     initialCursor.current = { instanceKey: `${instanceKey}|${commitRangeKey(null)}`, placed: null, done: true };
@@ -538,7 +539,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
     // they settle, or until the reader scrolls or moves the cursor.
     const since = performance.now();
     const unsubscribe = keys.onModel(() => {
-      if (performance.now() - since > LANDING_SETTLE_MS || lastScrollIntent.current > since || keys.get().cursor !== parked) unsubscribe();
+      if (performance.now() - since > LANDING_SETTLE_MS || lastScrollIntent.current > since || !samePlace(keys.get().cursor, parked)) unsubscribe();
       else requestAnimationFrame(() => sectionRefs.current.get(first.path)?.scrollIntoView({ block: "start" }));
     });
     window.setTimeout(unsubscribe, LANDING_SETTLE_MS);
