@@ -231,9 +231,11 @@ function reviewCompleted(base: LoopState, event: Extract<LoopEvent, { type: "rev
   const rejected = own.filter((finding) => finding.dispute?.outcome === "rejected");
   const state: LoopState = { ...base, attention, disputes: rejected.map((finding) => ({ ...loopFinding(finding), decision: null })), heldFindings: [] };
   const answers = lastRoundAnswers(state);
-  if (own.some((finding) => finding.carriedFrom !== null && answers[finding.carriedFrom]?.answer === "fixed")) return needsYou(state, "not-converging");
-  const keptOpen = rejected.map(loopFinding);
-  const open = routed(findings).map(loopFinding);
+  // A minor answered fixed but still there isn't worth stopping for, or handing back to the same fix; it stays listed as open.
+  const unconverged = own.filter((finding) => finding.carriedFrom !== null && answers[finding.carriedFrom]?.answer === "fixed");
+  if (unconverged.some((finding) => finding.severity !== "minor")) return needsYou(state, "not-converging");
+  const keptOpen = [...rejected, ...unconverged].map(loopFinding);
+  const open = routed(findings).filter((finding) => !unconverged.includes(finding)).map(loopFinding);
   if (rejected.some((finding) => finding.severity !== "minor")) return needsYou({ ...state, openFindings: keptOpen, heldFindings: open }, "dispute");
   return route(state, { ...base, disputes: state.disputes }, reviewId, open, keptOpen, event.pr);
 }

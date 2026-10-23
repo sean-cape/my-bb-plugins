@@ -258,8 +258,12 @@ describe("loop reducer", () => {
       expect(later.state).toMatchObject({ phase: "needs-you", reason: "clean", openFindings: [{ id: "F1" }] });
     });
 
-    it("escalates a finding answered fixed that is still open as not converging, whatever its severity", () => {
-      expect(rereviewed([carried("F1", "minor", "rev1/F1")]).state).toMatchObject({ phase: "needs-you", reason: "not-converging", round: 1 });
+    it("escalates a serious finding answered fixed that is still open as not converging, and leaves such a minor open", () => {
+      expect(rereviewed([carried("F1", "important", "rev1/F1")]).state).toMatchObject({ phase: "needs-you", reason: "not-converging", round: 1 });
+      expect(rereviewed([carried("F1", "minor", "rev1/F1")]).state).toMatchObject({ phase: "needs-you", reason: "clean", openFindings: [{ id: "F1", severity: "minor" }] });
+      // It isn't handed back with a serious finding's round either, but stays listed.
+      const mixed = rereviewed([carried("F1", "minor", "rev1/F1"), finding("F2", "important")]);
+      expect(mixed.state).toMatchObject({ phase: "fixing", round: 2, rounds: [{}, { handed: ["F2"] }] });
     });
   });
 

@@ -167,8 +167,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
   new critical and important findings and leaves the style finder out. It
   also judges each dispute: an accepted one closes the finding, a
   rejected one stops the loop with reason "dispute" (or, on a minor finding,
-  stays open as a minor), and a finding answered fixed that is still there
-  stops it with reason "not converging". A clean review moves the card to
+  stays open as a minor), and a critical or important finding answered fixed
+  that is still there stops it with reason "not converging" (a minor one
+  stays listed as open instead). A clean review moves the card to
   Needs you. Minor findings start the first round like any other, but after
   it only a critical or important finding starts another (the open minors go
   with it); a re-review left with only minors ends clean with them listed. A

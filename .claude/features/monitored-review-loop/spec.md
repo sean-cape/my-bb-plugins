@@ -261,7 +261,7 @@ flowchart LR
   - **Pulling one back in:** pulling a deferred or dropped finding back in starts a round I own, which doesn't count toward the cap.
   - **Pre-existing findings:** listed, never routed.
   - **Disputes the verifier rejects:** on a critical or important finding they go to Needs you. On a minor finding they stay open as a minor and don't escalate.
-  - **Not converging:** a finding the agent marked fixed but still open sends the card to Needs you.
+  - **Not converging:** a critical or important finding the agent marked fixed but still open sends the card to Needs you. A minor one stays listed as open and isn't handed back.
 - **Cap.** Three automatic rounds. Rounds I start with Send back, or by pulling a finding back in, are counted apart and never trip the cap.
 - **Failures.** A checks, tour or review thread that goes idle without a record or report is retried once, then escalates as a loop error. A thread that finished with a final message the board can't parse escalates at once, with what went wrong, since a retry writes the same message; a review thread missing the code-review skill ends with a fixed line saying so. A review thread idling on an interim message (its verifiers still running, unseen by bb's background-agent count) isn't a failure until it has stayed idle ten minutes without a report. The existing idle handling, which waits for background agents, decides when a thread has really finished.
 - **Worker threads.** Checks, classify, review and narrative threads are owned by the card's thread (archived and deleted with it) and run its provider and model, but are not its children, since bb posts a child's final message into its parent and the card's thread would act on it. A ready at a new commit while an older one is checked, classified or reviewed stops those threads; a repeated ready of the same commit is ignored. A narrative is only requested when the loop stops for the user to read the change, not for failing checks or a loop error.
@@ -281,7 +281,7 @@ flowchart LR
   - failing checks bouncing back, and escalating on the second failure;
   - a fix round followed by a clean re-review;
   - the cap at three rounds;
-  - a finding marked fixed that's still open, escalating early;
+  - a serious finding marked fixed that's still open, escalating early, and a minor one left open;
   - disputes accepted and rejected;
   - nits and smells triaged apply starting the first round like any other finding, and only riding along with a serious finding after it;
   - deferred and dropped findings never routed;
