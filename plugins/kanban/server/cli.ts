@@ -142,7 +142,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
     },
   } as const;
 
-  const ticketPositional = { name: "ticket", description: "Ticket id. Defaults to the card linked to the current thread.", required: false } as const;
+  const ticketPositional = { name: "ticket", description: ticketOption.ticket.description, required: false } as const;
 
   bb.cli.register(
     defineCli({

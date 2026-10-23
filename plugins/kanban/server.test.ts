@@ -599,6 +599,7 @@ describe("CLI", () => {
     expect(positional.exitCode).toBe(0);
     expect((JSON.parse(positional.stdout ?? "") as Ticket).id).toBe(ticket.id);
     const option = await current().harness.behavior.runCli(["show", "--ticket", ticket.id, "--json"]);
+    expect(option.exitCode).toBe(0);
     expect((JSON.parse(option.stdout ?? "") as Ticket).id).toBe(ticket.id);
 
     const both = await current().harness.behavior.runCli(["show", ticket.id, "--ticket", ticket.id]);
