@@ -20,10 +20,29 @@ export function gapCursorLine(gap: ExcerptGap): PatchLine | null {
   return (gap.after === null ? gap.hidden.at(-1) : gap.hidden[0]) ?? null;
 }
 
-/** The rows a press opens: all, the first step's under the code above, or the last step's over the code below. */
+/** A gap's hidden rows split where the line numbers jump, between two of the patch's hunks. */
+export function gapRuns(gap: ExcerptGap): PatchLine[][] {
+  const runs: PatchLine[][] = [];
+  let old: number | null = null;
+  let added: number | null = null;
+  for (const line of gap.hidden) {
+    const jumps = (line.old !== null && old !== null && line.old !== old + 1) || (line.new !== null && added !== null && line.new !== added + 1);
+    if (jumps || runs.length === 0) runs.push([]);
+    runs.at(-1)!.push(line);
+    old = line.old ?? old;
+    added = line.new ?? added;
+  }
+  return runs;
+}
+
+/**
+ * The rows a press opens: all, or a step's worth under the code above (`first`) or over the code below (`last`), which
+ * stops where the patch's hunk does, so each press shows lines that run on from what is shown.
+ */
 export function gapPart(gap: ExcerptGap, part: FoldPart): PatchLine[] {
   if (part === "all") return gap.hidden;
-  return part === "first" ? gap.hidden.slice(0, EXPAND_STEP_LINES) : gap.hidden.slice(-EXPAND_STEP_LINES);
+  const runs = gapRuns(gap);
+  return part === "first" ? (runs[0] ?? []).slice(0, EXPAND_STEP_LINES) : (runs.at(-1) ?? []).slice(-EXPAND_STEP_LINES);
 }
 
 /**
@@ -35,8 +54,8 @@ export function gapEnter(gap: ExcerptGap): { reveal: PatchLine[]; cursor: PatchL
   const { hidden } = gap;
   const leading = gap.after === null;
   if (hidden.length <= EXPAND_STEP_LINES) return { reveal: hidden, cursor: (leading ? hidden.at(-1) : hidden[0]) ?? null };
-  if (leading) return { reveal: gapPart(gap, "last"), cursor: hidden[hidden.length - EXPAND_STEP_LINES - 1]! };
-  return { reveal: gapPart(gap, "first"), cursor: hidden[EXPAND_STEP_LINES]! };
+  const reveal = gapPart(gap, leading ? "last" : "first");
+  return { reveal, cursor: hidden[leading ? hidden.length - reveal.length - 1 : reveal.length]! };
 }
 
 function holds(row: NavRow, line: PatchLine): boolean {

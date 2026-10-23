@@ -3,7 +3,8 @@ import type { ExcerptGap, PatchLine } from "../../narrative";
 import { cn } from "../utils";
 import { CURSOR_RING, useCursorSide } from "../keys/review-keys-context";
 import { FOLD_BAND, FoldControls } from "./fold-controls";
-import { gapCursorLine, gapPart } from "./patch-gaps";
+import { EXPAND_STEP_LINES } from "./patch-gaps";
+import { gapCursorLine, gapPart, gapRuns } from "./patch-gaps";
 
 function span(lines: readonly PatchLine[]): string | null {
   const numbers = lines.flatMap((line) => (line.new === null ? [] : [line.new]));
@@ -24,14 +25,16 @@ export const GapBand = memo(function GapBand({ path, gap, index, onReveal }: { p
   const atCursor = useCursorSide(path, at?.old ?? null, at?.new ?? null) !== null;
   const count = gap.hidden.length;
   const changed = gap.hidden.filter((line) => line.old === null || line.new === null).length;
-  const range = span(gap.hidden);
+  const runs = gapRuns(gap);
+  // Across hunks the numbers jump, and a range would claim the lines between.
+  const details = [runs.length === 1 ? span(gap.hidden) : null, changed === 0 ? null : `${changed} changed`].filter((part) => part !== null);
   const parts = [
-    count === 0 ? null : `${count} ${count === 1 ? "line" : "lines"} not in this step${range === null ? "" : ` (${range}${changed === 0 ? "" : `, ${changed} changed`})`}`,
+    count === 0 ? null : `${count} ${count === 1 ? "line" : "lines"} not in this step${details.length === 0 ? "" : ` (${details.join(", ")})`}`,
     gap.unchanged === 0 ? null : `${gap.unchanged} unchanged ${gap.unchanged === 1 ? "line" : "lines"}`,
   ].filter((part) => part !== null);
   return (
     <div data-excerpt-gap={index} className={cn(FOLD_BAND, "border-y border-border/60 px-2 py-0.5", atCursor && CURSOR_RING)} data-cursor={atCursor ? "" : undefined}>
-      <FoldControls count={count} leading={gap.after === null} trailing={gap.before === null} noun={count === 1 ? "line" : "lines"} atCursor={atCursor} onReveal={(part) => onReveal(gapPart(gap, part))}>
+      <FoldControls count={count} leading={gap.after === null} trailing={gap.before === null} noun={count === 1 ? "line" : "lines"} steps={{ first: Math.min(EXPAND_STEP_LINES, runs[0]?.length ?? 0), last: Math.min(EXPAND_STEP_LINES, runs.at(-1)?.length ?? 0) }} atCursor={atCursor} onReveal={(part) => onReveal(gapPart(gap, part))}>
         {parts.join(" · ")}
       </FoldControls>
     </div>

@@ -1048,6 +1048,10 @@ describe("excerpt gaps", () => {
     expect(gapEnter(long)).toEqual({ reveal: lines(71, 90), cursor: { old: null, new: 91 } });
     expect(gapEnter({ ...long, after: null })).toEqual({ reveal: lines(81, 100), cursor: { old: null, new: 80 } });
     expect(gapPart(long, "last")).toEqual(lines(81, 100));
+    // A step stops where the patch's hunk does: rows 71–75, then 13 unchanged lines, then rows 89–120.
+    const split = { ...short, hidden: [...lines(71, 75), ...lines(89, 120)] };
+    expect(gapEnter(split)).toEqual({ reveal: lines(71, 75), cursor: { old: null, new: 89 } });
+    expect(gapPart(split, "last")).toEqual(lines(101, 120));
   });
 });
 
