@@ -37,7 +37,7 @@ export function isUnsent(entry: ThreadEntry): boolean {
 /**
  * Synced GitHub review comments merged with the board's own diff comments into threads; posted drafts show once, as
  * their synced copy. A thread outdated by a later push keeps no line. Which of them the diff draws is `shownInline`'s
- * call; the comments view lists them all.
+ * call; the conversation lists them all.
  */
 export function allDiffThreads(local: readonly DiffComment[], github: readonly GithubComment[]): DiffThread[] {
   const synced = new Set(github.filter((comment) => comment.kind === "review-comment").map((comment) => comment.id));

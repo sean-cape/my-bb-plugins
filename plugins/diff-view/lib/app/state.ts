@@ -32,7 +32,7 @@ export interface DiffPreferences {
   fileTreeOpen: boolean;
   /** Text diffs show whitespace-only changes as unchanged lines, as `git diff -w` does. */
   hideWhitespace: boolean;
-  /** Comment threads are left out of the files and narrative views (the comments view still lists them). */
+  /** Comment threads are left out of the files and narrative views (the conversation still lists them). */
   hideThreads: boolean;
 }
 

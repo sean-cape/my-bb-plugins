@@ -99,6 +99,7 @@ export function createDiffComments(
       diffHunk: null,
       originalLine: comment.line,
       originalStartLine: comment.startLine,
+      reviewId: null,
     }));
   }
 

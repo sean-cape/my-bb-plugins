@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import type {
   BlameLine,
   CommitRange,
+  ConversationEvent,
   DiffCommits,
   DiffComment,
   DiffCommentTarget,
@@ -78,6 +79,8 @@ export interface DiffSource {
   suggestions?: { apply(items: SuggestionItem[], message: string | null): Promise<SuggestionsApplied> };
   /** The diff's commits and review marks, for reading one commit or a range of them; lights up `gr`. */
   commits?(): Promise<DiffCommits>;
+  /** The pull request's description, reviews and changes for the conversation view, which otherwise shows the commits and comments alone. */
+  conversation?(): Promise<ConversationEvent[]>;
 }
 
 /** Copy that names where comments live, so each host can speak in its own terms. */

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { allDiffThreads, localCommentState, threadIsOpen, threadKeyActions } from "./lib/app/comments/threads";
-import { shownInline } from "./lib/app/comments/comment-sections";
+import { shownInline } from "./lib/app/comments/thread-code";
 import { fetchChangeTotals, knownChangeTotals } from "./lib/app/change-totals";
 import { buildFileTree } from "./lib/app/file-tree/build-file-tree";
 import { statusMark } from "./lib/app/file-status";

@@ -289,5 +289,8 @@ export function migrate(bb: BbPluginApi, db: KanbanDatabase): void {
     `ALTER TABLE pr_comments ADD COLUMN original_start_line INTEGER`,
     // Comments already synced have no hunk; the next sync pulls them again.
     `UPDATE tickets SET comments_synced_for = NULL`,
+    // The review an inline comment was submitted in, which the conversation groups threads under; pulled again likewise.
+    `ALTER TABLE pr_comments ADD COLUMN review_id INTEGER`,
+    `UPDATE tickets SET comments_synced_for = NULL`,
   ]);
 }

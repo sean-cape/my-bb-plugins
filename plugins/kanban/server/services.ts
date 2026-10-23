@@ -4,6 +4,7 @@ import { createCodeReviewThreads } from "./code-review-threads";
 import { createDiffComments } from "./comments/diff-comments";
 import { createPendingReview } from "./comments/pending-review";
 import { createPrComments } from "./comments/pr-comments";
+import { createPrConversation } from "./comments/pr-conversation";
 import type { KanbanContext } from "./context";
 import { createChanges } from "./diff/changes";
 import { createDiffSubjects } from "./diff/subjects";
@@ -32,6 +33,7 @@ export function createServices(ctx: KanbanContext) {
   const changes = createChanges(ctx);
   const viewed = createViewedMarks(ctx, { changes });
   const prComments = createPrComments(ctx, { board, threads, projects, codeReviewThreads });
+  const prConversation = createPrConversation(ctx, { board });
   const pendingReview = createPendingReview(ctx, { board, changes });
   const diffComments = createDiffComments(ctx, { board, subjects, changes, prComments, pendingReview });
   const reviews = createReviews(ctx, { board, threads, projects, codeReviewThreads });
@@ -42,7 +44,7 @@ export function createServices(ctx: KanbanContext) {
   const loop = createLoop(ctx, { board, threads, codeReviewThreads, projectSettings, reviews, diffComments, prComments, changes, viewed, tour });
   const reviewResume = createReviewResume(ctx, { reviews, loop });
   const suggestions = createSuggestions(ctx, { prComments });
-  return { spend, board, projectSettings, loop, reviewResume, subjects, threads, projects, codeReviewThreads, changes, viewed, prComments, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, suggestions };
+  return { spend, board, projectSettings, loop, reviewResume, subjects, threads, projects, codeReviewThreads, changes, viewed, prComments, prConversation, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, suggestions };
 }
 
 export type Services = ReturnType<typeof createServices>;

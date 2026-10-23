@@ -78,16 +78,23 @@ plugins embed.
   exact replacement for the lines, and an unclosed block keeps its trailing
   whitespace when the comment is saved. Suggestions also read a file whose
   patch came through "Load diff".
-- **Comments view**: a third reading mode beside Files (and Narrative), shown
-  once there is a thread, or `gc` (again to return where you were). It lists
-  every thread grouped by file in diff order (open, resolved, outdated,
-  local and GitHub), each over its code: the commented lines of today's diff
-  (with the lines they replaced, or a few either side in a run of only added
-  lines, such as a new file), or for an outdated GitHub thread the hunk GitHub stored when it was left; a
-  thread with neither sits under its file's name. Chips (or `F` there) filter
-  open, resolved, outdated or all. The files view's cursor and thread keys
-  work on it (`j`/`k`, `c`, Enter, `a`, `r`, `e`, `dd`, `M`, `gx`, `go`), and
-  `gf` (or a file name) opens the files view at the thread's line.
+- **Conversation view**: a third reading mode beside Files (and Narrative),
+  read like GitHub's Conversation tab, or `gc` (again to return where you
+  were). Oldest first on one rule: the pull request's description, commits
+  (a run of them together), comments, reviews (approvals without text too)
+  and changes to the pull request (merged, renamed, force-pushed, review
+  requested), where the host lists them (kanban does for PR cards; without
+  them the view shows the commits and threads alone). Each GitHub thread sits
+  under the review it was submitted in, over the hunk GitHub stored when it
+  was left; a thread started here stands at its first comment over today's
+  lines around it (or under its file's name when the diff no longer shows
+  them). Resolved and outdated threads are there too, resolved ones folded.
+  `j`/`k` step through the entries (each commit and each thread is one),
+  `c`/`C` jump between threads, Enter folds a thread or comment and on a
+  commit shows that commit's changes in the files view, `gf` opens a thread's
+  line in the files view, `gx` opens the entry on GitHub, and the thread keys
+  (`a`, `r`, `e`, `dd`, `M`, `go`, `A`, `B`) act on the thread under the
+  cursor. It reads whatever commits `gr` picked.
 - **Review findings** (hosts with reviews, such as kanban) show as one line
   each under their line: severity, title and the apply-round checkbox. A
   finding opens to its description, fix and scores on click, Enter, or while
@@ -187,7 +194,7 @@ plugins embed.
   review where the host has one (see below),
   `gd` peeks at a symbol on the line (Escape closes it), `gl` switches every file between
   split and unified, `W` hides or shows whitespace changes, `R` refreshes,
-  `gc` opens the comments view (see above), `H` hides or shows the threads in
+  `gc` opens the conversation (see above), `H` hides or shows the threads in
   the diff, `I` suggests a change to the line or selection, `A` applies the
   suggestion in the thread or review finding under the cursor, `B` adds it to
   the batch (or takes it out) and `gB` applies the batch (see Suggested

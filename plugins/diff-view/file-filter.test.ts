@@ -15,7 +15,7 @@ import {
   type FileMarks,
 } from "./lib/app/file-filter";
 import { REVIEW_KEYMAP } from "./lib/app/keys/keymap";
-import { COMMENTS_KEYMAP } from "./lib/app/comments/comments-keymap";
+import { CONVERSATION_KEYMAP } from "./lib/app/conversation/conversation-keymap";
 import { NARRATIVE_KEYMAP } from "./lib/app/narrative/narrative-keymap";
 import { runReviewCommand } from "./lib/app/keys/review-commands";
 import { reviewEnv } from "./test-helpers";
@@ -96,10 +96,10 @@ describe("file filter", () => {
 });
 
 describe("file filter keys", () => {
-  it("opens the menu on gf in the files view; the narrative and the comments view keep their own gf", () => {
+  it("opens the menu on gf in the files view; the narrative and the conversation keep their own gf", () => {
     expect(REVIEW_KEYMAP.gf).toEqual({ kind: "fileFilter" });
     expect(NARRATIVE_KEYMAP.gf).toEqual({ kind: "openInFiles" });
-    expect(COMMENTS_KEYMAP.gf).toEqual({ kind: "openInFiles" });
+    expect(CONVERSATION_KEYMAP.gf).toEqual({ kind: "openInFiles" });
   });
 
   it("opens the menu before there is a line, even with every file filtered out", () => {

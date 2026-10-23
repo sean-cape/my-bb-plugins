@@ -579,9 +579,11 @@ its PR is reviewed and its review findings and comments are handed to agents.
   board's own comments. An open GitHub thread has Resolve (`r`) beside Reply.
   Resolved threads, and threads whose line the latest push changed
   (outdated), leave the diff unless you have an unsent reply in one; the
-  summary bar counts them and the Comments view (`gc`) lists every thread,
-  an outdated one over the hunk GitHub stored for it (synced with each
-  comment's original lines), with Unresolve (`r`) to reopen a resolved one;
+  summary bar counts them and the Conversation view (`gc`) lists every thread
+  under the review it was submitted in, between the PR's description,
+  commits, comments, reviews and events as on GitHub's Conversation tab, each
+  over the hunk GitHub stored for it (synced with each comment's original
+  lines and review), with Unresolve (`r`) to reopen a resolved one;
   the card panel's PR comments still list them too. Reply in
   any thread, locally or on GitHub (GitHub replies need a thread that is an
   inline GitHub comment, or a GitHub draft that becomes one). Local replies in

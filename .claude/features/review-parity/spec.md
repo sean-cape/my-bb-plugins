@@ -35,7 +35,7 @@ Goal: GitHub's review feature set, with this view's own keys and workflows. Skip
 | `W` | Hide / show whitespace changes (default: hidden) | 02 |
 | Enter on a large file's placeholder | Load its diff | 03 |
 | `gl` | Split / unified, now for structural files too | 04 |
-| `gc` | Comments view (every thread, resolved and outdated included); `gc` again returns | 05 |
+| `gc` | Conversation view (GitHub's Conversation tab: description, commits, comments, reviews and their threads); `gc` again returns | 05 |
 | `H` | Hide / show comment threads inline | 05 |
 | `gf` | File filter menu (files view; the narrative keeps its own `gf`) | 06 |
 | `yp`, `yl` | Copy the file's path / a link to the line (or selection) | 07 |
@@ -64,11 +64,14 @@ Goal: GitHub's review feature set, with this view's own keys and workflows. Skip
 4. **Unified structural** is the same `layout` preference the text diffs use, now persisted, applied to structural
    files: one code column, old and new line numbers, deleted rows before added rows in each change block, token
    highlights kept. Cursor, comments, findings, folds and search work in it.
-5. **Comments view** is a third mode beside Files and Narrative. It lists every thread grouped by file: open, resolved,
-   outdated, local and GitHub, with filter chips (open / resolved / outdated / all), each over its code (current lines
-   from the diff, or GitHub's stored `diff_hunk` for an outdated thread). Inline, the files and narrative views stop
-   showing resolved and outdated threads; the summary bar says how many are in the Comments view. `H` hides all
-   threads inline.
+5. **Conversation view** is a third mode beside Files and Narrative, read like GitHub's Conversation tab rather than its
+   Files changed tab: the PR's description, then commits, PR comments, reviews (approvals without text included) and
+   changes to the PR (merged, renamed, force-pushed, review requested), oldest first. Each GitHub thread sits under the
+   review it was submitted in, over the `diff_hunk` GitHub stored for it; a thread started on the board stands on its
+   own over today's lines. Resolved and outdated threads are listed too, resolved ones folded. Inline, the files and
+   narrative views show only open threads (an unsent reply keeps a closed one); the summary bar counts the rest and
+   opens the conversation. `H` hides all threads inline. (First built as a per-file list of every thread over its
+   code, which was the files view again; replaced on 2026-10-23.)
 6. **File filter**: extensions, change type, hide viewed, only files with comments, only files with findings.
    Filtered files leave the tree, the scroll, navigation and search; a summary-bar chip shows and clears it. Kept per
    view instance for the session.

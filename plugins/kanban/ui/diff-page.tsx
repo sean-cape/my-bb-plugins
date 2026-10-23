@@ -82,6 +82,7 @@ function useKanbanDiffSource(subjectId: string, ticket: Ticket | null, plan: boo
         ? {}
         : {
             listGithubComments: async () => (await rpc.call("comments_list", { ticketId: prTicketId })).comments,
+            conversation: async () => (await rpc.call("pr_conversation", { ticketId: prTicketId })).events,
             setThreadResolved: async (rootId, resolved) => {
               await rpc.call("comment_set_resolved", { id: rootId, resolved });
               refetch();

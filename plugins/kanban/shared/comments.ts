@@ -38,6 +38,8 @@ export const prCommentSchema = z.object({
   /** The line (and a range's first line) the comment was left on, which an outdated comment keeps. */
   originalLine: z.number().int().nullable(),
   originalStartLine: z.number().int().nullable(),
+  /** The review an inline comment was submitted in (`review:<n>`); null for other kinds, or when GitHub named none. */
+  reviewId: z.string().nullable(),
 });
 export type PrComment = z.infer<typeof prCommentSchema>;
 
@@ -93,3 +95,27 @@ export const diffCommentSchema = z.object({
   applyId: z.string().nullable(),
 });
 export type DiffComment = z.infer<typeof diffCommentSchema>;
+
+/** What a pull request's conversation lists besides its commits and synced comments; see `ConversationEvent` in bb-diff-view. */
+export const conversationEventSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("opened"), id: z.string(), author: z.string(), body: z.string(), createdAt: z.string(), url: z.string() }),
+  z.object({
+    kind: z.literal("review"),
+    id: z.string(),
+    author: z.string(),
+    mine: z.boolean(),
+    state: z.enum(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"]),
+    body: z.string(),
+    createdAt: z.string(),
+    url: z.string(),
+  }),
+  z.object({
+    kind: z.literal("action"),
+    id: z.string(),
+    action: z.enum(["merged", "closed", "reopened", "force-pushed", "ready-for-review", "converted-to-draft", "review-requested", "renamed", "branch-deleted"]),
+    actor: z.string(),
+    detail: z.string().nullable(),
+    createdAt: z.string(),
+  }),
+]);
+export type ConversationEvent = z.infer<typeof conversationEventSchema>;

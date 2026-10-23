@@ -47,10 +47,12 @@ import { focusAt, runReviewCommand, type FindingAnchor, type ReviewEnv } from ".
 import { createReviewKeys, useReviewKeysState, type FocusedAnnotation } from "./keys/review-keys-context";
 import { LINE_PX, scrollPageBy, scrollerEnv, visibleCursor as paneVisibleCursor, type ScrollerPane } from "./keys/scroller-env";
 import { useCursorReveal } from "./keys/use-cursor-reveal";
-import { CommentsView } from "./comments/comments-view";
-import { COMMENTS_KEY_HELP, COMMENTS_KEYMAP, type CommentsCommand } from "./comments/comments-keymap";
-import { threadCounts } from "./comments/comment-sections";
-import { useCommentsMode } from "./comments/use-comments-mode";
+import { threadCounts } from "./comments/thread-code";
+import { conversationItems } from "./conversation/conversation";
+import { ConversationView } from "./conversation/conversation-view";
+import { CONVERSATION_KEY_HELP, CONVERSATION_KEYMAP, type ConversationCommand } from "./conversation/conversation-keymap";
+import { useConversationEvents } from "./conversation/use-conversation-events";
+import { useConversationMode } from "./conversation/use-conversation-mode";
 import { errorMessage, groupByPath, plural } from "./format";
 import { cn } from "./utils";
 import { enter } from "./ui/motion";
@@ -59,7 +61,7 @@ import { SkeletonLines } from "./ui/skeleton";
 import { TruncationBanner } from "./large-diff";
 import { useSuggestions } from "./suggestions/use-suggestions";
 import { CommitPicker, CommitsButton, useCommitRange } from "./commits/commit-picker";
-import { rangeEndsAtHead, rangeLabel } from "./commits/commit-range";
+import { commitsRange, rangeEndsAtHead, rangeLabel } from "./commits/commit-range";
 import { useDiffSearch } from "./search/use-diff-search";
 import type { SearchedFile } from "./search/diff-search";
 import { NO_FILE_FILTER } from "./file-filter";
@@ -195,17 +197,17 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   const { tour, busy: tourBusy, generate: generateTour } = useTour(source, refreshSignal);
   // The narrative walks all the changes, so a partial range reads in the files view.
   const narrativeAvailable = source.tour?.story !== undefined && gate.whole;
-  // The comments view draws each thread over today's lines of the diff, which a partial range doesn't show.
-  const commentsAvailable = comments.allThreads.length > 0 && gate.whole;
+  // The conversation reads whatever range is picked: GitHub threads show over the hunks GitHub stored.
+  const conversationAvailable = source.conversation !== undefined || comments.allThreads.length > 0 || comments.github.length > 0 || (commits?.commits.length ?? 0) > 0;
   const [chosenMode, setChosenMode] = useState<DiffViewMode>(() => (readPreference("viewMode") === "narrative" ? "narrative" : "files"));
-  const mode: DiffViewMode = chosenMode === "comments" ? (commentsAvailable ? "comments" : "files") : narrativeAvailable ? chosenMode : "files";
+  const mode: DiffViewMode = chosenMode === "conversation" ? (conversationAvailable ? "conversation" : "files") : narrativeAvailable ? chosenMode : "files";
   // Read by closures that outlive a render: a reveal queued for after a mode switch, the key scope's keymap.
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const setMode = (next: DiffViewMode) => {
     setChosenMode(next);
-    // Threads load after the view mounts, so a comments view restored on open would flip in late; it is not kept.
-    if (next !== "comments") writePreference("viewMode", next);
+    // Threads load after the view mounts, so a conversation restored on open would flip in late; it is not kept.
+    if (next !== "conversation") writePreference("viewMode", next);
   };
   // The tour reloads on every refresh signal, so the story follows it.
   const narrative = useNarrativeStory(source, tour, mode === "narrative");
@@ -267,7 +269,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   const risk = useMemo(() => riskByPath(tour, allFindingsByPath), [tour, allFindingsByPath]);
   const changedRangesByPath = useMemo(() => new Map((gate.whole ? (delta?.files ?? []) : []).map((file) => [file.path, file.ranges] as const)), [delta, gate]);
   const shownThreads = useMemo(() => gate.threads(comments.threads), [comments.threads, gate]);
-  // `H` leaves every thread out of the files and the narrative; the comments view still lists them.
+  // `H` leaves every thread out of the files and the narrative; the conversation still lists them.
   const inlineThreads = preferences.hideThreads ? NO_THREADS : shownThreads;
   // Stable per file, so a re-render of the view (scrolling moves the active file) leaves each file's diff untouched.
   const threadsByPath = useMemo(() => groupByPath(inlineThreads), [inlineThreads]);
@@ -359,8 +361,8 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   // switch lands in the view that mounts.
   const { reveal, onScreen } = useCursorReveal(
     keys,
-    () => (modeRef.current === "narrative" ? narrativeScrollRef.current : modeRef.current === "comments" ? commentsMode.scrollRef.current : mainRef.current),
-    (path) => (modeRef.current === "narrative" ? excerptRefs.current.get(path) : modeRef.current === "comments" ? commentsMode.sectionOf(path) : sectionRefs.current.get(path)) ?? null,
+    () => (modeRef.current === "narrative" ? narrativeScrollRef.current : modeRef.current === "conversation" ? conversationMode.scrollRef.current : mainRef.current),
+    (path) => (modeRef.current === "narrative" ? excerptRefs.current.get(path) : modeRef.current === "conversation" ? null : sectionRefs.current.get(path)) ?? null,
     () => modeRef.current === "files",
   );
   const revealRef = useRef(reveal);
@@ -656,39 +658,49 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
       enterNarrative();
       return;
     }
-    if (command.kind === "commentsView") {
-      commentsMode.enter();
+    if (command.kind === "conversation") {
+      conversationMode.enter();
       return;
     }
     runReviewCommand(command, count, filesEnv());
   };
 
-  const commentsMode = useCommentsMode({
+  const conversationEvents = useConversationEvents(source, refreshSignal, mode === "conversation");
+  const conversation = useMemo(
+    () => conversationItems({ threads: comments.allThreads, github: comments.github, commits: commits?.commits ?? [], events: conversationEvents.events }),
+    [comments.allThreads, comments.github, commits, conversationEvents.events],
+  );
+  const conversationMode = useConversationMode({
     keys,
     mode,
     setMode,
-    available: commentsAvailable,
-    unavailable: !gate.whole ? `The comments view covers all the changes; ${SWITCH_TO_ALL_FIRST}` : "No comment threads yet",
+    available: conversationAvailable,
+    items: conversation,
     narrativeAvailable,
     enterNarrative,
-    allThreads: comments.allThreads,
     threadById,
     files: diff?.files ?? NO_FILES,
     currentPaths,
-    composer,
-    setComposer,
+    repo: diff?.repo ?? null,
     addComment: comments.addComment,
     onToggleFinding: toggleFinding,
     onEditFinding: editFinding,
-    explainHunk,
     filesEnv,
-    startComment,
-    markViewed,
-    reveal,
-    parkCursor,
     focusRoot: () => rootRef.current?.focus({ preventScroll: true }),
     showInFiles,
     openFileInFiles,
+    openCommit: ({ index }) => {
+      if (commits === null) return;
+      const pick = commitsRange(commits, index, index);
+      if (pick.kind === "unknown") {
+        notify("Where this commit starts is unknown; gr picks a range");
+        return;
+      }
+      if (commitRangeKey(pick.range) !== commitRangeKey(commitRange)) setCommitRange(pick.range);
+      notify(pick.range === null ? "Showing all changes" : `Showing ${rangeLabel(pick.range, commits)}`);
+      showInFiles(null);
+    },
+    openUrl: openInNewTab,
     notify,
   });
 
@@ -884,8 +896,8 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
       case "fileTree":
         narrativeEnv().toggleFileTree();
         return;
-      case "commentsView":
-        commentsMode.enter();
+      case "conversation":
+        conversationMode.enter();
         return;
       case "side":
         // Past the old side, or from an excerpt header, the next step left is the outline.
@@ -941,12 +953,12 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
   };
 
   const pickKeymap = useCallback(
-    (): Keymap<NarrativeCommand | CommentsCommand> => (modeRef.current === "narrative" ? NARRATIVE_KEYMAP : modeRef.current === "comments" ? COMMENTS_KEYMAP : REVIEW_KEYMAP),
+    (): Keymap<NarrativeCommand | ConversationCommand> => (modeRef.current === "narrative" ? NARRATIVE_KEYMAP : modeRef.current === "conversation" ? CONVERSATION_KEYMAP : REVIEW_KEYMAP),
     [],
   );
   useReviewKeys(rootRef, keys, overlay === null, pickKeymap, (command, count) => {
     if (mode === "narrative") runNarrativeCommand(command as NarrativeCommand, count);
-    else if (mode === "comments") commentsMode.run(command as CommentsCommand, count);
+    else if (mode === "conversation") conversationMode.run(command as ConversationCommand, count);
     else runFilesCommand(command as ReviewCommand, count);
   });
   const runFilesCommandRef = useRef(runFilesCommand);
@@ -1065,13 +1077,13 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                 findingFilter={findingFilter}
                 commentTarget={source.canPostToGithub === true ? { target: comments.target, onChange: comments.setTarget } : null}
                 mode={
-                  narrativeAvailable || commentsAvailable
+                  narrativeAvailable || conversationAvailable
                     ? {
                         value: mode,
                         stale,
                         narrative: narrativeAvailable,
-                        comments: commentsAvailable,
-                        onChange: (next) => (next === mode ? undefined : next === "comments" ? commentsMode.enter() : next === "narrative" ? enterNarrative() : leaveToFiles()),
+                        conversation: conversationAvailable,
+                        onChange: (next) => (next === mode ? undefined : next === "conversation" ? conversationMode.enter() : next === "narrative" ? enterNarrative() : leaveToFiles()),
                       }
                     : null
                 }
@@ -1080,13 +1092,13 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                 search={mode === "files" && textSearch.active ? { query: textSearch.query, count: searchCount, onClear: textSearch.clear } : null}
                 fileFilter={mode === "files" && fileFiltered ? { shown: shownFiles.length, total: diff.files.length, onClear: () => setFileFilter(NO_FILE_FILTER) } : null}
                 threads={
-                  mode === "comments"
+                  mode === "conversation"
                     ? null
                     : {
                         resolved: allThreadCounts.resolved,
                         outdated: allThreadCounts.outdated,
                         hidden: preferences.hideThreads,
-                        onOpen: commentsMode.enter,
+                        onOpen: conversationMode.enter,
                         onShow: () => setDiffPreferences({ hideThreads: false }),
                       }
                 }
@@ -1134,20 +1146,22 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                   onNarratedViewed={() => runNarrativeCommand({ kind: "narratedViewed" }, 1)}
                   onLeaveOutline={returnToDiff}
                 />
-              ) : mode === "comments" ? (
-                <CommentsView
-                  sections={commentsMode.sections}
+              ) : mode === "conversation" ? (
+                <ConversationView
+                  items={conversation}
                   originals={threadById}
-                  filter={commentsMode.filter}
-                  counts={allThreadCounts}
-                  onFilter={commentsMode.setFilter}
-                  scrollRef={commentsMode.scrollRef}
-                  sectionRef={commentsMode.sectionRef}
-                  collapsed={commentsMode.collapsed}
+                  error={conversationEvents.error}
+                  focusedKey={conversationMode.cursorKey}
+                  folded={conversationMode.folded}
+                  scrollRef={conversationMode.scrollRef}
+                  stopRef={conversationMode.stopRef}
+                  repo={diff?.repo ?? null}
+                  codeOf={conversationMode.codeOf}
                   inDiff={(path) => currentPaths.has(path)}
-                  annotationsFor={commentsMode.annotationsFor}
-                  onToggleCollapsed={commentsMode.toggleCollapsed}
-                  onOpen={commentsMode.openThread}
+                  annotationsFor={conversationMode.annotationsFor}
+                  onToggle={conversationMode.toggle}
+                  onOpenCommit={conversationMode.openCommit}
+                  onOpenThread={conversationMode.openThread}
                 />
               ) : (
                 <>
@@ -1242,7 +1256,7 @@ function SourceDiffView({ source, instanceKey, onOpenThread, refreshSignal, labe
                 </>
               )}
               <ModeLabel />
-              {overlay?.kind === "help" ? <KeysOverlay onClose={closeOverlay} sections={mode === "narrative" ? NARRATIVE_KEY_HELP : mode === "comments" ? COMMENTS_KEY_HELP : KEY_HELP} /> : null}
+              {overlay?.kind === "help" ? <KeysOverlay onClose={closeOverlay} sections={mode === "narrative" ? NARRATIVE_KEY_HELP : mode === "conversation" ? CONVERSATION_KEY_HELP : KEY_HELP} /> : null}
               {overlay?.kind === "files" && diff !== null ? (
                 <Picker
                   label="Search file names"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { allDiffThreads } from "./lib/app/comments/threads";
-import { commentSections } from "./lib/app/comments/comment-sections";
+import { threadCode } from "./lib/app/comments/thread-code";
 import { navRows, patchRows } from "./lib/app/text/patch-rows";
 import type { Cursor, NavFile } from "./lib/app/keys/nav";
 import { runReviewCommand } from "./lib/app/keys/review-commands";
@@ -19,25 +19,23 @@ const local = (overrides: Partial<DiffComment> & { id: string }): DiffComment =>
 const ADDED = ["@@ -0,0 +1,40 @@", ...Array.from({ length: 40 }, (_, index) => `+line ${index + 1}`)].join("\n");
 const shownLines = (patch: string | null) => (patch === null ? [] : patchRows(patch).rows.map((row) => row.right));
 
-describe("the comments view's excerpt of an added file", () => {
+describe("the conversation's excerpt of an added file", () => {
   it("shows a window around the thread's lines, not the whole file", () => {
-    const threads = allDiffThreads([local({ id: "a", line: 20 })], []);
-    const [section] = commentSections(threads, [{ path: "new.ts", previousPath: null, patch: ADDED }], "all");
-    expect(shownLines(section!.patch)).toEqual([17, 18, 19, 20, 21, 22, 23]);
-    expect(section!.threads[0]!.line).toBe(20);
+    const [thread] = allDiffThreads([local({ id: "a", line: 20 })], []);
+    const code = threadCode(thread!, [{ path: "new.ts", previousPath: null, patch: ADDED }]);
+    expect(shownLines(code.patch)).toEqual([17, 18, 19, 20, 21, 22, 23]);
+    expect(code.placed.line).toBe(20);
   });
 
-  it("gives threads far apart a window each, and keeps a range's lines whole", () => {
-    const threads = allDiffThreads([local({ id: "a", line: 2 }), local({ id: "b", line: 31, startLine: 29 })], []);
-    const [section] = commentSections(threads, [{ path: "new.ts", previousPath: null, patch: ADDED }], "all");
-    expect(shownLines(section!.patch)).toEqual([1, 2, 3, 4, 5, 26, 27, 28, 29, 30, 31, 32, 33, 34]);
+  it("keeps a range's lines whole", () => {
+    const [thread] = allDiffThreads([local({ id: "b", line: 31, startLine: 29 })], []);
+    expect(shownLines(threadCode(thread!, [{ path: "new.ts", previousPath: null, patch: ADDED }]).patch)).toEqual([26, 27, 28, 29, 30, 31, 32, 33, 34]);
   });
 
   it("still shows the lines an added line replaced", () => {
     const patch = ["@@ -1,3 +1,3 @@", " one", "-two", "+TWO", " three"].join("\n");
-    const threads = allDiffThreads([local({ id: "a", path: "a.ts", line: 2 })], []);
-    const [section] = commentSections(threads, [{ path: "a.ts", previousPath: null, patch }], "all");
-    expect(section!.patch).toContain("-two");
+    const [thread] = allDiffThreads([local({ id: "a", path: "a.ts", line: 2 })], []);
+    expect(threadCode(thread!, [{ path: "a.ts", previousPath: null, patch }]).patch).toContain("-two");
   });
 });
 

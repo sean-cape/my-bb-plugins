@@ -194,13 +194,13 @@ export function prepareStatements(db: KanbanDatabase) {
     ),
     commentById: db.prepare<[string], PrCommentRow>(`SELECT * FROM pr_comments WHERE id = ?`),
     upsertComment: db.prepare(
-      `INSERT INTO pr_comments (id, ticket_id, kind, github_id, author, mine, body, path, line, review_state, in_reply_to, side, start_line, start_side, outdated, resolved, url, created_at, updated_at, diff_hunk, original_line, original_start_line)
-       VALUES (@id, @ticket_id, @kind, @github_id, @author, @mine, @body, @path, @line, @review_state, @in_reply_to, @side, @start_line, @start_side, @outdated, @resolved, @url, @created_at, @updated_at, @diff_hunk, @original_line, @original_start_line)
+      `INSERT INTO pr_comments (id, ticket_id, kind, github_id, author, mine, body, path, line, review_state, in_reply_to, side, start_line, start_side, outdated, resolved, url, created_at, updated_at, diff_hunk, original_line, original_start_line, review_id)
+       VALUES (@id, @ticket_id, @kind, @github_id, @author, @mine, @body, @path, @line, @review_state, @in_reply_to, @side, @start_line, @start_side, @outdated, @resolved, @url, @created_at, @updated_at, @diff_hunk, @original_line, @original_start_line, @review_id)
        ON CONFLICT(id) DO UPDATE SET author = excluded.author, mine = excluded.mine, body = excluded.body, path = excluded.path,
          line = excluded.line, review_state = excluded.review_state, side = excluded.side, start_line = excluded.start_line,
          start_side = excluded.start_side, outdated = excluded.outdated,
          resolved = COALESCE(excluded.resolved, pr_comments.resolved), url = excluded.url, updated_at = excluded.updated_at,
-         diff_hunk = excluded.diff_hunk, original_line = excluded.original_line, original_start_line = excluded.original_start_line`,
+         diff_hunk = excluded.diff_hunk, original_line = excluded.original_line, original_start_line = excluded.original_start_line, review_id = excluded.review_id`,
     ),
     deleteStaleComments: db.prepare<[string, string]>(
       `DELETE FROM pr_comments WHERE ticket_id = ? AND id NOT IN (SELECT value FROM json_each(?))`,

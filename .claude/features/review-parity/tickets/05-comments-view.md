@@ -1,5 +1,10 @@
 # 05 — Comments view; declutter inline threads
 
+> Superseded on 2026-10-23: the Comments view below read as the files view again. It is now a **Conversation** view
+> shaped like GitHub's Conversation tab (spec decision 5): description, commits, comments and reviews in time order,
+> each GitHub thread under its review over its stored hunk. Kanban stores each inline comment's review
+> (`pull_request_review_id`) and serves the PR's description, reviews and events through `pr_conversation`.
+
 **What to build:**
 - A third reading mode, **Comments**, in the summary bar's mode switch (Files | Narrative | Comments; Comments shows
   whenever the source has any thread). `gc` toggles it from Files or Narrative and returns to where you were.

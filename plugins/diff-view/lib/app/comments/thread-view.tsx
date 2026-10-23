@@ -38,7 +38,7 @@ function EntryBody({ id, body, shown }: { id: string; body: string; shown: Entry
 /** The small bordered actions under an open thread: reply, resolve, and the suggestion ones. */
 const THREAD_ACTION = "rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:opacity-50";
 
-function useNow(intervalMs = 30_000): number {
+export function useNow(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), intervalMs);

@@ -7,7 +7,7 @@ import type { Services } from "./services";
 /** The board's RPC surface; each handler hands off to the feature that owns it. */
 export function registerRpc(ctx: KanbanContext, services: Services): void {
   const { bb, db, stmts, sync, publish } = ctx;
-  const { board, subjects, threads, projects, changes, viewed, prComments, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, codeReviewThreads, loop, projectSettings } = services;
+  const { board, subjects, threads, projects, changes, viewed, prComments, prConversation, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, codeReviewThreads, loop, projectSettings } = services;
   const { resolveDiffSubject } = subjects;
 
   bb.rpc.register(rpcContract, {
@@ -154,6 +154,7 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
       await prComments.syncIfUnsynced(ticketId);
       return prComments.listComments(ticketId);
     },
+    pr_conversation: ({ ticketId }) => prConversation.prConversation(ticketId),
     comment_set_selected: ({ id, selected }) => prComments.setSelected(id, selected),
     comment_set_addressed: ({ id, addressed }) => prComments.setAddressed(id, addressed),
     comment_set_resolved: ({ id, resolved }) => prComments.setResolved(id, resolved),

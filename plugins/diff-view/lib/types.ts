@@ -157,7 +157,27 @@ export interface GithubComment {
   /** The line (and a range's first line) the comment was left on, which an outdated comment keeps. */
   originalLine?: number | null;
   originalStartLine?: number | null;
+  /** The review an inline comment was submitted in (`review:<n>`); null or absent when unknown. */
+  reviewId?: string | null;
+  /** A review's verdict: APPROVED, CHANGES_REQUESTED, COMMENTED or DISMISSED. */
+  reviewState?: string | null;
 }
+
+/** What a review concluded, as GitHub names it. */
+export type ReviewVerdict = "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
+
+/** A change to the pull request itself that its conversation lists between the comments. */
+export type PullRequestAction = "merged" | "closed" | "reopened" | "force-pushed" | "ready-for-review" | "converted-to-draft" | "review-requested" | "renamed" | "branch-deleted";
+
+/**
+ * What a pull request's conversation holds besides its commits and comments: the description it was opened with,
+ * every submitted review (approvals with no text included), and changes to the pull request.
+ */
+export type ConversationEvent =
+  | { kind: "opened"; id: string; author: string; body: string; createdAt: string; url: string }
+  | { kind: "review"; id: string; author: string; mine: boolean; state: ReviewVerdict; body: string; createdAt: string; url: string }
+  /** `detail` names who a review was requested from, the new title, or the merge commit. */
+  | { kind: "action"; id: string; action: PullRequestAction; actor: string; detail: string | null; createdAt: string };
 
 export type FindingSeverity = "critical" | "important" | "minor";
 

@@ -48,8 +48,8 @@ export type ReviewCommand =
   | { kind: "copyLink" }
   | { kind: "openFile" }
   | { kind: "blame" }
-  /** The comments view, from the files or the narrative; again, back where the reader was. */
-  | { kind: "commentsView" }
+  /** The conversation, from the files or the narrative; again, back where the reader was. */
+  | { kind: "conversation" }
   | { kind: "hideThreads" }
   /** A comment on the line or selection holding its text in a suggestion block. */
   | { kind: "suggest" }
@@ -133,7 +133,7 @@ export const REVIEW_KEYMAP: Keymap<ReviewCommand> = {
   yl: { kind: "copyLink" },
   gO: { kind: "openFile" },
   gb: { kind: "blame" },
-  gc: { kind: "commentsView" },
+  gc: { kind: "conversation" },
   H: { kind: "hideThreads" },
   I: { kind: "suggest" },
   A: { kind: "applySuggestion" },
@@ -201,7 +201,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["s"], action: "Go to the send bar (Enter or i opens its review box: type a comment, j / k pick how the review concludes, ⌘↩ submits, Esc closes; Esc on the bar goes back)" },
       { keys: ["⌘↩"], action: "In a comment box: add it; editing a finding: save" },
       { keys: ["Esc"], action: "In a comment box: back to the diff (an empty one closes); editing a comment or finding: cancel the edit" },
-      { keys: ["gc"], action: "Every comment thread, resolved and outdated ones too, over its code (gc again comes back)" },
+      { keys: ["gc"], action: "The conversation, as on GitHub: the description, commits, comments and reviews in the order they happened, resolved and outdated threads too (gc again comes back)" },
       { keys: ["H"], action: "Hide or show the comment threads in the diff" },
     ],
   },

@@ -454,11 +454,15 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
       env.keys.set({ visual: null });
       env.startComment(cursor.path, WHOLE_FILE);
       return;
-    case "reply": {
+    case "reply":
+    case "resolve":
+    case "move":
+    case "openGithub":
+    case "openThread": {
       const thread = focusedThread(env, cursor);
-      if (thread === null) env.notify(focusedAnnotation(env, cursor) === null ? "No comment thread on this line" : "Review findings take no replies; i comments on the line");
-      else if (thread.orphaned) env.notify("The comment this thread answers is gone");
-      else env.keys.threads.get(thread.id)?.reply();
+      if (thread !== null) runThreadCommand(command, thread, env);
+      else if (focusedAnnotation(env, cursor) === null) env.notify("No comment thread on this line");
+      else env.notify(command.kind === "reply" ? "Review findings take no replies; i comments on the line" : "That key acts on comment threads, not findings");
       return;
     }
     case "edit":
@@ -470,46 +474,8 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
         return;
       }
       const thread = focusedThread(env, cursor);
-      const id = thread === null ? null : (threadKeyActions(thread, env.canPostToGithub).ownUnsent?.id ?? null);
-      if (thread === null || id === null) {
-        env.notify(thread === null ? "No comment thread on this line" : "Nothing unsent of yours in this thread");
-        return;
-      }
-      if (command.kind === "edit") env.keys.threads.get(thread.id)?.edit(id);
-      else env.deleteComment(id);
-      return;
-    }
-    case "resolve": {
-      const thread = focusedThread(env, cursor);
-      if (thread === null) env.notify(focusedAnnotation(env, cursor) === null ? "No comment thread on this line" : "That key acts on comment threads, not findings");
-      else if (!env.canResolve || !threadKeyActions(thread, env.canPostToGithub).canResolve) env.notify("Only GitHub review threads can be resolved");
-      else {
-        const resolved = thread.resolved !== true;
-        env.keys.threads.get(thread.id)?.resolve(resolved);
-        env.notify(resolved ? "Resolving the thread on GitHub" : "Reopening the thread on GitHub");
-      }
-      return;
-    }
-    case "move":
-    case "openGithub":
-    case "openThread": {
-      const thread = focusedThread(env, cursor);
-      if (thread === null) {
-        env.notify(focusedAnnotation(env, cursor) === null ? "No comment thread on this line" : "That key acts on comment threads, not findings");
-        return;
-      }
-      const actions = threadKeyActions(thread, env.canPostToGithub);
-      if (command.kind === "move") {
-        if (actions.ownUnsent === null || actions.moveTo === null) env.notify(actions.ownUnsent === null ? "Nothing unsent of yours in this thread" : "This comment can only stay local");
-        else {
-          env.moveComment(actions.ownUnsent.id, actions.moveTo);
-          env.notify(actions.moveTo === "github" ? "Moved to the GitHub PR drafts" : "Made local");
-        }
-      } else if (command.kind === "openGithub") {
-        if (actions.url === null) env.notify("This thread is not on GitHub");
-        else env.openUrl(actions.url);
-      } else if (actions.agentThread === null) env.notify("No agent has replied in this thread");
-      else env.openThread(actions.agentThread);
+      if (thread === null) env.notify("No comment thread on this line");
+      else runThreadCommand(command, thread, env);
       return;
     }
     case "toggleFinding": {
@@ -573,7 +539,7 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
     }
     // The view switches modes before these reach here.
     case "narrative":
-    case "commentsView":
+    case "conversation":
       return;
     case "copyPath":
       env.fileActions.copyPath(cursor.path);
@@ -630,13 +596,8 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
         else runSuggestion(env, command.kind, state.item, state.reason);
         return;
       }
-      const thread = annotation?.kind === "thread" ? annotation.thread : null;
-      const suggestion = thread === null ? null : env.suggestions.forThread(thread);
-      if (thread === null || suggestion === null) {
-        env.notify(thread === null ? "No comment thread or review finding on this line" : "No suggested change in this thread");
-        return;
-      }
-      runSuggestion(env, command.kind, suggestion.item, suggestion.reason);
+      if (annotation?.kind === "thread") runThreadCommand(command, annotation.thread, env);
+      else env.notify("No comment thread or review finding on this line");
       return;
     }
     case "postSuggestion": {
@@ -662,6 +623,57 @@ export function runReviewCommand(command: ReviewCommand, count: number, env: Rev
 }
 
 /** `A` applies a suggestion now, `B` adds it to the batch or takes it out. */
+/** The keys that act on one comment thread, for a view that already knows which: the line's in the diff, a row's in the conversation. */
+export type ThreadCommand = Extract<ReviewCommand, { kind: "reply" | "resolve" | "edit" | "delete" | "move" | "openGithub" | "openThread" | "applySuggestion" | "batchSuggestion" }>;
+
+export function runThreadCommand(command: ThreadCommand, thread: DiffThread, env: ReviewEnv): void {
+  const actions = threadKeyActions(thread, env.canPostToGithub);
+  switch (command.kind) {
+    case "reply":
+      if (thread.orphaned) env.notify("The comment this thread answers is gone");
+      else env.keys.threads.get(thread.id)?.reply();
+      return;
+    case "resolve": {
+      if (!env.canResolve || !actions.canResolve) {
+        env.notify("Only GitHub review threads can be resolved");
+        return;
+      }
+      const resolved = thread.resolved !== true;
+      env.keys.threads.get(thread.id)?.resolve(resolved);
+      env.notify(resolved ? "Resolving the thread on GitHub" : "Reopening the thread on GitHub");
+      return;
+    }
+    case "edit":
+    case "delete":
+      if (actions.ownUnsent === null) env.notify("Nothing unsent of yours in this thread");
+      else if (command.kind === "edit") env.keys.threads.get(thread.id)?.edit(actions.ownUnsent.id);
+      else env.deleteComment(actions.ownUnsent.id);
+      return;
+    case "move":
+      if (actions.ownUnsent === null || actions.moveTo === null) env.notify(actions.ownUnsent === null ? "Nothing unsent of yours in this thread" : "This comment can only stay local");
+      else {
+        env.moveComment(actions.ownUnsent.id, actions.moveTo);
+        env.notify(actions.moveTo === "github" ? "Moved to the GitHub PR drafts" : "Made local");
+      }
+      return;
+    case "openGithub":
+      if (actions.url === null) env.notify("This thread is not on GitHub");
+      else env.openUrl(actions.url);
+      return;
+    case "openThread":
+      if (actions.agentThread === null) env.notify("No agent has replied in this thread");
+      else env.openThread(actions.agentThread);
+      return;
+    case "applySuggestion":
+    case "batchSuggestion": {
+      const suggestion = env.suggestions.forThread(thread);
+      if (suggestion === null) env.notify("No suggested change in this thread");
+      else runSuggestion(env, command.kind, suggestion.item, suggestion.reason);
+      return;
+    }
+  }
+}
+
 function runSuggestion(env: ReviewEnv, kind: "applySuggestion" | "batchSuggestion", item: SuggestionItem | null, reason: string | null): void {
   if (item === null) {
     env.notify(reason ?? CANT_APPLY_THIS);

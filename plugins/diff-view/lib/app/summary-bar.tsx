@@ -58,10 +58,10 @@ function CommentTargetSwitch({ target, onChange }: { target: DiffCommentTarget; 
   );
 }
 
-export type DiffViewMode = "files" | "narrative" | "comments";
+export type DiffViewMode = "files" | "narrative" | "conversation";
 
-/** Files, the narrative review or every comment thread: the ways of reading the same change, with the same keys. */
-function ModeSwitch({ mode, stale, onChange, narrative = true, comments = false }: { mode: DiffViewMode; stale: boolean; onChange: (mode: DiffViewMode) => void; narrative?: boolean; comments?: boolean }) {
+/** Files, the narrative review or the conversation: the ways of reading the same change. */
+function ModeSwitch({ mode, stale, onChange, narrative = true, conversation = false }: { mode: DiffViewMode; stale: boolean; onChange: (mode: DiffViewMode) => void; narrative?: boolean; conversation?: boolean }) {
   const option = (value: DiffViewMode, label: string, title: string) => (
     <button
       type="button"
@@ -79,14 +79,14 @@ function ModeSwitch({ mode, stale, onChange, narrative = true, comments = false 
     <span role="radiogroup" aria-label="How to read the change" className="inline-flex items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5 text-xs">
       {option("files", "Files", "Every changed file in one scroll (S switches)")}
       {narrative ? option("narrative", "Narrative", stale ? "The agent's step-by-step walk through the change; the code moved since it was written (S switches)" : "The agent's step-by-step walk through the change, the same keys on each step's lines (S switches)") : null}
-      {comments ? option("comments", "Comments", "Every comment thread, resolved and outdated ones too, over its code (gc switches)") : null}
+      {conversation ? option("conversation", "Conversation", "The description, commits, comments and reviews in the order they happened, as on GitHub (gc switches)") : null}
     </span>
   );
 }
 
 /**
- * The strip above a non-empty diff: the files / narrative / comments switch where the source has a narrative or any
- * thread, totals (what the diff is against in their tooltip), the commits shown, where comments go, the findings
+ * The strip above a non-empty diff: the files / narrative / conversation switch where the source has a narrative or a
+ * conversation, totals (what the diff is against in their tooltip), the commits shown, where comments go, the findings
  * filter, whitespace, hidden threads and those left out of the diff, the suggestion batch, the `/` search, split or
  * unified, the file filter, and progress: files viewed, and in the narrative the page reached. The keys themselves are
  * on `?`, named in the view's corner label.
@@ -116,11 +116,11 @@ export function SummaryBar({
   /** Null unless comments can go to GitHub. */
   commentTarget: { target: DiffCommentTarget; onChange: (target: DiffCommentTarget) => void } | null;
   /** Null when the source has no narrative review to switch to. */
-  mode: { value: DiffViewMode; stale: boolean; onChange: (mode: DiffViewMode) => void; narrative?: boolean; comments?: boolean } | null;
+  mode: { value: DiffViewMode; stale: boolean; onChange: (mode: DiffViewMode) => void; narrative?: boolean; conversation?: boolean } | null;
   /** The narrative's page reached, while it is showing. */
   progress: { position: number; total: number } | null;
   whitespace: { hidden: boolean; onToggle: () => void };
-  /** The threads left out of the diff (resolved, outdated, or all of them by `H`); null in the comments view. */
+  /** The threads left out of the diff (resolved, outdated, or all of them by `H`); null in the conversation. */
   threads?: { resolved: number; outdated: number; hidden: boolean; onOpen: () => void; onShow: () => void } | null;
   /** The batch of suggestions `B` built; null while it is empty. */
   suggestions?: { count: number; busy: boolean; onCommit: () => void } | null;
@@ -188,7 +188,7 @@ export function SummaryBar({
           </button>
         ) : null}
         {threads !== null && threads.resolved + threads.outdated > 0 ? (
-          <button type="button" className={cn("rounded-md px-2 py-0.5 text-xs tabular-nums hover:bg-state-hover hover:text-foreground", PRESS)} title="Threads left out of the diff. Click or gc for the comments view, which lists every thread." onClick={threads.onOpen}>
+          <button type="button" className={cn("rounded-md px-2 py-0.5 text-xs tabular-nums hover:bg-state-hover hover:text-foreground", PRESS)} title="Threads left out of the diff. Click or gc for the conversation, which lists every thread." onClick={threads.onOpen}>
             {[threads.resolved > 0 ? `${threads.resolved} resolved` : null, threads.outdated > 0 ? `${threads.outdated} outdated` : null].filter((part) => part !== null).join(" · ")}
           </button>
         ) : null}

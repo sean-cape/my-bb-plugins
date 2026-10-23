@@ -1,15 +1,9 @@
-// The comments view's model: every thread's status, the filter over them, and the threads grouped by file in diff
-// order, each over its code. Pure, for the tests.
-import { groupByPath } from "../format";
+// Each thread's status, and the code the conversation draws it over. Pure, for the tests.
 import { excerptPatch, type NarrativePatchFile, type NarrativeRef } from "../../narrative";
 import { patchRows, rowKey } from "../text/patch-rows";
 import { isUnsent, type DiffThread } from "./threads";
 
 export type ThreadStatus = "open" | "resolved" | "outdated";
-export type ThreadFilter = ThreadStatus | "all";
-
-export const THREAD_FILTERS: readonly ThreadFilter[] = ["open", "resolved", "outdated", "all"];
-export const THREAD_FILTER_LABEL: Record<ThreadFilter, string> = { open: "Open", resolved: "Resolved", outdated: "Outdated", all: "All" };
 
 export function threadStatus(thread: DiffThread): ThreadStatus {
   if (thread.outdated) return "outdated";
@@ -25,29 +19,6 @@ export function threadCounts(threads: readonly DiffThread[]): Record<ThreadStatu
   const counts = { open: 0, resolved: 0, outdated: 0 };
   for (const thread of threads) counts[threadStatus(thread)] += 1;
   return counts;
-}
-
-export function nextThreadFilter(filter: ThreadFilter): ThreadFilter {
-  return THREAD_FILTERS[(THREAD_FILTERS.indexOf(filter) + 1) % THREAD_FILTERS.length]!;
-}
-
-export function matchesThreadFilter(thread: DiffThread, filter: ThreadFilter): boolean {
-  return filter === "all" || threadStatus(thread) === filter;
-}
-
-/**
- * One block of the comments view: a file's threads over today's lines, or an outdated GitHub thread over the hunk
- * GitHub stored for it. `key` is what the cursor and the renderer know the block by: the file's path for its current
- * lines (so a cursor there is a files-view cursor too), `outdated:<thread id>/<path>` for a stored hunk, which keeps
- * the file's name last for the renderer's language. `threads` are placed for drawing, on a line `patch` shows or (a
- * null line) under the header; actions find the thread itself by id.
- */
-export interface CommentSection {
-  key: string;
-  path: string;
-  kind: "current" | "outdated";
-  patch: string | null;
-  threads: DiffThread[];
 }
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/u;
@@ -147,17 +118,30 @@ function excerptFor(patch: string, refs: readonly NarrativeRef[]): string | null
   return refs.length === 0 ? null : excerptPatch(patch, withChangeBlocks(patch, refs));
 }
 
-const atHeader = (thread: DiffThread): DiffThread => ({ ...thread, line: null, startLine: null, startSide: null });
-
-/** Threads on lines the patch draws keep them; the rest move under the header, as a thread without code. */
-function placeOn(patch: string | null, threads: DiffThread[]): DiffThread[] {
-  if (patch === null) return threads.map((thread) => (thread.line === null ? thread : atHeader(thread)));
-  const { at } = patchRows(patch);
-  return threads.map((thread) => (thread.line === null || at.has(rowKey(thread.side, thread.line)) ? thread : atHeader(thread)));
+/**
+ * A thread over its code in the conversation. `key` names the excerpt for the renderer and the keys:
+ * `thread:<thread id>/<path>`, keeping the file's name last for the renderer's language. `placed` is the thread on a
+ * line `patch` draws, or (a null line) under the header; actions find the thread itself by id.
+ */
+export interface ThreadCode {
+  key: string;
+  path: string;
+  /** `stored` is the hunk GitHub kept when the comment was left; `current` is today's lines. */
+  kind: "current" | "stored";
+  patch: string | null;
+  placed: DiffThread;
 }
 
-/** An outdated GitHub thread at the line it was left on, in the hunk GitHub stored; null when it stored none. */
-function outdatedSection(thread: DiffThread): CommentSection | null {
+const atHeader = (thread: DiffThread): DiffThread => ({ ...thread, line: null, startLine: null, startSide: null });
+
+/** A thread on a line the patch draws keeps it; otherwise it moves under the header, as a thread without code. */
+function placeOn(patch: string | null, thread: DiffThread): DiffThread {
+  if (thread.line === null) return thread;
+  return patch !== null && patchRows(patch).at.has(rowKey(thread.side, thread.line)) ? thread : atHeader(thread);
+}
+
+/** A GitHub thread at the line it was left on, in the hunk GitHub stored; null when it stored none. */
+function storedCode(thread: DiffThread, key: string): ThreadCode | null {
   const root = thread.entries[0]!;
   if (root.source !== "github" || root.comment.diffHunk == null) return null;
   const hunk = recountHunk(root.comment.diffHunk);
@@ -166,33 +150,19 @@ function outdatedSection(thread: DiffThread): CommentSection | null {
   const startLine = root.comment.originalStartLine ?? root.comment.startLine;
   const placed: DiffThread = { ...thread, line, side: root.comment.side, startLine, startSide: startLine === null ? null : (root.comment.startSide ?? root.comment.side) };
   const patch = excerptFor(hunk, refsFor(thread.path, placed)) ?? hunk;
-  return { key: `outdated:${thread.id}/${thread.path}`, path: thread.path, kind: "outdated", patch, threads: placeOn(patch, [placed]) };
+  return { key, path: thread.path, kind: "stored", patch, placed: placeOn(patch, placed) };
 }
 
 /**
- * The threads the filter keeps, grouped by file: the diff's files in its order, then paths no longer in it. Each
- * file's threads on today's lines share one excerpt of its patch (the commented lines and a little context), with
- * file-level threads and those whose lines the diff no longer shows under its header; each outdated GitHub thread
- * follows over its own stored hunk, or under the header when GitHub stored none.
+ * The code a thread is shown over, as GitHub's conversation shows it: a GitHub thread over the hunk GitHub stored when
+ * it was left, cut to the commented lines and a little context; a thread started here (or one GitHub stored no hunk
+ * for) over the same excerpt of today's patch, or under its file's name when the diff doesn't show its lines.
  */
-export function commentSections(threads: readonly DiffThread[], files: readonly NarrativePatchFile[], filter: ThreadFilter): CommentSection[] {
-  const byPath = groupByPath(threads.filter((thread) => matchesThreadFilter(thread, filter)));
-  const order = new Map(files.map((file, index) => [file.path, index]));
-  const paths = [...byPath.keys()].sort((a, b) => (order.get(a) ?? files.length) - (order.get(b) ?? files.length) || a.localeCompare(b));
-  const sections: CommentSection[] = [];
-  for (const path of paths) {
-    const mine = byPath.get(path)!;
-    const outdated = mine.map((thread) => (thread.outdated ? outdatedSection(thread) : null));
-    const current = mine.filter((_, index) => outdated[index] === null);
-    if (current.length > 0) {
-      const filePatch = files.find((file) => file.path === path)?.patch ?? null;
-      const refs = current.filter((thread) => !thread.outdated).flatMap((thread) => refsFor(path, thread));
-      const patch = filePatch === null ? null : excerptFor(filePatch, refs);
-      sections.push({ key: path, path, kind: "current", patch, threads: placeOn(patch, current) });
-    }
-    const stored = outdated.filter((section): section is CommentSection => section !== null);
-    stored.sort((a, b) => (a.threads[0]!.line ?? 0) - (b.threads[0]!.line ?? 0));
-    sections.push(...stored);
-  }
-  return sections;
+export function threadCode(thread: DiffThread, files: readonly NarrativePatchFile[]): ThreadCode {
+  const key = `thread:${thread.id}/${thread.path}`;
+  const stored = storedCode(thread, key);
+  if (stored !== null) return stored;
+  const filePatch = thread.outdated ? null : (files.find((file) => file.path === thread.path)?.patch ?? null);
+  const patch = filePatch === null ? null : excerptFor(filePatch, refsFor(thread.path, thread));
+  return { key, path: thread.path, kind: "current", patch, placed: placeOn(patch, thread) };
 }

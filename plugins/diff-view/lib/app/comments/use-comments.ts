@@ -4,7 +4,7 @@ import type { DiffComment, DiffCommentTarget, GithubComment, LineRange } from ".
 import { errorMessage } from "../format";
 import type { DiffSource } from "../source";
 import { allDiffThreads, localCommentState, type DiffThread } from "./threads";
-import { shownInline } from "./comment-sections";
+import { shownInline } from "./thread-code";
 
 /**
  * The source's comments (and synced GitHub ones) as threads, with the edits the view makes to them. Every edit
@@ -22,7 +22,7 @@ export function useComments(source: DiffSource, refreshSignal: unknown) {
   }, [source]);
   useEffect(loadComments, [loadComments, refreshSignal]);
   const allThreads = useMemo(() => allDiffThreads(comments, prComments), [comments, prComments]);
-  // Resolved and outdated threads are over; the comments view lists them.
+  // Resolved and outdated threads are over; the conversation lists them.
   const threads = useMemo(() => allThreads.filter(shownInline), [allThreads]);
 
   const editComment = async (id: string, body: string) => {
@@ -82,6 +82,8 @@ export function useComments(source: DiffSource, refreshSignal: unknown) {
   return {
     threads,
     allThreads,
+    /** The synced GitHub comments as they came, for the conversation's reviews and PR-level comments. */
+    github: prComments,
     localPending: comments.filter((comment) => localCommentState(comment) === "pending"),
     githubDrafts: comments.filter((comment) => localCommentState(comment) === "draft"),
     target: source.canPostToGithub === true ? (chosenTarget ?? source.defaultCommentTarget ?? "local") : "local",

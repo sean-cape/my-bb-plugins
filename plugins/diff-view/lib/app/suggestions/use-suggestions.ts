@@ -31,7 +31,7 @@ export function useSuggestions({
   diff: DiffResult | null;
   /** Each file's patch as the diff has it, or as Load diff fetched it; whitespace changes not hidden. */
   patches: ReadonlyMap<string, string>;
-  /** Threads as they are, for views that draw a copy placed elsewhere (the comments view's sections). */
+  /** Threads as they are, for views that draw a copy placed elsewhere (the conversation's excerpts). */
   threadById: ReadonlyMap<string, DiffThread>;
   instanceKey: string;
   onApplied: () => void;

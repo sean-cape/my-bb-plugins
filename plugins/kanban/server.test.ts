@@ -87,11 +87,13 @@ function stubGithub(options: {
   codeSearch?: Array<{ path: string; fragment: string }>;
   comments?: {
     issue?: Array<{ id: number; login: string; body: string }>;
-    review?: Array<{ id: number; login: string; body: string; path: string; line: number | null; side?: "LEFT" | "RIGHT"; startLine?: number; replyTo?: number; hunk?: string }>;
+    review?: Array<{ id: number; login: string; body: string; path: string; line: number | null; side?: "LEFT" | "RIGHT"; startLine?: number; replyTo?: number; hunk?: string; reviewId?: number }>;
     reviews?: Array<{ id: number; login: string; body: string; state: string; submitted?: boolean }>;
   };
   /** Root review-comment ids of resolved threads, answered from the GraphQL reviewThreads query. */
   resolvedThreads?: number[];
+  /** The PR's issue timeline, served as GitHub lists it. */
+  timeline?: unknown[];
   /** Head branch and check rollup per `repo#number` for the batched GraphQL query; a missing PR comes back null. */
   heads?: Record<string, { headRef: string; rollup: string | null }>;
   failHeads?: boolean;
@@ -289,6 +291,7 @@ function stubGithub(options: {
         ],
       );
     }
+    if (/\/issues\/\d+\/timeline$/u.test(path)) return json(options.timeline ?? []);
     const issueComments = /\/repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments/u.exec(url);
     if (issueComments !== null) {
       return json(
@@ -309,6 +312,7 @@ function stubGithub(options: {
           id: comment.id, user: { login: comment.login }, body: comment.body, path: comment.path, line: comment.line, original_line: comment.line ?? 1, side: comment.side ?? "RIGHT",
           ...(comment.replyTo === undefined ? {} : { in_reply_to_id: comment.replyTo }),
           ...(comment.hunk === undefined ? {} : { diff_hunk: comment.hunk }),
+          ...(comment.reviewId === undefined ? {} : { pull_request_review_id: comment.reviewId }),
           ...(comment.startLine === undefined
             ? { start_line: null, original_start_line: null, start_side: null }
             : { start_line: comment.line === null ? null : comment.startLine, original_start_line: comment.startLine, start_side: comment.side ?? "RIGHT" }),
@@ -342,6 +346,8 @@ function stubGithub(options: {
         draft: pull.draft ?? false,
         html_url: `https://github.com/${match[1]}/pull/${match[2]}`,
         updated_at: "2026-10-05T01:00:00Z",
+        created_at: "2026-10-04T09:00:00Z",
+        body: "Adds widgets",
         user: { login: "octocat" },
         base: { ref: "main", sha: "1111111111111111111111111111111111111111" },
         head: { sha: "9f3b2c1d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c" },
@@ -3422,6 +3428,43 @@ describe("diff comment threads", () => {
     expect(byId.get("review-comment:20")).toMatchObject({ side: "LEFT", resolved: true });
     expect(byId.get("review-comment:30")).toMatchObject({ outdated: true, line: 1, diffHunk: "@@ -1,2 +1,2 @@\n-old\n+new", originalLine: 1 });
     expect(byId.get("review-comment:10")).toMatchObject({ diffHunk: null, originalLine: 12 });
+  });
+
+  it("keeps the review each inline comment was submitted in, for the conversation to group threads under", async () => {
+    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 7)], comments: { review: [{ ...review[0]!, reviewId: 40 }, review[1]!] } }));
+    await load({ autoStartThreads: false });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const card = (await board()).tickets[0]!;
+    const { comments } = (await current().harness.behavior.callRpc("comments_list", { ticketId: card.id })) as { comments: PrComment[] };
+    expect(comments.map((comment) => [comment.id, comment.reviewId])).toEqual([
+      ["review-comment:10", "review:40"],
+      ["review-comment:11", null],
+    ]);
+  });
+
+  it("reads the PR's conversation: its description, every submitted review and its changes, leaving out commits, comments and drafts", async () => {
+    const timeline = [
+      { event: "committed", sha: "abc" },
+      { event: "commented", id: 5, body: "Synced already", created_at: "2026-10-04T10:00:00Z" },
+      { event: "reviewed", id: 40, user: { login: "sean" }, state: "approved", body: "", submitted_at: "2026-10-05T12:00:00Z", html_url: "https://github.com/acme-co/widgets/pull/7#pullrequestreview-40" },
+      { event: "reviewed", id: 41, user: { login: "jordan-rivera" }, state: "pending", body: "draft" },
+      { event: "review_requested", id: 6, actor: { login: "octocat" }, requested_reviewer: { login: "alex" }, created_at: "2026-10-04T11:00:00Z" },
+      { event: "renamed", id: 7, actor: { login: "octocat" }, rename: { from: "Old", to: "Add widgets" }, created_at: "2026-10-04T12:00:00Z" },
+      { event: "labeled", id: 8, actor: { login: "octocat" }, created_at: "2026-10-04T13:00:00Z" },
+      { event: "merged", id: 9, actor: { login: "octocat" }, commit_id: "f00d", created_at: "2026-10-06T12:00:00Z" },
+    ];
+    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 7)], timeline }));
+    await load({ autoStartThreads: false });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const card = (await board()).tickets[0]!;
+    const { events } = (await current().harness.behavior.callRpc("pr_conversation", { ticketId: card.id })) as { events: unknown[] };
+    expect(events).toEqual([
+      { kind: "opened", id: "pr:7", author: "octocat", body: "Adds widgets", createdAt: "2026-10-04T09:00:00Z", url: "https://github.com/acme-co/widgets/pull/7" },
+      { kind: "review", id: "review:40", author: "sean", mine: true, state: "APPROVED", body: "", createdAt: "2026-10-05T12:00:00Z", url: "https://github.com/acme-co/widgets/pull/7#pullrequestreview-40" },
+      { kind: "action", id: "review_requested:6", action: "review-requested", actor: "octocat", detail: "alex", createdAt: "2026-10-04T11:00:00Z" },
+      { kind: "action", id: "renamed:7", action: "renamed", actor: "octocat", detail: "Add widgets", createdAt: "2026-10-04T12:00:00Z" },
+      { kind: "action", id: "merged:9", action: "merged", actor: "octocat", detail: "f00d", createdAt: "2026-10-06T12:00:00Z" },
+    ]);
   });
 
   it("resolves and reopens a GitHub review thread from any of its comments, marking the whole thread here", async () => {

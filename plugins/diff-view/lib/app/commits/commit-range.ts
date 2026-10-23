@@ -107,7 +107,7 @@ export function rangeLabel(range: CommitRange | null, commits: DiffCommits | nul
 
 /**
  * What a range lets the view do. Comments, viewed marks, threads and findings sit on the head's new-side lines, which
- * only a range ending there shows; the narrative, the comments view and the delta read all the changes.
+ * only a range ending there shows; the narrative and the delta read all the changes.
  */
 export interface RangeGate {
   /** All the changes are shown. */

@@ -160,6 +160,7 @@ export interface PrCommentRow {
   diff_hunk: string | null;
   original_line: number | null;
   original_start_line: number | null;
+  review_id: number | null;
 }
 
 export interface DiffCommentRow {
@@ -315,6 +316,7 @@ export function rowToComment(row: PrCommentRow): PrComment {
     diffHunk: row.diff_hunk,
     originalLine: row.original_line,
     originalStartLine: row.original_start_line,
+    reviewId: row.review_id === null ? null : `review:${row.review_id}`,
   };
 }
 

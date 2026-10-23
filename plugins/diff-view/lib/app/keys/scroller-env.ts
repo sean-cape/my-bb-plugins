@@ -1,4 +1,4 @@
-// The keys' view of a pane that scrolls through excerpts (the narrative's step, the comments view): what is in view,
+// The keys' view of a pane that scrolls through excerpts (the narrative's step): what is in view,
 // a page of scrolling, and going to a section. The files view shares the page scroll.
 import type { RevealBlock } from "../scroll";
 import { cursorAt, firstPosition, type Cursor, type NavFile } from "./nav";
