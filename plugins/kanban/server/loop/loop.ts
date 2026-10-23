@@ -514,7 +514,7 @@ export function createLoop(
 export type Loop = ReturnType<typeof createLoop>;
 
 const REVIEW_SKILL_MISSING_FAILURE =
-  "the review thread has no `code-review` skill that writes a review-findings report; link this repository's claude/ skills and agents into ~/.claude with scripts/link-claude-config.sh";
+  "the review thread has no `code-review` skill that writes a review-findings report; link this repository's claude/ skills and agents into ~/.claude with `node scripts/link-claude-config.mjs`";
 
 /** A thread that finished with a final message but no parseable `block` would write the same message on a retry; one that left none may have crashed. */
 function unparsedFailure(body: string | null, block: string): { failure?: string } {

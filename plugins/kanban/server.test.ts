@@ -2117,7 +2117,7 @@ describe("monitored review loop", () => {
     await classify("thr_3", 3);
     await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "reviewing", reviewId: expect.any(String) }));
     await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_4", projectId: "proj_acme" }), lastAssistantText: "Review skill missing." });
-    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_4", failure: expect.stringContaining("link-claude-config.sh") }));
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "loop-error", failedThreadId: "thr_4", failure: expect.stringContaining("node scripts/link-claude-config.mjs") }));
     expect(spawned).toHaveLength(4);
   });
 
