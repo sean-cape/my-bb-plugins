@@ -176,7 +176,11 @@ its PR is reviewed and its review findings and comments are handed to agents.
   the card panel. A thread that finished with a message the board can't read
   (no review-findings report, no classify scores) stops it at once, since a
   retry would write the same message; a review thread without the
-  `code-review` skill says so, and the card names the fix. A ready at a new
+  `code-review` skill says so, and the card names the fix. A review thread
+  can idle on an interim message while its verifiers still run; the loop
+  keeps reviewing until the report replaces it, and only counts the review
+  failed once the thread has stayed idle ten minutes without one (or at once
+  when its message starts `Review failed:`). A ready at a new
   commit while the loop is checking, classifying or reviewing an older one
   stops those threads and starts over at the new commit; a repeated ready of
   the same commit is ignored. The checks, classify, review and narrative

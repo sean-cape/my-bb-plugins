@@ -66,6 +66,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   registerThreadLifecycle(ctx, services);
   void services.reviewResume.reconcileOnLoad();
+  services.loop.reconcileOnLoad();
   registerAgentInstructions(ctx, services);
   registerRpc(ctx, services);
   registerCli(ctx, services);

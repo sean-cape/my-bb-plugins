@@ -2142,6 +2142,44 @@ describe("monitored review loop", () => {
     await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadId, projectId: "proj_acme" }), lastAssistantText: body });
   }
 
+  /** A monitored card whose first review, thread `thr_4`, has started at `sha`. */
+  async function reviewingCard(): Promise<void> {
+    await monitoredCard();
+    await ready();
+    await recordChecks("thr_2", 0);
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "classifying" }));
+    await classify("thr_3", 3);
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "reviewing", reviewId: expect.any(String) }));
+    await current().harness.behavior.runCli(["review-record", "--commit", sha, "--base", "main"], ctx("thr_4"));
+  }
+  const idle = (threadId: string, text: string) => current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadId, projectId: "proj_acme" }), lastAssistantText: text });
+
+  it("keeps reviewing through an interim message the review thread idles on, and routes the report that replaces it", async () => {
+    await reviewingCard();
+    await idle("thr_4", "C6 scored 65 and goes to the filtered list. Two verifiers still running.");
+    expect((await card()).loop).toMatchObject({ phase: "reviewing", reason: null });
+    await idle("thr_4", reviewBody(sha, []));
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "clean" }));
+  });
+
+  it("counts a review failed once its thread stays idle on an interim message, and at once when it says it stopped", async () => {
+    await reviewingCard();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await idle("thr_4", "Two verifiers still running.");
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect((await card()).loop).toMatchObject({ phase: "reviewing" });
+      await vi.advanceTimersByTimeAsync(60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "loop-error", failure: "the thread finished without a review-findings report the board could read" }));
+
+    await reviewingCard();
+    await idle("thr_4", "Review failed: the PR head could not be fetched\nDetails follow.");
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "loop-error", failure: "the review stopped: the PR head could not be fetched" }));
+  });
+
   it("reviews the commit that passed its checks, sends only the findings triaged apply to the card's thread, and re-reviews the fix", async () => {
     await monitoredCard();
     await ready();

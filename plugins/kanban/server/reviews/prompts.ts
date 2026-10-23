@@ -19,6 +19,14 @@ interface ReviewSetup {
 /** A review thread's whole final message when the skill the board parses isn't installed where it runs. */
 export const REVIEW_SKILL_MISSING = "Review skill missing.";
 
+/** How a review thread's final message starts when the review can't be finished; any other message without a report is interim. */
+export const REVIEW_FAILED_PREFIX = "Review failed:";
+
+/** The review thread says it has stopped without a report, so the board needn't wait for one. */
+export function reviewGaveUp(text: string | null): boolean {
+  return text !== null && (text.includes(REVIEW_SKILL_MISSING) || text.trimStart().startsWith(REVIEW_FAILED_PREFIX));
+}
+
 /**
  * Claude Code ships a plugin skill also named code-review, whose report the board can't parse, so without this guard
  * a machine missing the user's skill reviews with that one and every round fails after spending a full review.
@@ -136,6 +144,7 @@ export function reviewPrompt(
         ]
       : incrementalSteps(range, setup.fullRange, setup.steps.length + 1, depth, severityFloor)),
     "Rules: do not change code, and do not post comments or reviews on GitHub; the compiled findings in this thread are the deliverable.",
+    `If the review can't be finished, make your final message start with \`${REVIEW_FAILED_PREFIX}\` and the reason. The board reads any other message without the report as the review still running, and waits.`,
     `This review belongs to kanban ticket ${ticket.id}.`,
     "",
     ...intentSection(subject, ticket, intent),

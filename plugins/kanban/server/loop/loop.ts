@@ -15,9 +15,12 @@ import type { ProjectSettingsStore } from "../project-settings";
 import type { Reviews } from "../reviews/reviews";
 import type { Tour } from "../tour";
 import { errorMessage, shortId, threadTitle } from "../util";
-import { REVIEW_SKILL_MISSING } from "../reviews/prompts";
+import { REVIEW_FAILED_PREFIX, REVIEW_SKILL_MISSING, reviewGaveUp } from "../reviews/prompts";
 import { cardPromptText, checksPrompt, classifyPrompt, commentsPromptText, fixPromptText } from "./prompts";
 import { reduce, type CardPrompt, type LoopAction, type LoopEvent } from "./reducer";
+
+/** How long a loop review's thread that went idle without its report has to stay idle before the review counts as failed. */
+const REPORT_WAIT_MS = 10 * 60_000;
 
 /** Checks only run a command and classify only scores files, so neither needs the card thread's reasoning. */
 const MECHANICAL_REASONING = "low";
@@ -64,6 +67,11 @@ export function createLoop(
   const { bb, stmts, publish } = ctx;
   const { getTicket } = board;
   const pathRules = (ticketId: string) => projectSettings.projectSettings(getTicket(ticketId).projectId).pathRules;
+  const awaitingReport = new Map<string, ReturnType<typeof setTimeout>>();
+  bb.onDispose(() => {
+    for (const timer of awaitingReport.values()) clearTimeout(timer);
+    awaitingReport.clear();
+  });
 
   /** Reads, reduces and stores in one synchronous step, so two events for a card can't interleave; actions run after. */
   async function dispatch(ticketId: string, event: LoopEvent): Promise<void> {
@@ -498,9 +506,17 @@ export function createLoop(
   async function reviewFinished(threadId: string): Promise<void> {
     const row = stmts.reviewByThread.get(threadId);
     if (row === undefined || row.status === "running") return;
+    stopAwaitingReport(threadId);
     const report = row.status === "completed" ? rowToReview(row).report : null;
+    if (report === null && row.status === "completed" && !reviewGaveUp(row.body) && awaitedByLoop(row.ticket_id, row.id)) {
+      awaitingReport.set(
+        threadId,
+        setTimeout(() => void reportOverdue(threadId), REPORT_WAIT_MS),
+      );
+      return;
+    }
     if (report === null) {
-      const failure = row.body !== null && row.body.includes(REVIEW_SKILL_MISSING) ? { failure: REVIEW_SKILL_MISSING_FAILURE } : unparsedFailure(row.body, "a review-findings report");
+      const failure = row.body !== null && row.body.includes(REVIEW_SKILL_MISSING) ? { failure: REVIEW_SKILL_MISSING_FAILURE } : reviewFailure(row.body);
       await dispatch(row.ticket_id, { type: "thread-failed", role: "review", reviewId: row.id, threadId, ...failure });
       return;
     }
@@ -508,13 +524,57 @@ export function createLoop(
     await dispatch(row.ticket_id, { type: "review-completed", reviewId: row.id, findings, notCovered: report.notCovered, pathRules: pathRules(row.ticket_id), pr: getTicket(row.ticket_id).pr !== null });
   }
 
-  return { setMonitored, setGates, proposePlan, approvePlan, approveFindings, answerFindings, reportReady, recordChecks, handleIdle, threadFailed, questionAsked, reviewFinished, accept, reportLanded, sendBack, rethink, pullIn, decideDispute, setLevel, readingPlan };
+  /**
+   * A review thread can go idle on an interim message while the skill's verifiers still run, which bb's background
+   * agent count doesn't always see, and wake when they report; the final report then replaces the interim one. So the
+   * loop only counts the review failed once its thread has stayed idle that long without a report.
+   */
+  async function reportOverdue(threadId: string): Promise<void> {
+    awaitingReport.delete(threadId);
+    const row = stmts.reviewByThread.get(threadId);
+    if (row === undefined || rowToReview(row).report !== null || !awaitedByLoop(row.ticket_id, row.id)) return;
+    try {
+      // A thread that woke idles again later, and that idle waits anew.
+      if ((await bb.sdk.threads.get({ threadId })).status !== "idle") return;
+    } catch (error) {
+      bb.log.warn(`could not check review thread ${threadId}: ${errorMessage(error)}`);
+    }
+    await dispatch(row.ticket_id, { type: "thread-failed", role: "review", reviewId: row.id, threadId, ...reviewFailure(row.body) });
+  }
+
+  function stopAwaitingReport(threadId: string): void {
+    clearTimeout(awaitingReport.get(threadId));
+    awaitingReport.delete(threadId);
+  }
+
+  function awaitedByLoop(ticketId: string, reviewId: string): boolean {
+    const row = stmts.byId.get(ticketId);
+    const state = row === undefined ? null : parseLoopState(row.loop_state);
+    return state !== null && state.monitored && state.phase === "reviewing" && state.reviewId === reviewId;
+  }
+
+  /** Timers don't survive a reload, so a loop review still waiting on its report waits again. */
+  function reconcileOnLoad(): void {
+    for (const ticket of stmts.all.all()) {
+      const state = parseLoopState(ticket.loop_state);
+      const review = state.phase === "reviewing" && state.reviewId !== null ? stmts.reviewById.get(state.reviewId) : undefined;
+      if (review !== undefined && review.status !== "running") void reviewFinished(review.thread_id);
+    }
+  }
+
+  return { reconcileOnLoad, setMonitored, setGates, proposePlan, approvePlan, approveFindings, answerFindings, reportReady, recordChecks, handleIdle, threadFailed, questionAsked, reviewFinished, accept, reportLanded, sendBack, rethink, pullIn, decideDispute, setLevel, readingPlan };
 }
 
 export type Loop = ReturnType<typeof createLoop>;
 
 const REVIEW_SKILL_MISSING_FAILURE =
   "the review thread has no `code-review` skill that writes a review-findings report; link this repository's claude/ skills and agents into ~/.claude with `node scripts/link-claude-config.mjs`";
+
+/** The reason a review thread gave for stopping, else the generic one. */
+function reviewFailure(body: string | null): { failure?: string } {
+  const reason = body?.trimStart().startsWith(REVIEW_FAILED_PREFIX) ? body.trimStart().slice(REVIEW_FAILED_PREFIX.length).split("\n")[0]!.trim() : "";
+  return reason === "" ? unparsedFailure(body, "a review-findings report") : { failure: `the review stopped: ${reason}` };
+}
 
 /** A thread that finished with a final message but no parseable `block` would write the same message on a retry; one that left none may have crashed. */
 function unparsedFailure(body: string | null, block: string): { failure?: string } {
