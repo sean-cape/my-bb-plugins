@@ -16,6 +16,9 @@
     "server": "./server.ts",
     "app": "./app.tsx"
   },
+  "dependencies": {
+    "bb-vim-keys": "file:../vim-mode/lib"
+  },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.49",
     "@types/node": "^22.0.0",

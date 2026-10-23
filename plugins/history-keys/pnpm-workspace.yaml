@@ -1,0 +1,2 @@
+overrides:
+  bb-vim-keys: link:../vim-mode/lib
