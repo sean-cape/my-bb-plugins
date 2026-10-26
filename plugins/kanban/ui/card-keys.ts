@@ -14,9 +14,14 @@ const INITIAL_STOP = "[data-kanban-initial-stop]";
 /** The card's main text box, which `i` goes to when the cursor is on no text box. */
 const MAIN_INPUT = "[data-kanban-main-input]";
 const FOCUS_REQUEST_TTL_MS = 2000;
-const BRIEF = "[data-kanban-brief]";
+/** The handoff brief, which holds the card-wide brief actions and which the loop strip's Needs you step scrolls to. */
+export const BRIEF = "[data-kanban-brief]";
 /** A finding row of the brief, holding its own action buttons. */
 const BRIEF_FINDING = "[data-kanban-brief-finding]";
+/** The loop section's steering composer, which `s` goes to. */
+export const LOOP_COMPOSER = "[data-kanban-loop-composer]";
+/** An open card's root. */
+export const CARD = "[data-kanban-card]";
 
 // A card opened from the keyboard, or while another card is showing, takes focus once it renders;
 // one opened with the mouse onto an empty panel leaves focus where it is. The panel may already
@@ -35,8 +40,6 @@ function takeFocusRequest(ticketId: string): boolean {
   return true;
 }
 
-const CARD = "[data-kanban-card]";
-
 /** Whether an open card is on screen, in the right panel or a dialog. */
 export function cardShown(): boolean {
   return Array.from(document.querySelectorAll(CARD)).some((card) => card.getClientRects().length > 0);
@@ -53,7 +56,8 @@ export function focusBoard(ticketId: string): void {
 export interface CardKeyHandlers {
   onThread: () => void;
   onDiff: () => void;
-  onMonitor: () => void;
+  /** `m`: the loop menu; where the card shows no loop section (someone else's PR) it still toggles the loop. */
+  onLoopMenu: () => void;
   onHelp: () => void;
   /** Back to the board with the card left open; absent where the card is a modal. */
   onBack?: () => void;
@@ -186,9 +190,21 @@ export function useCardKeys(
         case "diff":
           handlers.onDiff();
           return;
-        case "monitor":
-          handlers.onMonitor();
+        case "loop": {
+          if (command.action === "menu") {
+            handlers.onLoopMenu();
+            return;
+          }
+          // Steer goes to the composer; the others press their own button, so they are live exactly when a click would be.
+          // Swallowed with nothing to press, so a stray `x` can't reach the board's toggle-done.
+          if (command.action === "steer") {
+            const composer = root.querySelector<HTMLElement>(LOOP_COMPOSER);
+            if (composer !== null) type(root, composer);
+            return;
+          }
+          root.querySelector<HTMLButtonElement>(`[data-kanban-loop-action="${command.action}"]:not(:disabled)`)?.click();
           return;
+        }
         case "brief": {
           // The key presses the action's own button, so it is enabled exactly when a click would be.
           const scope = FINDING_ACTIONS.has(command.action) ? current?.closest<HTMLElement>(BRIEF_FINDING) : root.querySelector<HTMLElement>(BRIEF);

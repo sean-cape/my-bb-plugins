@@ -1,7 +1,8 @@
 import type { Ticket } from "../../shared/board";
 import { LOOP_STOPPED, type LoopStoppedPayload } from "../../shared/events";
-import { defaultGates, effectiveLevel, fixingRound, parseLoopState, phaseChip, unansweredFindings, type AttentionLevel, type CheckCommand, type Evidence, type FindingAnswer, type LoopGates } from "../../shared/loop";
+import { boardRunning, defaultGates, effectiveLevel, fixingRound, parseLoopState, unansweredFindings, workingPhase, type AttentionLevel, type CheckCommand, type Evidence, type FindingAnswer, type LoopDirective, type LoopGates, type LoopPhase, type LoopState } from "../../shared/loop";
 import { readingPlan as buildReadingPlan, type ReadingPlan } from "../../shared/reading-plan";
+import { phaseChip } from "../../shared/stages";
 import type { BoardStore } from "../board";
 import type { CardThreads } from "../card-threads";
 import type { CodeReviewThreads } from "../code-review-threads";
@@ -17,11 +18,20 @@ import type { Reviews } from "../reviews/reviews";
 import type { Tour } from "../tour";
 import { errorMessage, shortId, threadTitle } from "../util";
 import { REVIEW_FAILED_PREFIX, REVIEW_SKILL_MISSING, reviewGaveUp } from "../reviews/prompts";
-import { cardPromptText, checksPrompt, classifyPrompt, commentsPromptText, fixPromptText } from "./prompts";
-import { passiveIdle, reduce, type CardPrompt, type LoopAction, type LoopEvent } from "./reducer";
+import { cardPromptText, checksPrompt, classifyPrompt, commentsPromptText, fixPromptText, steeringText } from "./prompts";
+import { passiveIdle, reduce, type CardPrompt, type LoopAction, type LoopEvent, type StopReason } from "./reducer";
 
 /** How long a loop review's thread that went idle without its report has to stay idle before the review counts as failed. */
 const REPORT_WAIT_MS = 10 * 60_000;
+
+/** What a stopped review's row says went wrong. */
+const STOP_TEXT: Record<StopReason, string> = { superseded: "Superseded by a newer commit before it finished.", stopped: "Stopped by the user." };
+
+/** A checks, classify or review run the loop started: its thread, and how to fail its row. */
+interface SpawnedRun {
+  threadId: string;
+  fail: (now: number, text: string) => void;
+}
 
 /** Checks only run a command and classify only scores files, so neither needs the card thread's reasoning. */
 const MECHANICAL_REASONING = "low";
@@ -76,12 +86,18 @@ export function createLoop(
     awaitingReport.clear();
   });
 
-  /** Reads, reduces and stores in one synchronous step, so two events for a card can't interleave; actions run after. */
+  /**
+   * Reads, reduces and stores in one synchronous step, so two events for a card can't interleave; actions run after.
+   * The reducer has no clock, so the time a step began is stamped here when an event changed the phase, the commit
+   * under it (a superseding ready) or the plan waiting on the user.
+   */
   async function dispatch(ticketId: string, event: LoopEvent): Promise<void> {
     const row = stmts.byId.get(ticketId);
     if (row === undefined) return;
-    const { state, actions } = reduce(parseLoopState(row.loop_state), event);
-    stmts.setLoopState.run(JSON.stringify(state), ticketId);
+    const before = parseLoopState(row.loop_state);
+    const { state, actions } = reduce(before, event);
+    const moved = state.phase !== before.phase || state.commit !== before.commit || state.proposedPlan !== before.proposedPlan;
+    stmts.setLoopState.run(JSON.stringify(moved ? { ...state, phaseSince: Date.now() } : state), ticketId);
     publish();
     for (const action of actions) await perform(ticketId, action);
   }
@@ -98,22 +114,30 @@ export function createLoop(
         board.moveTicket(ticketId, action.column, null);
         return;
       }
-      case "spawn-checks":
+      case "spawn-checks": {
+        let run: SpawnedRun;
         try {
-          await spawnChecks(getTicket(ticketId), action.commit, action.checkCommand);
+          run = await spawnChecks(getTicket(ticketId), action.commit, action.checkCommand);
         } catch (error) {
           bb.log.warn(`could not start a checks thread for ticket ${ticketId}: ${errorMessage(error)}`);
           await dispatch(ticketId, { type: "thread-failed", role: "checks", commit: action.commit, threadId: null });
+          return;
         }
+        await stopUnlessWanted(ticketId, "checking", action.commit, run);
         return;
-      case "spawn-classify":
+      }
+      case "spawn-classify": {
+        let run: SpawnedRun;
         try {
-          await spawnClassify(getTicket(ticketId), action.commit);
+          run = await spawnClassify(getTicket(ticketId), action.commit);
         } catch (error) {
           bb.log.warn(`could not start a classify thread for ticket ${ticketId}: ${errorMessage(error)}`);
           await dispatch(ticketId, { type: "thread-failed", role: "classify", commit: action.commit, threadId: null });
+          return;
         }
+        await stopUnlessWanted(ticketId, "classifying", action.commit, run);
         return;
+      }
       case "spawn-review": {
         let reviewThreadId: string | null;
         try {
@@ -124,7 +148,9 @@ export function createLoop(
           return;
         }
         const review = reviewThreadId === null ? undefined : stmts.reviewByThread.get(reviewThreadId);
-        if (review !== undefined) await dispatch(ticketId, { type: "review-started", reviewId: review.id });
+        if (review === undefined) return;
+        const run: SpawnedRun = { threadId: review.thread_id, fail: (now, text) => stmts.failReview.run(text, now, review.id) };
+        if (!(await stopUnlessWanted(ticketId, "reviewing", action.commit, run))) await dispatch(ticketId, { type: "review-started", reviewId: review.id });
         return;
       }
       case "prompt-card":
@@ -140,8 +166,8 @@ export function createLoop(
         if (row !== undefined) reviews.completeApply(row, null, false, action.findingIds);
         return;
       }
-      case "stop-superseded":
-        await stopSuperseded(ticketId, action.reviewId);
+      case "stop-step":
+        await stopStep(ticketId, action.reason);
         return;
       case "spawn-narrative":
         try {
@@ -227,8 +253,12 @@ export function createLoop(
     }
   }
 
-  /** Each run is failed before its thread stops, so the idle the stop brings is a late result the loop ignores, never a report. */
-  async function stopSuperseded(ticketId: string, reviewId: string | null): Promise<void> {
+  /**
+   * Every running checks, classify and review row of the card is failed before its thread stops, so the idle the stop
+   * brings is a late result the loop ignores, never a report. By card, since the loop's review has no row until its
+   * spawn returns; a review the user started by hand while the loop ran stops with them.
+   */
+  async function stopStep(ticketId: string, reason: StopReason): Promise<void> {
     const now = Date.now();
     const threadIds: string[] = [];
     for (const run of stmts.runningChecksRuns.all(ticketId)) {
@@ -239,22 +269,39 @@ export function createLoop(
       stmts.finishClassifyRun.run("failed", null, now, run.id);
       threadIds.push(run.thread_id);
     }
-    const review = reviewId === null ? undefined : stmts.reviewById.get(reviewId);
-    if (review !== undefined && review.status === "running") {
-      stmts.failReview.run("Superseded by a newer commit before it finished.", now, review.id);
+    for (const review of stmts.runningReviewsForTicket.all(ticketId)) {
+      stmts.failReview.run(STOP_TEXT[reason], now, review.id);
       threadIds.push(review.thread_id);
     }
     publish();
+    await stopThreads(ticketId, threadIds);
+  }
+
+  /**
+   * A stop or a superseding ready that arrived while `run` was being spawned found no row of it to fail, so once the
+   * spawn returns it checks that the loop still runs `phase` at `commit`, and otherwise fails and stops its own run.
+   * Monitoring turned off keeps the phase until the result arrives, so it isn't a reason to stop. True when stopped.
+   */
+  async function stopUnlessWanted(ticketId: string, phase: LoopPhase, commit: string, run: SpawnedRun): Promise<boolean> {
+    const state = parseLoopState(stmts.byId.get(ticketId)?.loop_state ?? null);
+    if (state.phase === phase && state.commit === commit) return false;
+    run.fail(Date.now(), STOP_TEXT[state.phase === "needs-you" && state.reason === "stopped" ? "stopped" : "superseded"]);
+    publish();
+    await stopThreads(ticketId, [run.threadId]);
+    return true;
+  }
+
+  async function stopThreads(ticketId: string, threadIds: string[]): Promise<void> {
     for (const threadId of threadIds) {
       try {
         await bb.sdk.threads.stop({ threadId });
       } catch (error) {
-        bb.log.warn(`could not stop superseded thread ${threadId} of ticket ${ticketId}: ${errorMessage(error)}`);
+        bb.log.warn(`could not stop thread ${threadId} of ticket ${ticketId}: ${errorMessage(error)}`);
       }
     }
   }
 
-  async function spawnChecks(ticket: Ticket, commit: string, checkCommand: CheckCommand): Promise<void> {
+  async function spawnChecks(ticket: Ticket, commit: string, checkCommand: CheckCommand): Promise<SpawnedRun> {
     const projectId = ticket.projectId;
     if (projectId === null) throw new Error("The card has no project to check its work in");
     const thread = await bb.sdk.threads.spawn({
@@ -267,8 +314,9 @@ export function createLoop(
       visibility: await codeReviewThreads.codeReviewThreadVisibility(),
       pluginMetadata: { ticketId: ticket.id, role: "checks" },
     });
+    const id = shortId();
     stmts.insertChecksRun.run({
-      id: shortId(),
+      id,
       ticket_id: ticket.id,
       thread_id: thread.id,
       commit_sha: commit,
@@ -277,9 +325,10 @@ export function createLoop(
       created_at: Date.now(),
     });
     publish();
+    return { threadId: thread.id, fail: (now) => stmts.failChecksRun.run(now, id) };
   }
 
-  async function spawnClassify(ticket: Ticket, commit: string): Promise<void> {
+  async function spawnClassify(ticket: Ticket, commit: string): Promise<SpawnedRun> {
     const target = ticket.pr === null ? await reviews.localReviewTarget(ticket) : null;
     const projectId = target?.projectId ?? ticket.projectId;
     if (projectId === null) throw new Error("The card has no project to classify its work in");
@@ -293,8 +342,10 @@ export function createLoop(
       visibility: await codeReviewThreads.codeReviewThreadVisibility(),
       pluginMetadata: { ticketId: ticket.id, role: "classify" },
     });
-    stmts.insertClassifyRun.run({ id: shortId(), ticket_id: ticket.id, thread_id: thread.id, commit_sha: commit, created_at: Date.now() });
+    const id = shortId();
+    stmts.insertClassifyRun.run({ id, ticket_id: ticket.id, thread_id: thread.id, commit_sha: commit, created_at: Date.now() });
     publish();
+    return { threadId: thread.id, fail: (now) => stmts.finishClassifyRun.run("failed", null, now, id) };
   }
 
   /** `gates` are the ones chosen as monitoring turns on; without them the card's kind picks the defaults. */
@@ -429,7 +480,9 @@ export function createLoop(
     const ticket = getTicket(ticketId);
     const state = waitingState(ticket);
     if (ticket.pr === null && ticket.threadId === null) throw new LoopTurnError("The card has no thread to land the change");
-    const plan = effectiveLevel(state) === "scrutinize" ? await readingPlan(ticket.id) : null;
+    // A hand-off or a stop was the user's choice to look themselves, so no level gates their Accept.
+    const assessed = state.reason !== "handed-off" && state.reason !== "stopped";
+    const plan = assessed && effectiveLevel(state) === "scrutinize" ? await readingPlan(ticket.id) : null;
     if (plan !== null && plan.gated && plan.unviewed.length > 0) {
       throw new LoopTurnError(`At Scrutinize, mark every file of the reading plan viewed first; ${plan.unviewed.length} still ${plan.unviewed.length === 1 ? "isn't" : "aren't"}: ${plan.unviewed.join(", ")}`);
     }
@@ -461,6 +514,67 @@ export function createLoop(
     waitingState(ticket);
     if (ticket.threadId === null) throw new LoopTurnError("The card has no thread to rethink the approach");
     return decide(ticket.id, { type: "rethink" });
+  }
+
+  /** The loop's state while it runs, in any phase an intervention can reach. */
+  function liveState(ticket: Ticket): LoopState {
+    const state = parseLoopState(stmts.byId.get(ticket.id)!.loop_state);
+    if (!state.monitored || state.phase === "idle") throw new LoopTurnError(`Ticket ${ticket.id} isn't monitored`);
+    if (state.phase === "accepted" || state.phase === "landed") throw new LoopTurnError(`Ticket ${ticket.id}'s change was accepted; the loop is over`);
+    return state;
+  }
+
+  /** Hand off after the running step only while the board runs one; the other directives wait for the thread's next ready. */
+  async function setDirective(ticketId: string, directive: LoopDirective): Promise<Ticket> {
+    const ticket = getTicket(ticketId);
+    const state = liveState(ticket);
+    if (state.phase === "needs-you") throw new LoopTurnError(`Ticket ${ticket.id} is already with you`);
+    if (directive === "hand-off-after-step" && !boardRunning(state)) throw new LoopTurnError(`The board isn't running a step on ticket ${ticket.id}; hand off at the next ready instead`);
+    if (directive !== "hand-off-after-step" && boardRunning(state)) throw new LoopTurnError(`The board is ${workingPhase(state)} ticket ${ticket.id}; hand off after this step instead`);
+    return decide(ticket.id, { type: "set-directive", directive });
+  }
+
+  async function clearDirective(ticketId: string): Promise<Ticket> {
+    return decide(getTicket(ticketId).id, { type: "clear-directive" });
+  }
+
+  /** The user stops the checks, classify or review the board is running; the card comes to them as stopped. */
+  async function stopNow(ticketId: string): Promise<Ticket> {
+    const ticket = getTicket(ticketId);
+    if (!boardRunning(liveState(ticket))) throw new LoopTurnError(`The board isn't running a step on ticket ${ticket.id}`);
+    return decide(ticket.id, { type: "stop-now" });
+  }
+
+  /** The user starts the step that failed twice again at the same commit. */
+  async function retry(ticketId: string): Promise<Ticket> {
+    const ticket = getTicket(ticketId);
+    const state = waitingState(ticket);
+    if (state.reason !== "loop-error") throw new LoopTurnError(`Ticket ${ticket.id}'s loop didn't stop on a loop error, so there's no failed step to retry`);
+    if (state.failedStep === null || state.commit === null || (state.failedStep === "checks" && state.checkCommand === null)) {
+      throw new LoopTurnError(`Ticket ${ticket.id}'s failed step can't be started again; send the card back or rethink instead`);
+    }
+    return decide(ticket.id, { type: "retry" });
+  }
+
+  /** The user sends the card back from Needs you with their own words; the thread carries on under the loop's contract. */
+  async function resume(ticketId: string, message: string): Promise<Ticket> {
+    const ticket = getTicket(ticketId);
+    waitingState(ticket);
+    if (ticket.threadId === null) throw new LoopTurnError("The card has no thread to resume");
+    return decide(ticket.id, { type: "resume", message });
+  }
+
+  /**
+   * The user's words go straight to the card's thread, marked as steering; the loop's state doesn't change. The words
+   * hold the thread to the loop's contract, so only a monitored card's thread is steered, and not one waiting on a
+   * question, which bb answers through the thread.
+   */
+  async function steer(ticketId: string, message: string): Promise<Ticket> {
+    const ticket = getTicket(ticketId);
+    if (ticket.threadId === null) throw new LoopTurnError("The card has no thread to steer");
+    if (liveState(ticket).phase === "paused") throw new LoopTurnError(`Ticket ${ticket.id}'s thread is waiting on a question; answer it in the thread`);
+    await bb.sdk.threads.send({ threadId: ticket.threadId, mode: "auto", input: [{ type: "text", text: steeringText(message), mentions: [] }] });
+    return ticket;
   }
 
   async function pullIn(ticketId: string, findingId: string): Promise<Ticket> {
@@ -600,7 +714,7 @@ export function createLoop(
     }
   }
 
-  return { reconcileOnLoad, setMonitored, setGates, proposePlan, approvePlan, approveFindings, answerFindings, reportReady, recordChecks, handleIdle, quietIdle, turnStarted, threadFailed, questionAsked, reviewFinished, accept, reportLanded, sendBack, rethink, pullIn, decideDispute, setLevel, readingPlan };
+  return { reconcileOnLoad, setMonitored, setGates, proposePlan, approvePlan, approveFindings, answerFindings, reportReady, recordChecks, handleIdle, quietIdle, turnStarted, threadFailed, questionAsked, reviewFinished, accept, reportLanded, sendBack, rethink, pullIn, decideDispute, setLevel, readingPlan, setDirective, clearDirective, stopNow, retry, resume, steer };
 }
 
 export type Loop = ReturnType<typeof createLoop>;

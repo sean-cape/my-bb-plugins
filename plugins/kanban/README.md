@@ -62,8 +62,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
   between columns (skipping empty ones), `j`/`k` between cards, `gg`/`G` jump
   to a column's first or last card, `0`/`$` to the first or last column.
   `H`/`L` move the card to the neighbouring column and `J`/`K` reorder it.
-  `o` (or Enter) opens the card, `t` its thread, `D` its changes, `m` turns its
-  review loop on or off (see Monitored cards), `d` deletes
+  `o` (or Enter) opens the card, `t` its thread, `D` its changes, `m` opens its
+  loop menu beside the card (or turns the loop on while it is off; see
+  Monitored cards), `d` deletes
   it (no confirmation; `u` or the toast's Undo brings it back with its
   reviews, comments and subtasks, for up to a week), `a` adds a
   card to the current column, `za` shows or hides the column's old cards
@@ -85,7 +86,10 @@ its PR is reviewed and its review findings and comments are handed to agents.
   with vim-mode it takes two (the first enters vim's normal mode). Escape again
   closes the card and puts the cursor back on the board, and `h` past a row's
   left edge goes back to the board leaving the card open. `t` and `D` open the card's thread and
-  changes, and `m` turns its review loop on or off.
+  changes; `m` opens its loop menu, `s` types in the loop's composer, `f` hands
+  the card to you and `x` stops the board's step (see Monitored cards). Inside
+  the loop menu `j`/`k` move, `s`/`f`/`x` pick their item, Enter picks and
+  Escape closes.
 - Card details follow one hierarchy: the title with a quiet meta line (kind,
   id, column, PR or issue; the PR number or Jira key links to it, the checks
   tick to the CI run, plus icon buttons for the thread, with its status dot,
@@ -95,7 +99,19 @@ its PR is reviewed and its review findings and comments are handed to agents.
   (Column, Tags, Due, a Start row while the card has no thread, Jira fields);
   other cards show the properties first. Then the Review loop (folded while
   off, and absent on someone else's PR), Subtasks (folded while there are
-  none) and Description or Notes. Title and description save when the field
+  none) and Description or Notes. While the loop runs, its section shows the
+  loop as a strip of steps, Plan → Build → Checks → Review → Fix → Needs you →
+  Land (done, current, upcoming or skipped; Plan is skipped with its gate
+  off), a bar saying who holds the ball (agent, board, you), then the current
+  step with its commit, how long it has run and a link to its thread, a pill
+  per round (`r1 · 3 fixed, 1 disputed`, `yours`, `r2 · reviewing`) with the
+  cap and any manual retries, and the last checks result with the command
+  and exit code. A pending directive is a banner there with an Undo. The
+  steps are buttons: `j`/`k` reach them and Enter opens what each produced
+  (the proposed plan, or the approved one folded under the brief; the card's
+  thread for Build and Fix; the checks thread while it runs, the failed one
+  after a loop error, else the card's thread for Checks; the changes with
+  the review's findings; the brief). Title and description save when the field
   loses focus. A PR or Jira card's title is editable too; once edited, sync
   keeps your title instead of taking the PR's or issue's again.
 - **Brain dump**: New card → Brain dump. Type or dictate (mic button, transcribed
@@ -137,9 +153,13 @@ its PR is reviewed and its review findings and comments are handed to agents.
   threads; columns and the todo list sit on translucent, blurred panels.
 - **Ad hoc cards** from the page, from `bb kanban add`, or from an agent inside
   a thread (the card is linked to that thread).
-- **Monitored cards**: turn on the switch in the card panel's Review loop
-  section (or press `m`, or run `bb kanban monitor on`) and the board drives
-  the card itself. Its
+- **Monitored cards**: choose Review loop under How it runs when creating the
+  card (the default once a project is picked; the gates sit inline, and Create
+  and start makes the card, sets its loop and starts its thread in one go), in
+  the card panel's Thread row for a card without a thread, or in the
+  proposals' accept step; or turn on the switch in the card panel's Review
+  loop section (or press `m`, or run `bb kanban monitor on`, or `bb kanban add
+  --monitor [--gates ...]`) and the board drives the card itself. Its
   thread is told (in its instructions, and with a message when the thread
   already exists) to commit its work, run the project's check command, and
   finish with `bb kanban ready` and the evidence of what it ran, never moving
@@ -205,20 +225,37 @@ its PR is reviewed and its review findings and comments are handed to agents.
   critical findings. The check command
   and the path rules (`src/auth/** scrutinize, .github/** read`) are set per
   project in the card panel's Checks and Path rules fields; a project without one lets the agent pick, and the board marks
-  it as the agent's choice. Monitored cards carry a chip naming the loop's
-  phase (`building`, `checks`, `classifying`, `review rN`, `fixing rN`, `ready · <level>`, or
-  `stuck · <reason>`) and a pip per fix round used. Turning
+  it as the agent's choice. Monitored cards carry a chip in the strip's words:
+  the step under way (`build`, `checks`, `review N`, `fix N`, `plan?` while a
+  plan waits) or, at Needs you, the bucket and its detail (`approve · rN`,
+  `needs you · clean|not reviewed|stopped`, `stuck · <reason>`), with how long
+  the card has waited for you once that passes an hour, `→ you` while a
+  directive is pending, and a pip per fix round used. On a board with the
+  loop's columns, Building, Checking and Needs you say who holds the ball
+  under their names (agent, board, you). Turning
   monitoring off stops the loop after its current step: a running check or
   review finishes, and its result is kept but drives nothing; a fix round in
   progress ends with its findings left open, so the review's Apply is back.
+  While the loop runs you can step in without discarding it: hand the card
+  to yourself at the thread's next ready or after the step the board is
+  running, skip the next review once, stop the board's step now, retry a
+  step that failed at the same commit, steer the thread, or resume from
+  Needs you with a message as a round of yours. The card panel's loop
+  section has buttons and keys for these (`s` steer, `f` hand to me, `x`
+  stop, `m` the menu with every intervention and the gates; the menu greys
+  what the phase refuses, with the reason), and `bb kanban loop
+  hand-off|skip-review|stop|retry|steer <message>|resume <message>` does
+  the same from the shell (`--clear` takes a pending directive back). A
+  hand-off or a stop reaches Needs you as "handed off" or "stopped".
   Three gates sit under the switch, each with a one-line hint and a tooltip
   that also opens when `j`/`k` reach it (Space ticks): two that wait for you
   and one that finishes on its own. They are chosen as monitoring turns on (`bb kanban monitor on --gates
-  plan,findings,auto-accept|none`): plan approval (on by default for Jira
-  cards) holds the card in `planning` until its thread proposes a plan with
+  plan,findings,auto-accept|none`, or `bb kanban add --gates ...`); by default
+  auto-accept is on for every card and plan approval for Jira cards. Plan
+  approval holds the card in `planning` until its thread proposes a plan with
   `bb kanban plan --plan-file <path>` and you approve it, edited or not, with `Y`; the
   approved plan goes to the thread and into every review's card intent.
-  Findings approval stops each round at Needs you (`approve rN`) until you
+  Findings approval stops each round at Needs you (`approve · rN`) until you
   untick findings and approve the rest with `Y`; the unticked stay open.
   Auto-accept accepts a clean change at Glance, with no serious finding or
   dispute open, without stopping; never at Read or Scrutinize. Open minors
@@ -692,12 +729,13 @@ bb kanban due <YYYY-MM-DD|none> [--ticket <id>]
 bb kanban sources
 bb kanban columns
 bb kanban show [<ticket-id> | --ticket <id>]
-bb kanban add "<title>" [--tag <tag>] [--due <YYYY-MM-DD>] [--description <md>] [--column <id>] [--project <id>] [--start-thread] [--parent <id>] [--monitor|--no-monitor]
+bb kanban add "<title>" [--tag <tag>] [--due <YYYY-MM-DD>] [--description <md>] [--column <id>] [--project <id>] [--start-thread] [--parent <id>] [--monitor|--no-monitor] [--gates plan,findings,auto-accept|none]
 bb kanban subtasks [--ticket <id>]
 bb kanban set-parent <ticket-id> <parent-id|none>
 bb kanban start-subtasks [--ticket <id>] [--sequential]
 bb kanban move <column-id> [--ticket <id>]
 bb kanban monitor on|off [--ticket <id>] [--gates plan,findings,auto-accept|none]
+bb kanban loop hand-off|skip-review|stop|retry|steer <message>|resume <message> [--ticket <id>] [--clear]
 bb kanban plan --plan-file <path>
 bb kanban ready --commit <sha> [--evidence-file <path>] [--screenshot <path>] [--check-command "<cmd>"]
 bb kanban checks-record --exit-code <n> [--output-file <path>]

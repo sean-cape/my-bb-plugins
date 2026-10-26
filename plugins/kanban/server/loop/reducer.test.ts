@@ -305,14 +305,14 @@ describe("loop reducer", () => {
     const newer = run([...reviewing, ready(fixSha)]);
     expect(newer.state).toMatchObject({ phase: "checking", commit: fixSha });
     expect(newer.actions.at(-1)).toEqual([
-      { type: "stop-superseded", reviewId: "rev1" },
+      { type: "stop-step", reason: "superseded" },
       { type: "move", column: "checking" },
       { type: "spawn-checks", commit: fixSha, checkCommand: { command: "pnpm check", source: "project" } },
     ]);
     // The superseded review's result arriving late changes nothing.
     expect(run([reviewed("rev1", [finding("F1", "critical")])], newer.state).state).toMatchObject({ phase: "checking", commit: fixSha });
     // While checking there is no review to stop yet, only the checks.
-    expect(run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), ready(fixSha)]).actions.at(-1)![0]).toEqual({ type: "stop-superseded", reviewId: null });
+    expect(run([{ type: "monitor", hasThread: true, gates: noGates }, ready(), ready(fixSha)]).actions.at(-1)![0]).toEqual({ type: "stop-step", reason: "superseded" });
   });
 
   it("sends a single failure back to the card's thread with the output, spending no review", () => {
@@ -436,12 +436,13 @@ describe("loop reducer", () => {
       const { state, actions } = run([...clean, { type: "accept", pr: false }, { type: "landed" }]);
       expect(actions.at(-2)).toEqual([{ type: "prompt-card", prompt: { kind: "land", auto: false } }]);
       expect(actions.at(-1)).toEqual([{ type: "move", column: "done" }]);
-      expect(state).toMatchObject({ phase: "landed", reason: null });
+      // The reason stays, as what the loop stopped for.
+      expect(state).toMatchObject({ phase: "landed", reason: "clean" });
     });
 
     it("accepts a PR card without prompting or moving it", () => {
       const { state, actions } = run([...clean, { type: "accept", pr: true }]);
-      expect(state).toMatchObject({ phase: "accepted", reason: null });
+      expect(state).toMatchObject({ phase: "accepted", reason: "clean", directive: null });
       expect(actions.at(-1)).toEqual([]);
       // Nothing but a stop at Needs you is accepted.
       expect(run([...reviewing, { type: "accept", pr: true }]).state.phase).toBe("reviewing");
@@ -595,6 +596,120 @@ describe("loop reducer", () => {
         expect(deselected.state).toMatchObject({ phase: "needs-you", reason: "clean", openFindings: [{ id: "F1", severity: "important" }] });
         expect(deselected.actions[0]).not.toContainEqual({ type: "alert" });
       });
+    });
+  });
+
+  describe("interventions", () => {
+    const monitored: LoopEvent[] = [{ type: "monitor", hasThread: true, gates: noGates }];
+    const directive = (directive: "hand-off-at-ready" | "hand-off-after-step" | "skip-review-once"): LoopEvent => ({ type: "set-directive", directive });
+    const handedOff = [{ type: "move", column: "review" }, { type: "alert" }];
+
+    it("holds one directive, replaced by a newer one and taken back by undo, and never sets the phase's start time", () => {
+      const set = run([...monitored, directive("skip-review-once"), directive("hand-off-at-ready")]);
+      expect(set.state).toMatchObject({ phase: "building", directive: "hand-off-at-ready" });
+      expect(set.actions.flat()).toEqual([{ type: "ensure-columns" }, { type: "prompt-card", prompt: { kind: "monitoring" } }]);
+      expect(run([{ type: "clear-directive" }], set.state).state.directive).toBeNull();
+      // Nothing to hand off on a card the loop isn't running.
+      expect(run([directive("hand-off-at-ready")]).state.directive).toBeNull();
+      expect(run([ready()], { ...set.state, phaseSince: 42 }).state).toMatchObject({ phase: "needs-you", phaseSince: 42 });
+    });
+
+    it("hands off at the next ready: the commit and evidence are kept, nothing is checked or reviewed, and the card is unassessed", () => {
+      const { state, actions } = run([...monitored, directive("hand-off-at-ready"), ready()]);
+      expect(state).toMatchObject({ phase: "needs-you", reason: "handed-off", directive: null, commit: sha, evidence, attention: null });
+      expect(actions.at(-1)).toEqual(handedOff);
+      // Accept stays available on a change the user chose to look at themselves.
+      expect(run([{ type: "accept", pr: true }], state).state.phase).toBe("accepted");
+      // A fix round's ready still records the fix on its review before handing off.
+      const fixing = run([...reviewing, reviewed("rev1", [finding("F1", "important")]), answer({ F1: fixed }), directive("hand-off-at-ready"), ready(fixSha)]);
+      expect(fixing.actions.at(-1)).toEqual([{ type: "record-fix", reviewId: "rev1", commit: fixSha, findingIds: ["F1"], disputed: [] }, ...handedOff]);
+    });
+
+    it("hands off after the running step: a passing check comes to you unreviewed, a failing one as checks rather than back to the thread", () => {
+      const passed = run([...monitored, ready(), directive("hand-off-after-step"), checks(0)]);
+      expect(passed.state).toMatchObject({ phase: "needs-you", reason: "handed-off", directive: null, checks: [{ commit: sha, passed: true }] });
+      expect(passed.actions.at(-1)).toEqual(handedOff);
+      const failed = run([...monitored, ready(), directive("hand-off-after-step"), checks(1)]);
+      expect(failed.state).toMatchObject({ phase: "needs-you", reason: "checks", directive: null });
+      expect(failed.actions.at(-1)).not.toContainEqual({ type: "prompt-card", prompt: expect.objectContaining({ kind: "checks-failed" }) });
+    });
+
+    it("hands off after a review with its findings listed open, waiting for it when set while classifying", () => {
+      const classifying = run([...monitored, ready(), checks(0), directive("hand-off-after-step"), classified(3)]);
+      expect(classifying.state).toMatchObject({ phase: "reviewing", directive: "hand-off-after-step" });
+      expect(classifying.actions.at(-1)).toEqual([{ type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {}, severityFloor: null }]);
+      const { state, actions } = run([{ type: "review-started", reviewId: "rev1" }, reviewed("rev1", [finding("F1", "important"), finding("F2", "minor", "defer")])], classifying.state);
+      expect(state).toMatchObject({ phase: "needs-you", reason: "handed-off", directive: null, round: 0, rounds: [], openFindings: [{ id: "F1", severity: "important" }], attention: { level: "read" } });
+      expect(actions.at(-1)).toEqual(handedOff);
+    });
+
+    it("skips the next review once: a pass comes to you after the checks, a failure bounces to the thread and keeps the directive", () => {
+      const passed = run([...monitored, directive("skip-review-once"), ready(), checks(0)]);
+      expect(passed.state).toMatchObject({ phase: "needs-you", reason: "handed-off", directive: null, attention: null });
+      expect(passed.actions.at(-1)).toEqual(handedOff);
+      const failed = run([...monitored, directive("skip-review-once"), ready(), checks(1)]);
+      expect(failed.state).toMatchObject({ phase: "building", directive: "skip-review-once" });
+      expect(failed.actions.at(-1)![1]).toMatchObject({ type: "prompt-card", prompt: { kind: "checks-failed", commit: sha } });
+      expect(run([ready(fixSha), checks(0, fixSha)], failed.state).state).toMatchObject({ phase: "needs-you", reason: "handed-off", directive: null });
+    });
+
+    it("stops the running step now, discarding it, and comes to you as stopped", () => {
+      const checking = run([...monitored, ready(), { type: "stop-now" }]);
+      expect(checking.state).toMatchObject({ phase: "needs-you", reason: "stopped", checks: [] });
+      expect(checking.actions.at(-1)).toEqual([{ type: "stop-step", reason: "stopped" }, ...handedOff]);
+      // The stopped step's late result is discarded.
+      expect(run([checks(0)], checking.state)).toEqual({ state: checking.state, actions: [[]] });
+      const stoppedReview = run([...reviewing, { type: "stop-now" }]);
+      expect(stoppedReview.state).toMatchObject({ phase: "needs-you", reason: "stopped", reviewId: null });
+      expect(stoppedReview.actions.at(-1)).toEqual([{ type: "stop-step", reason: "stopped" }, ...handedOff]);
+      expect(run([reviewed("rev1", [finding("F1", "critical")])], stoppedReview.state)).toEqual({ state: stoppedReview.state, actions: [[]] });
+      // Only a step the board runs can be stopped.
+      expect(run([...monitored, { type: "stop-now" }]).state.phase).toBe("building");
+    });
+
+    it("keeps a polish round's left-open findings listed when the loop hands off or stops at its check", () => {
+      const polish = run([...reviewing, reviewed("rev1", [finding("F1", "minor"), finding("F2", "minor", "defer")]), answer({ F1: disputed }), ready(fixSha)]);
+      expect(polish.state).toMatchObject({ phase: "checking", openFindings: [], rounds: [{ polish: true }] });
+      expect(run([directive("hand-off-after-step"), checks(0, fixSha)], polish.state).state).toMatchObject({ phase: "needs-you", reason: "handed-off", openFindings: [{ id: "F1" }] });
+      expect(run([{ type: "stop-now" }], polish.state).state).toMatchObject({ phase: "needs-you", reason: "stopped", openFindings: [{ id: "F1" }] });
+    });
+
+    it("retries the step that failed twice at the same commit on the user's say-so, counting it", () => {
+      const failedChecks = (threadId: string): LoopEvent => ({ type: "thread-failed", role: "checks", commit: sha, threadId });
+      const failedTwice = run([...monitored, ready(), failedChecks("thr_c1"), failedChecks("thr_c2")]);
+      expect(failedTwice.state).toMatchObject({ phase: "needs-you", reason: "loop-error", failedStep: "checks", retries: 1 });
+      const retried = run([{ type: "retry" }], failedTwice.state);
+      expect(retried.state).toMatchObject({ phase: "checking", reason: null, retries: 0, manualRetries: 1, failedThreadId: null, failedStep: null, commit: sha });
+      expect(retried.actions[0]).toEqual([
+        { type: "move", column: "checking" },
+        { type: "spawn-checks", commit: sha, checkCommand: { command: "pnpm check", source: "project" } },
+      ]);
+      const failedReview = (threadId: string): LoopEvent => ({ type: "thread-failed", role: "review", reviewId: "rev1", threadId });
+      const review = run([{ type: "retry" }], run([...reviewing, failedReview("thr_r1"), { type: "review-started", reviewId: "rev1" }, failedReview("thr_r2")]).state);
+      expect(review.state).toMatchObject({ phase: "reviewing", reviewId: null, manualRetries: 1 });
+      expect(review.actions[0]).toEqual([
+        { type: "move", column: "checking" },
+        { type: "spawn-review", commit: sha, mode: "full", depth: "standard", answers: {}, severityFloor: null },
+      ]);
+      // Only a loop error has a failed step to retry.
+      expect(run([{ type: "retry" }], run([...reviewing, reviewed("rev1", [])]).state).state.phase).toBe("needs-you");
+    });
+
+    it("resumes from Needs you with the user's message as a round of theirs, and prompts the thread with it", () => {
+      const { state, actions } = run([...reviewing, reviewed("rev1", []), { type: "resume", message: "Use the existing cache helper" }]);
+      expect(state).toMatchObject({ phase: "building", reason: null, round: 0, humanRounds: 1, rounds: [{ reviewId: "rev1", handed: [], owner: "user", comments: 0 }] });
+      expect(actions.at(-1)).toEqual([
+        { type: "move", column: "in-progress" },
+        { type: "prompt-card", prompt: { kind: "resume", message: "Use the existing cache helper" } },
+      ]);
+      expect(run([ready(fixSha), checks(0, fixSha)], state).actions.at(-1)).toEqual([{ type: "spawn-review", commit: fixSha, mode: "incremental", depth: "standard", answers: {}, severityFloor: null }]);
+      expect(run([...reviewing, { type: "resume", message: "x" }]).state.phase).toBe("reviewing");
+    });
+
+    it("clears a pending directive on rethink and when the loop is turned off", () => {
+      const stopped = run([...reviewing, reviewed("rev1", [])]).state;
+      expect(run([directive("hand-off-at-ready"), { type: "rethink" }], stopped).state).toMatchObject({ phase: "building", directive: null });
+      expect(run([...monitored, directive("skip-review-once"), { type: "unmonitor" }]).state).toMatchObject({ monitored: false, directive: null });
     });
   });
 });

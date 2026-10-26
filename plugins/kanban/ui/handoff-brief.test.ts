@@ -5,13 +5,20 @@ import { handoffBrief, type BriefReview, type BriefSection } from "./handoff-bri
 
 const loop = (overrides: Partial<LoopState>): LoopState => loopStateSchema.parse({ monitored: true, phase: "needs-you", reason: "clean", ...overrides });
 const finding = (id: string, overrides: Partial<Finding> = {}): Finding => findingSchema.parse({ id, severity: "minor", title: `title ${id}`, ...overrides });
-const review = (id: string, createdAt: number, report: Partial<Parameters<typeof reviewReportSchema.parse>[0]>): BriefReview => ({
+const review = (id: string, createdAt: number, report: Partial<Parameters<typeof reviewReportSchema.parse>[0]>, commitSha: string | null = null): BriefReview => ({
   id,
   status: "completed",
   createdAt,
+  commitSha,
   report: reviewReportSchema.parse({ version: 5, findings: [], ...report }),
 });
 const section = <K extends BriefSection["kind"]>(sections: BriefSection[] | null, kind: K) => sections?.find((entry) => entry.kind === kind) as Extract<BriefSection, { kind: K }> | undefined;
+
+/** The commit the loop holds, as stored and as the brief shortens it. */
+const COMMIT = "abc1234def";
+const SHORT = "abc1234";
+const PASSED = { commit: COMMIT, exitCode: 0, passed: true };
+const FAILED = { commit: COMMIT, exitCode: 1, passed: false };
 
 describe("handoffBrief", () => {
   it("shows nothing for a card the loop isn't waiting on you for", () => {
@@ -54,18 +61,42 @@ describe("handoffBrief", () => {
     expect(section(sections, "level")?.escalation).not.toContain("F2");
   });
 
+  it("counts the failing checks it stopped on, where a pending hand-off brings a single failure to you", () => {
+    expect(handoffBrief(loop({ reason: "checks", commit: COMMIT, checks: [FAILED] }), [])?.[0]).toMatchObject({ escalation: `Checks failed, last exit code 1 at ${SHORT}` });
+    expect(handoffBrief(loop({ reason: "checks", commit: COMMIT, checks: [PASSED, FAILED, FAILED] }), [])?.[0]).toMatchObject({ escalation: `Checks failed twice in a row, last exit code 1 at ${SHORT}` });
+  });
+
+  it("after a hand-off or a stop says what ran and did not, reads as not assessed, and lists the agent's evidence alone", () => {
+    const evidence = { commands: [{ command: "pnpm lint", exitCode: 0, outputTail: "" }], screenshots: [] };
+    const handed = handoffBrief(loop({ reason: "handed-off", commit: COMMIT, attention: { level: "scrutinize", reasons: ["risk 5"] }, checks: [PASSED], evidence }), [review("r1", 1, { commit: "0000000" })]);
+    expect(handed?.[0]).toMatchObject({ kind: "level", level: null, assessed: false, reasons: [], escalation: `Handed off as you asked: checks at ${SHORT} passed; no review` });
+    expect(section(handed, "evidence")).toMatchObject({ reran: [], reranBy: null, claimed: evidence.commands });
+    expect(handoffBrief(loop({ reason: "handed-off", commit: COMMIT }), [])?.[0]).toMatchObject({ escalation: `Handed off as you asked: checks at ${SHORT} not run; no review` });
+    expect(handoffBrief(loop({ reason: "handed-off", commit: COMMIT, reviewId: "r2", checks: [PASSED] }), [review("r2", 2, {}, COMMIT)])?.[0]).toMatchObject({
+      escalation: `Handed off as you asked: checks at ${SHORT} passed; review completed`,
+    });
+    // A review of an earlier round's commit is not a review of this one.
+    expect(handoffBrief(loop({ reason: "handed-off", commit: COMMIT, reviewId: "r1", checks: [PASSED] }), [review("r1", 1, {}, "0000000")])?.[0]).toMatchObject({
+      escalation: `Handed off as you asked: checks at ${SHORT} passed; no review`,
+    });
+    const stopped = handoffBrief(loop({ reason: "stopped", commit: COMMIT, checks: [PASSED] }), []);
+    expect(stopped?.[0]).toMatchObject({ assessed: false, escalation: `Stopped as you asked: checks at ${SHORT} passed; review stopped` });
+    expect(stopped?.map((entry) => entry.kind)).toEqual(["level", "not-covered"]);
+    expect(handoffBrief(loop({ reason: "stopped", commit: COMMIT }), [])?.[0]).toMatchObject({ escalation: `Stopped as you asked: checks at ${SHORT} stopped; no review` });
+  });
+
   it("keeps the checks the board re-ran apart from what the agent claims", () => {
     const sections = handoffBrief(
       loop({
         checkCommand: { command: "pnpm test", source: "agent" },
-        checks: [{ commit: "abc1234", exitCode: 0, passed: true }],
+        checks: [PASSED],
         evidence: { commands: [{ command: "pnpm lint", exitCode: 0, outputTail: "" }], screenshots: ["shot.png"] },
       }),
       [],
     );
     expect(section(sections, "evidence")).toEqual({
       kind: "evidence",
-      reran: [{ commit: "abc1234", exitCode: 0, passed: true, command: "pnpm test" }],
+      reran: [{ ...PASSED, command: "pnpm test" }],
       reranBy: "agent",
       claimed: [{ command: "pnpm lint", exitCode: 0, outputTail: "" }],
       screenshots: ["shot.png"],
@@ -99,7 +130,7 @@ describe("handoffBrief", () => {
         round: 1,
         disputes: [{ id: "F4", severity: "important", title: "title F4", decision: "upheld" }],
         attention: { level: "read", reasons: ["1 disputed finding"] },
-        checks: [{ commit: "abc1234", exitCode: 0, passed: true }],
+        checks: [PASSED],
         rounds: [{ reviewId: "r1", handed: ["F1", "F2", "F3"], answers: { F1: { answer: "fixed" }, F2: { answer: "fixed" }, F3: { answer: "disputed", reason: "not reachable" } } }],
       }),
       [r2, r1, review("manual", 0, { resolved: [{ id: "old/F1", title: "before monitoring" }] })],

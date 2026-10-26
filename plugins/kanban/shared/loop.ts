@@ -5,8 +5,8 @@ import { DEFAULT_REVIEW_DEPTH, findingSeveritySchema, reviewDepthSchema, type Re
 export const loopPhaseSchema = z.enum(["idle", "planning", "building", "checking", "classifying", "reviewing", "fixing", "paused", "needs-you", "accepted", "landed"]);
 export type LoopPhase = z.infer<typeof loopPhaseSchema>;
 
-/** Why the loop stopped at Needs you: `clean` is the happy ending, every other reason an escalation. */
-export const needsYouReasonSchema = z.enum(["clean", "cap", "not-converging", "checks", "dispute", "question", "loop-error", "findings"]);
+/** Why the loop stopped at Needs you: `clean` is the happy ending, `handed-off` and `stopped` what the user asked for, every other reason an escalation. */
+export const needsYouReasonSchema = z.enum(["clean", "cap", "not-converging", "checks", "dispute", "question", "loop-error", "findings", "handed-off", "stopped"]);
 export type NeedsYouReason = z.infer<typeof needsYouReasonSchema>;
 
 export const NEEDS_YOU_REASON_LABEL: Record<NeedsYouReason, string> = {
@@ -18,7 +18,34 @@ export const NEEDS_YOU_REASON_LABEL: Record<NeedsYouReason, string> = {
   question: "question",
   "loop-error": "loop error",
   findings: "findings to approve",
+  "handed-off": "handed off",
+  stopped: "stopped",
 };
+
+/** The three things Needs you can ask of the user, and the word that says which stop it was. */
+export type ReasonBucket = "approve" | "review" | "stuck";
+
+const REASON_BUCKET: Record<NeedsYouReason, { bucket: ReasonBucket; detail: string }> = {
+  findings: { bucket: "approve", detail: "findings" },
+  clean: { bucket: "review", detail: "clean" },
+  "handed-off": { bucket: "review", detail: "not reviewed" },
+  stopped: { bucket: "review", detail: "stopped" },
+  checks: { bucket: "stuck", detail: NEEDS_YOU_REASON_LABEL.checks },
+  cap: { bucket: "stuck", detail: NEEDS_YOU_REASON_LABEL.cap },
+  "not-converging": { bucket: "stuck", detail: NEEDS_YOU_REASON_LABEL["not-converging"] },
+  dispute: { bucket: "stuck", detail: NEEDS_YOU_REASON_LABEL.dispute },
+  question: { bucket: "stuck", detail: NEEDS_YOU_REASON_LABEL.question },
+  "loop-error": { bucket: "stuck", detail: NEEDS_YOU_REASON_LABEL["loop-error"] },
+};
+
+/** Handed off and stopped are what the user asked for, so they read as something to review, never as stuck. */
+export function reasonBucket(reason: NeedsYouReason): { bucket: ReasonBucket; detail: string } {
+  return REASON_BUCKET[reason];
+}
+
+/** What the user asked the loop to do at its next step; one at a time, replaced by a newer one and cleared when consumed. */
+export const loopDirectiveSchema = z.enum(["hand-off-at-ready", "hand-off-after-step", "skip-review-once"]);
+export type LoopDirective = z.infer<typeof loopDirectiveSchema>;
 
 /** Kept short so a card's loop state stays small; the checks table keeps the full tail of a re-run. */
 const OUTPUT_TAIL_MAX = 4000;
@@ -176,9 +203,9 @@ export const loopGatesSchema = z.object({
 });
 export type LoopGates = z.infer<typeof loopGatesSchema>;
 
-/** The gates a card is monitored with unless they're chosen: a Jira ticket's plan waits for approval, an ad hoc card's doesn't. */
+/** The gates a card is monitored with unless they're chosen: a clean, low-risk change is accepted for the user, and a Jira ticket's plan waits for approval. */
 export function defaultGates(kind: "pr" | "jira" | "adhoc"): LoopGates {
-  return { plan: kind === "jira", findings: false, autoAccept: false };
+  return { plan: kind === "jira", findings: false, autoAccept: true };
 }
 
 export const PLAN_MAX_LENGTH = 20_000;
@@ -192,7 +219,7 @@ export const loopStateSchema = z.object({
   proposedPlan: z.string().nullable().default(null),
   /** The plan the user approved, possibly edited; the reviews hold the change to it. */
   plan: z.string().nullable().default(null),
-  /** Set while the phase is needs-you, and to question while paused. */
+  /** Set while the phase is needs-you and kept through accepted and landed, as what the loop stopped for; question while paused. */
   reason: needsYouReasonSchema.nullable().default(null),
   /** The phase a question paused, which the next ready resumes from. */
   pausedPhase: loopPhaseSchema.nullable().default(null),
@@ -200,6 +227,8 @@ export const loopStateSchema = z.object({
   retries: z.number().int().default(0),
   /** The thread whose second failure stopped the loop with a loop error. */
   failedThreadId: z.string().nullable().default(null),
+  /** The step that failed, which a manual retry starts again. */
+  failedStep: z.enum(["checks", "review"]).nullable().default(null),
   /** What the failed thread's output says went wrong, when it says; such a failure isn't retried. */
   failure: z.string().nullable().default(null),
   /** Automatic fix rounds started; the cap counts these. */
@@ -235,12 +264,29 @@ export const loopStateSchema = z.object({
   /** The evidence of the latest ready report. */
   evidence: evidenceSchema.nullable().default(null),
   checks: z.array(checksOutcomeSchema).default([]),
+  directive: loopDirectiveSchema.nullable().default(null),
+  /** When the current phase began, stamped by the loop service as it stores a phase change; the reducer never sets it. */
+  phaseSince: z.number().nullable().default(null),
+  /** Steps the user started again after a loop error. */
+  manualRetries: z.number().int().default(0),
 });
 export type LoopState = z.infer<typeof loopStateSchema>;
 
 /** The level the user set, else the one the loop computed. */
 export function effectiveLevel(state: LoopState): AttentionLevel | null {
   return state.levelOverride?.level ?? state.attention?.level ?? null;
+}
+
+/** The board's hidden threads hold the ball: the phases a stop reaches, and in which a hand-off waits for the step to end. */
+export function boardRunning(state: LoopState): boolean {
+  return state.phase === "checking" || state.phase === "classifying" || state.phase === "reviewing";
+}
+
+/** Failing checks at the end of the record, across commits. */
+export function failuresInARow(state: LoopState): number {
+  let count = 0;
+  for (let index = state.checks.length - 1; index >= 0 && !state.checks[index]!.passed; index -= 1) count += 1;
+  return count;
 }
 
 export const INITIAL_LOOP_STATE: LoopState = loopStateSchema.parse({});
@@ -276,57 +322,4 @@ export function openFindingsClause(findings: LoopFinding[]): string {
   const list = ordered.slice(0, OPEN_FINDINGS_SHOWN).map((finding) => `${finding.id} ${finding.title}`).join(", ");
   const more = findings.length - OPEN_FINDINGS_SHOWN;
   return `${openFindingsCount(findings)} left open: ${more > 0 ? `${list}, +${more} more` : list}`;
-}
-
-/** The chip a monitored card shows on the board: the loop's phase, or why it needs you. */
-export function phaseChip(loop: LoopState): { label: string; tone: "neutral" | "accent" | "warning" | "danger" | "success"; title: string } | null {
-  if (!loop.monitored) return null;
-  const commit = loop.commit === null ? "" : ` ${loop.commit.slice(0, 7)}`;
-  switch (loop.phase) {
-    case "checking":
-      return { label: "checks", tone: "accent", title: `Re-running \`${loop.checkCommand?.command ?? "the checks"}\` at${commit}` };
-    case "reviewing": {
-      const recheck = loop.round >= LOOP_ROUND_CAP;
-      return {
-        label: `review r${recheck ? loop.round : loop.round + 1}`,
-        tone: "accent",
-        title: recheck ? `Re-reviewing the last round's fixes at${commit}` : `Reviewing${commit} at ${loop.depth} depth`,
-      };
-    }
-    case "classifying":
-      return { label: "classifying", tone: "accent", title: `Scoring the risk of each file changed at${commit}, which picks the review's depth` };
-    case "fixing":
-      if (fixingRound(loop)?.owner === "user") return { label: "fixing · yours", tone: "accent", title: "The card's thread is fixing the findings you sent back; this round doesn't count toward the cap" };
-      return { label: `fixing r${loop.round}`, tone: "accent", title: `The card's thread is fixing round ${loop.round}'s findings` };
-    case "needs-you":
-      if (loop.reason === "clean" || loop.reason === null) {
-        const open = loop.openFindings.length === 0 ? "" : `; ${openFindingsClause(loop.openFindings)}`;
-        const effective = effectiveLevel(loop);
-        const level = effective === null ? "" : ` · ${ATTENTION_LEVEL_LABEL[effective]}`;
-        const why = loop.levelOverride === null ? (loop.attention?.reasons ?? []) : [`you set it: ${loop.levelOverride.reason}`];
-        const reasons = effective === null || why.length === 0 ? "" : `. ${ATTENTION_LEVEL_LABEL[effective]}: ${why.join("; ")}`;
-        return { label: `ready${level}`, tone: "success", title: `Checked and reviewed clean at${commit}${open}; needs you${reasons}` };
-      }
-      if (loop.reason === "loop-error") return { label: "stuck · loop error", tone: "danger", title: `Needs you: ${loop.failure ?? "a checks or review thread failed twice"}; open it from the card` };
-      if (loop.reason === "findings") {
-        return { label: `approve r${loop.round + 1}`, tone: "warning", title: `Needs you: approve or deselect the ${loop.awaitingFindings.length} finding${loop.awaitingFindings.length === 1 ? "" : "s"} of the next round before the fix prompt goes out` };
-      }
-      return { label: `stuck · ${NEEDS_YOU_REASON_LABEL[loop.reason]}`, tone: "danger", title: `Needs you: ${NEEDS_YOU_REASON_LABEL[loop.reason]}` };
-    case "paused":
-      return { label: "stuck · question", tone: "warning", title: "The card's thread is waiting on you" };
-    case "planning":
-      return loop.proposedPlan === null
-        ? { label: "planning", tone: "neutral", title: "Monitored with the plan gate: the card's thread proposes a plan before building" }
-        : { label: "approve plan", tone: "warning", title: "Needs you: approve or edit the plan the card's thread proposed" };
-    case "accepted":
-    case "landed": {
-      const open = loop.openFindings.length === 0 ? "" : `; ${openFindingsClause(loop.openFindings)}`;
-      return { label: loop.phase === "accepted" && loop.autoAccepted ? "auto-accepted" : loop.phase, tone: "success", title: `Monitored; ${loop.autoAccepted ? "auto-accepted at Glance" : "accepted"}${loop.phase === "landed" ? " and landed" : ""}${open}` };
-    }
-    case "idle":
-    case "building":
-      return { label: "building", tone: "neutral", title: "Monitored: the board checks the work when the card's thread reports it ready" };
-    default:
-      return { label: loop.phase, tone: "accent", title: `Monitored: ${loop.phase}` };
-  }
 }

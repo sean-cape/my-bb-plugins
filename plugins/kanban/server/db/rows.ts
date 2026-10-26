@@ -376,7 +376,7 @@ export function rowToTicket(
   row: TicketRow,
   latestReview: Review | null,
   comments: Ticket["comments"],
-  extras: { pendingDiffComments: number; canPostToGithub: boolean; defaultCommentTarget: DiffCommentTarget; children: Ticket["children"]; spend: Ticket["spend"] },
+  extras: Pick<Ticket, "pendingDiffComments" | "canPostToGithub" | "defaultCommentTarget" | "children" | "spend" | "checksThreadId" | "classifyThreadId">,
 ): Ticket {
   const pr: PullRequest | null =
     row.pr_repo !== null &&
@@ -408,6 +408,8 @@ export function rowToTicket(
     sourceId: row.source_id,
     threadId: row.thread_id,
     reviewThreadId: latestReview?.threadId ?? row.review_thread_id,
+    checksThreadId: extras.checksThreadId,
+    classifyThreadId: extras.classifyThreadId,
     latestReview: latestReview === null ? null : summarize(latestReview),
     comments,
     parentId: row.parent_id,

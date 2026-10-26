@@ -40,6 +40,7 @@ export function ColumnView({
   hiddenCount,
   revealed,
   onToggleHidden,
+  holder,
 }: {
   index: number;
   arrival: Arrival;
@@ -67,6 +68,8 @@ export function ColumnView({
   hiddenCount: number;
   revealed: boolean;
   onToggleHidden: () => void;
+  /** Who holds the ball in this column (agent, board, you), on boards with the loop's columns; null shows no subtitle. */
+  holder: string | null;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const indexFromPointer = (event: DragEvent<HTMLElement>): number => {
@@ -99,7 +102,10 @@ export function ColumnView({
     >
       <header className="flex items-center gap-2 rounded-t-[7px] border-b border-border bg-muted/40 px-3 py-2">
         <span aria-hidden className={cn("size-2 shrink-0 rounded-full", COLUMN_ACCENT[column.id] ?? "bg-muted-foreground/40")} />
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{column.name}</h2>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <h2 className="truncate text-sm font-semibold">{column.name}</h2>
+          {holder === null ? null : <span className="truncate text-[10px] font-medium uppercase leading-3 tracking-wide text-muted-foreground">{holder}</span>}
+        </div>
         <span key={countPop.key} onAnimationEnd={countPop.onAnimationEnd} className={cn("rounded-full bg-muted px-1.5 text-[11px] font-medium leading-5 tabular-nums text-muted-foreground", countPop.className)}>
           {tickets.length}
         </span>

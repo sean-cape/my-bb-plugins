@@ -1,5 +1,6 @@
 import type { Ticket } from "../shared/board";
 import type { Dump, ProposedTicket } from "../shared/dump";
+import type { LoopGates } from "../shared/loop";
 import { parseProposal } from "./agent-output";
 import { initialColumn, type BoardStore } from "./board";
 import type { CardThreads } from "./card-threads";
@@ -92,7 +93,13 @@ export function createDumps(ctx: KanbanContext, { board, threads }: { board: Boa
     return rowToDump(stmts.dumpById.get(id)!);
   }
 
-  async function finalizeDump(id: string, proposed: ProposedTicket[], columnId: string | undefined, startThreads: boolean): Promise<{ dump: Dump; tickets: Ticket[] }> {
+  /** `monitored` and `gates` are each card's own, as for `ticket_create`; absent, the tags' monitoring default and the kind's gates decide. */
+  async function finalizeDump(
+    id: string,
+    proposed: ProposedTicket[],
+    columnId: string | undefined,
+    { startThreads, monitored, gates }: { startThreads: boolean; monitored?: boolean; gates?: LoopGates },
+  ): Promise<{ dump: Dump; tickets: Ticket[] }> {
     const row = stmts.dumpById.get(id);
     if (row === undefined) throw new Error(`No brain dump with id ${id}`);
     if (row.status === "done" || row.status === "discarded") throw new Error("This dump was already closed");
@@ -109,6 +116,8 @@ export function createDumps(ctx: KanbanContext, { board, threads }: { board: Boa
         threadId: null,
         projectId: row.project_id,
         pr: null,
+        ...(monitored === undefined ? {} : { monitored }),
+        ...(gates === undefined ? {} : { gates }),
       });
       for (const sub of item.subtasks) {
         createTicket({

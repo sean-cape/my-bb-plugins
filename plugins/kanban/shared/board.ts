@@ -149,6 +149,9 @@ export const ticketSchema = z.object({
   threadId: z.string().nullable(),
   /** Thread of the latest review, if one was started. */
   reviewThreadId: z.string().nullable(),
+  /** The threads of the review loop's checks and classify steps while they run; null between runs. */
+  checksThreadId: z.string().nullable(),
+  classifyThreadId: z.string().nullable(),
   latestReview: reviewSummarySchema.nullable(),
   /** PR comment counts: everything synced, and the ones not yet marked addressed. */
   comments: z.object({ total: z.number().int(), open: z.number().int(), selected: z.number().int() }).nullable(),

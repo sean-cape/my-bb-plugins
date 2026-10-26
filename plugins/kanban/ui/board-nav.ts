@@ -13,7 +13,8 @@ export type BoardCommand =
   | { kind: "open" }
   | { kind: "thread" }
   | { kind: "diff" }
-  | { kind: "monitor" }
+  /** The focused card's loop menu, as the card's own `m`. */
+  | { kind: "loop"; action: "menu" }
   | { kind: "delete" }
   | { kind: "undo" }
   | { kind: "add" }
@@ -43,7 +44,7 @@ export const KEYMAP: Keymap<BoardCommand> = {
   o: { kind: "open" },
   t: { kind: "thread" },
   D: { kind: "diff" },
-  m: { kind: "monitor" },
+  m: { kind: "loop", action: "menu" },
   d: { kind: "delete" },
   u: { kind: "undo" },
   a: { kind: "add" },
@@ -65,7 +66,8 @@ export type CardCommand =
   | { kind: "type" }
   | { kind: "thread" }
   | { kind: "diff" }
-  | { kind: "monitor" }
+  /** A loop intervention: steer, hand to me, stop now, or the loop menu holding every one. */
+  | { kind: "loop"; action: LoopKeyAction }
   /** A handoff brief action: the brief's own button, or the one on the finding under the cursor. */
   | { kind: "brief"; action: BriefAction }
   | { kind: "help" }
@@ -73,6 +75,11 @@ export type CardCommand =
   | { kind: "scroll"; direction: 1 | -1 };
 
 export type BriefAction = "accept" | "send-back" | "rethink" | "pull-in" | "uphold" | "close-dispute" | "open-plan" | "change-level" | "approve";
+
+export type LoopKeyAction = "steer" | "hand-off" | "stop" | "menu";
+
+/** Inside the open loop menu the plain keys pick their item; j/k, Enter and Escape are the menu's own. */
+export const LOOP_MENU_KEYMAP: Keymap<Exclude<LoopKeyAction, "menu">> = { s: "steer", f: "hand-off", x: "stop" };
 
 /** The brief actions that act on the finding under the cursor rather than the whole card. */
 export const FINDING_ACTIONS: ReadonlySet<BriefAction> = new Set(["pull-in", "uphold", "close-dispute"]);
@@ -101,7 +108,10 @@ export const CARD_KEYMAP: Keymap<CardCommand> = {
   i: { kind: "type" },
   t: { kind: "thread" },
   D: { kind: "diff" },
-  m: { kind: "monitor" },
+  m: { kind: "loop", action: "menu" },
+  s: { kind: "loop", action: "steer" },
+  f: { kind: "loop", action: "hand-off" },
+  x: { kind: "loop", action: "stop" },
   A: { kind: "brief", action: "accept" },
   S: { kind: "brief", action: "send-back" },
   R: { kind: "brief", action: "rethink" },
@@ -131,7 +141,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["o", "Enter"], action: "Open card" },
       { keys: ["t"], action: "Open the card's thread" },
       { keys: ["D"], action: "View the card's changes" },
-      { keys: ["m"], action: "Monitor the card: turn its review loop on or off" },
+      { keys: ["m"], action: "Open the card's loop menu: steer, hand to me, skip a review, stop, retry, resume, the gates, loop off; with the loop off, turns it on" },
       { keys: ["d"], action: "Delete card" },
       { keys: ["u"], action: "Undo the last delete" },
       { keys: ["a"], action: "New card in this column" },
@@ -175,7 +185,10 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["i"], action: "Start typing in the field, or the description" },
       { keys: ["Esc"], action: "Leave the text box (twice with vim-mode), then close the card" },
       { keys: ["t", "D"], action: "Open the card's thread / changes" },
-      { keys: ["m"], action: "Turn the card's review loop on or off, with the gates ticked beside it (j/k reach them, Space ticks)" },
+      { keys: ["m"], action: "Open the loop menu: every intervention with its key, the gates, and loop off, with greyed items saying why; with the loop off, turns it on" },
+      { keys: ["s"], action: "Steer: type a message to the card's thread; at Needs you it resumes the loop with it. Enter sends, Shift-Enter breaks a line" },
+      { keys: ["f"], action: "Hand to me: at the thread's next ready while it builds or fixes, or after the step the board is running" },
+      { keys: ["x"], action: "Stop the step the board is running now; the card comes to you as stopped" },
       { keys: ["Y"], action: "Approve what the loop holds for you: the plan, as edited, or the round's ticked findings" },
       { keys: ["A"], action: "Handoff brief: accept; a local card's thread lands the change, a PR card is marked accepted" },
       { keys: ["S"], action: "Handoff brief: send your unsent diff comments back to the card's thread" },
@@ -185,6 +198,15 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["P"], action: "Handoff brief: open the reading plan, in the narrative stepper when there is one" },
       { keys: ["L"], action: "Handoff brief: change the attention level, with a reason; h/l choose it, Enter saves" },
       { keys: ["h", "l", "Enter"], action: "On the review depth picker: choose Quick, Standard or Deep, then start the review" },
+    ],
+  },
+  {
+    title: "Loop menu",
+    keys: [
+      { keys: ["j", "k"], action: "Next / previous item" },
+      { keys: ["s", "f", "x"], action: "Pick Steer, Hand to me or Stop now" },
+      { keys: ["Enter"], action: "Pick the item; a gate stays open to tick more" },
+      { keys: ["Esc"], action: "Close the menu" },
     ],
   },
   {

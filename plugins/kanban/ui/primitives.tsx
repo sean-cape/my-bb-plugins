@@ -1,8 +1,9 @@
-import { useState } from "react";
-import type { AnimationEvent, KeyboardEvent, ReactNode } from "react";
+import { forwardRef, useState } from "react";
+import type { AnimationEvent, ComponentPropsWithoutRef, KeyboardEvent, ReactNode } from "react";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { createMenuKeys, type Keymap, useKeyHandler } from "bb-vim-keys/react";
 import { CHEVRON, PRESS, STAGGER, TRANSFORM_TRANSITION, enter, exit, speed, stagger, usePresence, type Arrival, useEntrance, usePopOnChange } from "bb-motion";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
@@ -183,6 +184,24 @@ export function Switch({ checked, disabled, onChange, "aria-label": ariaLabel }:
 /** Compact control sizing for the card panel: the panel is narrow, so chrome stays small. */
 export const COMPACT = "h-7 gap-1.5 px-2 text-xs [&_[data-icon-root]]:size-3.5";
 
+/**
+ * A compact secondary button with the key that presses it after its label. The title sits on a wrapper, so it still
+ * shows on a disabled button, which takes no pointer events. Extra props and the ref reach the button, so it can be a
+ * Radix trigger.
+ */
+export const KeyedButton = forwardRef<HTMLButtonElement, { label: string; keyHint?: string; title: string } & Omit<ComponentPropsWithoutRef<"button">, "title" | "children">>(
+  function KeyedButton({ label, keyHint, title, className, ...props }, ref) {
+    return (
+      <span title={keyHint === undefined ? title : `${title} (${keyHint})`} className="shrink-0">
+        <Button ref={ref} type="button" variant="secondary" className={cn(COMPACT, className)} {...props}>
+          {label}
+          {keyHint === undefined ? null : <kbd className="font-mono text-[10px] text-muted-foreground">{keyHint}</kbd>}
+        </Button>
+      </span>
+    );
+  },
+);
+
 /** A collapsible block whose header carries the one-line summary; details live inside. */
 export function Group({
   title,
@@ -271,7 +290,7 @@ export function SegmentedTabs<T extends string>({
 }: {
   label: string;
   value: T;
-  options: ReadonlyArray<{ value: T; label: string }>;
+  options: ReadonlyArray<{ value: T; label: string; disabled?: boolean; title?: string }>;
   onChange: (value: T) => void;
   /**
    * Makes the tabs a picker that acts: one tab stop, h/l and the arrows move the choice, and Enter does this (send with
@@ -297,7 +316,7 @@ export function SegmentedTabs<T extends string>({
       }
       // Taken even at either end, so the views behind (the diff's review keys) leave h and l alone.
       const next = options[Math.min(options.length - 1, Math.max(0, index + command))]!;
-      if (next.value === value) return;
+      if (next.value === value || next.disabled === true) return;
       onChange(next.value);
       const tabs = target?.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
       tabs?.[options.indexOf(next)]?.focus();
@@ -322,10 +341,17 @@ export function SegmentedTabs<T extends string>({
           role="tab"
           aria-selected={option.value === value}
           tabIndex={!picker || option.value === value ? 0 : -1}
+          disabled={option.disabled}
+          title={option.title}
           {...(option.value === value ? selectedTabProps : undefined)}
           onKeyDown={onKeyDown}
           onClick={() => onChange(option.value)}
-          className={cn("relative rounded text-xs font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", PRESS, option.value === value ? "text-foreground" : "text-muted-foreground hover:text-foreground", tabClassName)}
+          className={cn(
+            "relative rounded text-xs font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+            PRESS,
+            option.value === value ? "text-foreground" : "text-muted-foreground enabled:hover:text-foreground",
+            tabClassName,
+          )}
         >
           {option.label}
         </button>

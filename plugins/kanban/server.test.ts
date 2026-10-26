@@ -13,7 +13,8 @@ import type { ReadingPlan } from "./shared/reading-plan";
 import plugin, { adfToText, defaultSelected, githubRepoFromRemote, newLineRangesFromPatch, parseNarrative, parseProposal, parseReviewReport, splitUnifiedDiff, type Board, type CodeReviewThread, type CommentApply, type DiffComment, type Dump, type Finding, type Narrative, type NarrativeStory, type PrComment, type Review, type StructuralDiff, type SymbolLookup, type Ticket, type TicketDiff } from "./server";
 import type { ConversationData } from "./shared/comments";
 import { LOOP_STOPPED } from "./shared/events";
-import { loopStateSchema, openFindingsClause, phaseChip } from "./shared/loop";
+import { loopStateSchema, openFindingsClause } from "./shared/loop";
+import { phaseChip } from "./shared/stages";
 
 type Host = ReturnType<typeof createFakePluginHost>;
 type ThreadResponse = ReturnType<typeof makeThreadResponse>;
@@ -543,6 +544,30 @@ describe("ad hoc tickets", () => {
     });
     expect(String(spawned[0]!.prompt)).toContain("Do the thing");
     expect(String(spawned[0]!.prompt)).toContain("bb kanban move");
+  });
+
+  it("creates a card in the review loop with its gates, from the RPC and `add --gates`, and starts a thread held to the loop's contract from its first instructions", async () => {
+    await load();
+    current().harness.sdk.stub("threads.send", async () => ({ ok: true }));
+    const gates = { plan: false, findings: true, autoAccept: true };
+    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Cache lookups", projectId: "proj_acme", startThread: true, monitored: true, gates })) as Ticket;
+    expect(ticket.loop).toMatchObject({ monitored: true, phase: "building", gates });
+    expect(ticket.threadId).toBe("thr_1");
+    expect(String(spawned[0]!.prompt)).not.toContain("bb kanban move");
+    const configured = await current().harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ pluginMetadata: { ticketId: ticket.id } }));
+    expect(configured?.instructions).toContain("never move the card yourself");
+    expect(configured?.instructions).toContain("bb kanban ready");
+    // The thread starts under the contract, so no monitoring message follows.
+    expect(current().harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
+
+    const added = await current().harness.behavior.runCli(["add", "Index lookups", "--gates", "plan,auto-accept", "--json"]);
+    expect((JSON.parse(added.stdout ?? "") as Ticket).loop).toMatchObject({ monitored: true, gates: { plan: true, findings: false, autoAccept: true } });
+    const bad = await current().harness.behavior.runCli(["add", "Bad", "--gates", "speed"]);
+    expect(bad.exitCode).toBe(1);
+    expect(`${bad.stdout ?? ""}${bad.stderr ?? ""}`).toContain("Unknown gate");
+    const contradictory = await current().harness.behavior.runCli(["add", "Bad", "--no-monitor", "--gates", "plan"]);
+    expect(contradictory.exitCode).toBe(1);
+    expect(`${contradictory.stdout ?? ""}${contradictory.stderr ?? ""}`).toContain("--no-monitor");
   });
 
   it("creates subtasks with the card, in its column and project, before its thread starts", async () => {
@@ -2092,7 +2117,8 @@ describe("monitored review loop", () => {
     }));
     const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Cache lookups", projectId: "proj_acme", startThread: true })) as Ticket;
     if (checkCommand !== null) await current().harness.behavior.callRpc("project_set_check_command", { projectId: "proj_acme", checkCommand });
-    return (await current().harness.behavior.callRpc("ticket_set_monitored", { id: ticket.id, monitored: true })) as Ticket;
+    // Every gate off, so a clean review stops at Needs you; the reducer tests cover the auto-accept gate.
+    return (await current().harness.behavior.callRpc("ticket_set_monitored", { id: ticket.id, monitored: true, gates: { plan: false, findings: false, autoAccept: false } })) as Ticket;
   }
 
   /** The classify thread `threadId` scores every changed file `risk`. */
@@ -2273,7 +2299,7 @@ describe("monitored review loop", () => {
     await vi.waitFor(async () =>
       expect(await card()).toMatchObject({ columnId: "review", loop: { phase: "needs-you", reason: "clean", round: 1, attention: { level: "read", reasons: ["risk 3: lookup cache (cache.ts)"] } } }),
     );
-    expect(phaseChip((await card()).loop!)?.label).toBe("ready · Read");
+    expect(phaseChip((await card()).loop!)?.label).toBe("needs you · clean");
   });
 
   it("marks the card's thread read after a turn that hands the work to the board, and unread with an alert when the loop stops for the user", async () => {
@@ -2393,6 +2419,99 @@ describe("monitored review loop", () => {
     await vi.waitFor(async () => expect(await card()).toMatchObject({ columnId: "review", loop: { reason: "loop-error", failedThreadId: "thr_3" } }));
   });
 
+  it("re-runs the checks at the same commit when the user retries a loop error", async () => {
+    await monitoredCard();
+    await ready();
+    await current().harness.behavior.emitThreadEvent("thread.failed", { thread: makeThreadResponse({ id: "thr_2", projectId: "proj_acme" }), error: "provider crashed" });
+    await vi.waitFor(() => expect(spawned).toHaveLength(3));
+    await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_3", projectId: "proj_acme" }), lastAssistantText: "I could not run it" });
+    await vi.waitFor(async () => expect((await card()).loop).toMatchObject({ reason: "loop-error", failedStep: "checks" }));
+    const retried = (await current().harness.behavior.callRpc("loop_retry", { id: (await card()).id })) as Ticket;
+    expect(retried).toMatchObject({ columnId: "checking", loop: { phase: "checking", reason: null, retries: 0, manualRetries: 1, failedThreadId: null, commit: sha } });
+    await vi.waitFor(() => expect(spawned).toHaveLength(4));
+    expect(spawned[3]).toMatchObject({ title: "Checks 0123456: Cache lookups", pluginMetadata: { role: "checks" } });
+    expect(String(spawned[3]!.prompt)).toContain(`git checkout --detach ${sha}`);
+  });
+
+  it("sends the user's steering to the card's thread wrapped so it carries on, and refuses once the change is accepted", async () => {
+    const ticket = await cleanAtNeedsYou();
+    await current().harness.behavior.callRpc("loop_steer", { id: ticket.id, message: "Keep the cache per request" });
+    const last = sentTexts().at(-1)!;
+    expect(last.threadId).toBe("thr_1");
+    expect(last.text).toBe("The user says, from the board: Keep the cache per request. This is steering, not a new task: carry on, and when the work is done commit, run the checks and report with `bb kanban ready` as before.");
+    expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "clean" });
+    expect((await current().harness.behavior.runCli(["loop", "steer", "Try the other branch?"], ctx("thr_1"))).stdout).toContain("steering");
+    expect(sentTexts().at(-1)!.text).toContain("from the board: Try the other branch? This is steering");
+    await current().harness.behavior.callRpc("loop_accept", { id: ticket.id });
+    await expect(current().harness.behavior.callRpc("loop_steer", { id: ticket.id, message: "One more thing" })).rejects.toThrow(/accepted/u);
+  });
+
+  it("stamps when a step began: at creation, at each phase change and at a superseding ready", async () => {
+    const { id } = await monitoredCard();
+    const loop = async () => (await board()).tickets.find((ticket) => ticket.id === id)!.loop;
+    current().harness.sdk.stub("threads.stop", async () => ({ ok: true }));
+    const created = (await current().harness.behavior.callRpc("ticket_create", { title: "Later", projectId: "proj_acme", monitored: true })) as Ticket;
+    expect(created.loop?.phaseSince).toEqual(expect.any(Number));
+    const at = async (now: number, step: () => Promise<unknown>) => {
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      try {
+        await step();
+      } finally {
+        clock.mockRestore();
+      }
+    };
+    await at(1_000, () => ready());
+    expect(await loop()).toMatchObject({ phase: "checking", commit: sha, phaseSince: 1_000 });
+    await at(2_000, () => current().harness.behavior.callRpc("loop_set_directive", { id, directive: "hand-off-after-step" }));
+    expect(await loop()).toMatchObject({ directive: "hand-off-after-step", phaseSince: 1_000 });
+    await at(3_000, () => ready(fixSha));
+    expect(await loop()).toMatchObject({ phase: "checking", commit: fixSha, phaseSince: 3_000 });
+  });
+
+  it("takes a directive only while the loop has a step ahead, and the CLI picks the hand-off the phase allows", async () => {
+    const ticket = await monitoredCard();
+    await expect(current().harness.behavior.callRpc("loop_set_directive", { id: ticket.id, directive: "hand-off-after-step" })).rejects.toThrow(/isn't running a step/u);
+    expect((await current().harness.behavior.runCli(["loop", "hand-off"], ctx("thr_1"))).stdout).toContain("Hand to you at the next ready");
+    expect((await card()).loop).toMatchObject({ directive: "hand-off-at-ready" });
+    expect((await current().harness.behavior.runCli(["loop", "hand-off", "--clear"], ctx("thr_1"))).stdout).toContain("Directive cleared");
+    expect((await card()).loop).toMatchObject({ directive: null });
+    await ready();
+    expect((await current().harness.behavior.runCli(["loop", "hand-off"], ctx("thr_1"))).stdout).toContain("Hand to you after this step");
+    expect((await card()).loop).toMatchObject({ phase: "checking", directive: "hand-off-after-step" });
+    const skip = await current().harness.behavior.runCli(["loop", "skip-review"], ctx("thr_1"));
+    expect(skip.exitCode).toBe(1);
+    expect(`${skip.stdout ?? ""}${skip.stderr ?? ""}`).toContain("hand off after this step instead");
+    expect((await current().harness.behavior.callRpc("loop_clear_directive", { id: ticket.id })) as Ticket).toMatchObject({ loop: { directive: null } });
+    expect((await current().harness.behavior.callRpc("loop_set_directive", { id: ticket.id, directive: "hand-off-after-step" })) as Ticket).toMatchObject({ loop: { directive: "hand-off-after-step" } });
+    await recordChecks("thr_2", 0);
+    expect((await card()).loop).toMatchObject({ phase: "needs-you", reason: "handed-off", directive: null, attention: null });
+    await expect(current().harness.behavior.callRpc("loop_set_directive", { id: ticket.id, directive: "hand-off-at-ready" })).rejects.toThrow(/already with you/u);
+  });
+
+  it("stops the board's step for the user, failing its threads as stopped, and accepts the stopped change without a reading plan", async () => {
+    await reviewingCard();
+    current().harness.sdk.stub("threads.stop", async () => ({ ok: true }));
+    const ticket = await card();
+    expect(ticket).toMatchObject({ checksThreadId: null, classifyThreadId: null });
+    const stopped = (await current().harness.behavior.callRpc("loop_stop", { id: ticket.id })) as Ticket;
+    expect(stopped).toMatchObject({ columnId: "review", loop: { phase: "needs-you", reason: "stopped", reviewId: null, directive: null } });
+    expect(current().harness.inspection.sdk.callsTo("threads.stop")).toEqual([[{ threadId: "thr_4" }]]);
+    const { reviews } = (await current().harness.behavior.callRpc("review_list", { ticketId: ticket.id })) as { reviews: Review[] };
+    expect(reviews[0]).toMatchObject({ status: "failed", body: "Stopped by the user." });
+    // A stop is the user's choice to look themselves, so Scrutinize doesn't hold Accept for the reading plan.
+    await current().harness.behavior.callRpc("loop_set_level", { id: ticket.id, level: "scrutinize", reason: "big change" });
+    await current().harness.behavior.callRpc("loop_accept", { id: ticket.id });
+    expect((await card()).loop).toMatchObject({ phase: "accepted", reason: "stopped" });
+  });
+
+  it("names the running checks and classify threads on the card while the board runs them", async () => {
+    await monitoredCard();
+    await ready();
+    expect(await card()).toMatchObject({ checksThreadId: "thr_2", classifyThreadId: null });
+    await recordChecks("thr_2", 0);
+    await vi.waitFor(async () => expect(await card()).toMatchObject({ loop: { phase: "classifying" }, checksThreadId: null, classifyThreadId: "thr_3" }));
+  });
+
   it("resumes a review thread that failed mid-turn instead of starting a fresh review", async () => {
     await monitoredCard();
     await ready();
@@ -2441,7 +2560,7 @@ describe("monitored review loop", () => {
     expect(notYet.stdout).toContain("isn't monitored");
     expect(spawned).toHaveLength(1);
 
-    expect((await current().harness.behavior.runCli(["monitor", "on"], ctx("thr_1"))).stdout).toContain("monitored: building");
+    expect((await current().harness.behavior.runCli(["monitor", "on"], ctx("thr_1"))).stdout).toContain("monitored: build");
     await ready();
     expect((await current().harness.behavior.runCli(["monitor", "off"], ctx("thr_1"))).stdout).toContain("after its current step");
     await recordChecks("thr_2", 1, "FAIL");
@@ -2631,7 +2750,7 @@ describe("monitoring defaults", () => {
   it("monitors new cards carrying a monitor tag with the default gates, unless the card's own flag says otherwise", async () => {
     await load({ autoStartThreads: false, monitorTags: "loop, risky" });
     const create = async (input: Record<string, unknown>) => (await current().harness.behavior.callRpc("ticket_create", { title: "Work", ...input })) as Ticket;
-    expect((await create({ tags: ["loop"] })).loop).toMatchObject({ monitored: true, phase: "building", gates: { plan: false, findings: false, autoAccept: false } });
+    expect((await create({ tags: ["loop"] })).loop).toMatchObject({ monitored: true, phase: "building", gates: { plan: false, findings: false, autoAccept: true } });
     expect((await create({ tags: ["loop"], monitored: false })).loop).toBeNull();
     expect((await create({ tags: ["other"] })).loop).toBeNull();
     expect((await create({ tags: ["other"], monitored: true })).loop).toMatchObject({ monitored: true });
@@ -3976,14 +4095,17 @@ describe("brain dumps", () => {
     expect(fresh.status).toBe("ready");
     expect(fresh.proposal?.questions).toEqual([]);
 
+    const gates = { plan: true, findings: false, autoAccept: false };
     const result = (await current().harness.behavior.callRpc("dump_finalize", {
       id: dump.id,
       tickets: [{ id: "T1", title: "Charge via payments service (edited)", description: "d", tags: ["backend"], subtasks: [{ title: "Add client", description: "" }], dependsOn: [], estimate: null }],
       columnId: "todo",
+      monitored: true,
+      gates,
     })) as { dump: Dump; tickets: Ticket[] };
     expect(result.dump.status).toBe("done");
     expect(result.tickets).toHaveLength(1);
-    expect(result.tickets[0]).toMatchObject({ title: "Charge via payments service (edited)", columnId: "todo", projectId: "proj_acme", tags: ["backend"], children: { total: 1 } });
+    expect(result.tickets[0]).toMatchObject({ title: "Charge via payments service (edited)", columnId: "todo", projectId: "proj_acme", tags: ["backend"], children: { total: 1 }, loop: { monitored: true, phase: "planning", gates } });
     expect(current().harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(1);
     expect((await board()).dumps).toEqual([]);
     const all = (await current().harness.behavior.callRpc("dumps_list", { includeClosed: true })) as { dumps: Dump[] };

@@ -35,6 +35,13 @@ export function builderContract(isPr: boolean, checkCommand: string | null, plan
 /** A fence longer than any the output is likely to hold. */
 const OUTPUT_FENCE = "~~~~~";
 
+/** The user's words from the board, marked as steering so the thread doesn't take them for a new task that ends the loop. */
+export function steeringText(message: string): string {
+  const said = message.trim();
+  const stop = /[.!?…]["')\]]*$/u.test(said) ? "" : ".";
+  return `The user says, from the board: ${said}${stop} This is steering, not a new task: carry on, and when the work is done commit, run the checks and report with \`bb kanban ready\` as before.`;
+}
+
 /** The words for each prompt the loop sends into the card's thread. */
 export function cardPromptText(prompt: Exclude<CardPrompt, { kind: "fix" | "comments" }>, ticket: Ticket, checkCommand: string | null): string {
   const planning = ticket.loop?.phase === "planning";
@@ -93,6 +100,8 @@ export function cardPromptText(prompt: Exclude<CardPrompt, { kind: "fix" | "comm
         "",
         builderContract(ticket.pr !== null, checkCommand, planning),
       ].join("\n");
+    case "resume":
+      return [steeringText(prompt.message), "", builderContract(ticket.pr !== null, checkCommand)].join("\n");
   }
 }
 

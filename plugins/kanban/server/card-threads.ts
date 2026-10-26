@@ -11,10 +11,13 @@ export function createCardThreads(ctx: KanbanContext, { board }: { board: BoardS
 
   function threadPrompt(ticket: Ticket, columns: Column[]): string {
     const columnList = columns.map((column) => `\`${column.id}\` (${column.name})`).join(", ");
+    // A monitored card's thread is held to the loop's contract in its instructions, so the prompt must not tell it to move the card.
     const footer = [
       "",
       `This thread is kanban ticket ${ticket.id}. Columns: ${columnList}.`,
-      "Move the card as the work progresses with `bb kanban move <column-id>` (it finds this thread's card automatically).",
+      ticket.loop?.monitored === true
+        ? "The board drives this card's review loop: never move the card yourself; your instructions say how to report the work ready."
+        : "Move the card as the work progresses with `bb kanban move <column-id>` (it finds this thread's card automatically).",
       "Do not post comments or reviews on GitHub unless the user explicitly asks.",
     ].join("\n");
     if (ticket.jira !== null) {

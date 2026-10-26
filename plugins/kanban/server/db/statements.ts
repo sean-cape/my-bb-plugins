@@ -121,6 +121,7 @@ export function prepareStatements(db: KanbanDatabase) {
     reviewsForTicket: db.prepare<[string], ReviewRow>(
       `SELECT * FROM reviews WHERE ticket_id = ? ORDER BY created_at DESC, rowid DESC`,
     ),
+    runningReviewsForTicket: db.prepare<[string], ReviewRow>(`SELECT * FROM reviews WHERE ticket_id = ? AND status = 'running'`),
     reviewsForTicketOfKind: db.prepare<[string, ReviewRow["subject_kind"]], ReviewRow>(
       `SELECT * FROM reviews WHERE ticket_id = ? AND subject_kind = ? ORDER BY created_at DESC, rowid DESC`,
     ),

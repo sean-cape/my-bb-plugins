@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { Markdown, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { ATTENTION_LEVEL_LABEL, attentionLevelSchema, openFindingsCount, type AttentionLevel } from "../shared/loop";
 import type { PlanFile, ReadingPlan } from "../shared/reading-plan";
 import type { Ticket } from "../shared/board";
@@ -11,11 +11,13 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { Rpc } from "./data";
-import { Badge, COMPACT, Group, SegmentedTabs } from "./primitives";
+import { Badge, COMPACT, Group, KeyedButton, SegmentedTabs } from "./primitives";
 import { toastError, type RunAction } from "./actions";
 import type { BriefAction } from "./board-nav";
-import { BRIEF_SECTION_TITLE, briefShown, handoffBrief, type BriefFinding, type BriefSection } from "./handoff-brief";
-import { shortTokens, spendTitle } from "./format";
+import { BRIEF_SECTION_TITLE, briefShown, handoffBrief, unassessed, type BriefFinding, type BriefSection } from "./handoff-brief";
+import { runLoopItem } from "./loop-menu";
+import { loopMenuItems } from "./loop-menu-items";
+import { shortSha, shortTokens, spendTitle } from "./format";
 import { diffSubPath } from "./reading-plan";
 import { openInStepper, useReadingPlan } from "./use-reading-plan";
 
@@ -39,7 +41,8 @@ function useBriefReviews(ticket: Ticket, rpc: Rpc): Review[] | null {
   return reviews;
 }
 
-function LevelBadge({ level }: { level: AttentionLevel | null }) {
+function LevelBadge({ level, assessed = true }: { level: AttentionLevel | null; assessed?: boolean }) {
+  if (!assessed) return <Badge tone="outline" title="You asked for the change before the loop assessed it; Accept waits on no reading plan">not assessed</Badge>;
   return level === null ? <Badge tone="outline">no level</Badge> : <Badge tone={LEVEL_TONE[level]}>{ATTENTION_LEVEL_LABEL[level]}</Badge>;
 }
 
@@ -64,15 +67,24 @@ function FindingItem({ id, severity, title, note, action }: { id: string; severi
 /** Decides on the card from the brief; `findingId` is set for the actions on one finding. */
 type Decide = (action: BriefAction, findingId?: string) => void;
 
+/** A brief action's button, which its key presses through the `data-kanban-action` attribute. */
 function ActionButton({ action, label, keyHint, title, disabled, onDecide, findingId }: { action: BriefAction; label: string; keyHint: string; title: string; disabled: boolean; onDecide: Decide; findingId?: string }) {
-  return (
-    <span title={`${title} (${keyHint})`} className="shrink-0">
-      <Button type="button" variant="secondary" className={COMPACT} data-kanban-action={action} disabled={disabled} onClick={() => onDecide(action, findingId)}>
-        {label}
-        <kbd className="font-mono text-[10px] text-muted-foreground">{keyHint}</kbd>
-      </Button>
-    </span>
-  );
+  return <KeyedButton label={label} keyHint={keyHint} title={title} data-kanban-action={action} disabled={disabled} onClick={() => onDecide(action, findingId)} />;
+}
+
+/** A stop the user asked for is a warning, not a failure: the brief's amber wording for a hand-off or a stop. */
+const WARNING_TEXT = "text-amber-700 dark:text-amber-300";
+
+/** What Accept does, or what holds it: unviewed files of a gated reading plan, else landing (a local card) or marking (a PR). */
+function acceptTitle(unviewed: number, pr: boolean): string {
+  if (unviewed > 0) return "At Scrutinize, mark every file of the reading plan viewed in the changes view first";
+  return pr ? "Mark it accepted; merging is yours on GitHub" : "The card's thread lands the change with the project's finishing steps; the card moves to Done when it has";
+}
+
+/** How the level line reads: a failure in red, a stop the user asked for in amber, the plain reasons muted. */
+function escalationClass(level: Extract<BriefSection, { kind: "level" }>): string {
+  if (level.escalation === null) return "text-muted-foreground";
+  return level.assessed ? "text-destructive" : WARNING_TEXT;
 }
 
 function Subhead({ children }: { children: ReactNode }) {
@@ -93,7 +105,7 @@ function LevelBody({ section, onOpenThread }: { section: Extract<BriefSection, {
         </p>
       ) : null}
       {escalation !== null ? (
-        <p className="text-xs font-medium text-destructive">
+        <p className={cn("text-xs font-medium", escalationClass(section))}>
           {escalation}
           {failedThreadId === null ? null : (
             <>
@@ -112,7 +124,9 @@ function LevelBody({ section, onOpenThread }: { section: Extract<BriefSection, {
           ))}
         </Items>
       ) : (
-        <p className="text-xs text-muted-foreground">{section.level === null ? "The loop stopped before the change was classified." : "No reasons beyond the default."}</p>
+        <p className="text-xs text-muted-foreground">
+          {!section.assessed ? "Not assessed: you chose to look at the change yourself, so there is no level and no reading plan." : section.level === null ? "The loop stopped before the change was classified." : "No reasons beyond the default."}
+        </p>
       )}
     </>
   );
@@ -143,7 +157,7 @@ function EvidenceBody({ section }: { section: Extract<BriefSection, { kind: "evi
             <li key={index} className="flex items-baseline gap-1.5">
               <Badge tone={outcome.passed ? "success" : "danger"}>{outcome.passed ? "passed" : `exit ${outcome.exitCode}`}</Badge>
               <code className="font-mono">{outcome.command ?? "checks"}</code>
-              <span className="text-muted-foreground">at {outcome.commit.slice(0, 7)}</span>
+              <span className="text-muted-foreground">at {shortSha(outcome.commit)}</span>
             </li>
           ))}
         </Items>
@@ -292,8 +306,8 @@ function sectionSummary(section: BriefSection): ReactNode {
     case "level":
       return (
         <>
-          {section.escalation !== null ? <Badge tone="danger">stopped</Badge> : null}
-          <LevelBadge level={section.level} />
+          {!section.assessed ? <Badge tone="warning">not reviewed</Badge> : section.escalation !== null ? <Badge tone="danger">stopped</Badge> : null}
+          <LevelBadge level={section.level} assessed={section.assessed} />
         </>
       );
     case "not-covered":
@@ -440,6 +454,8 @@ function LevelForm({ current, onSave, onCancel }: { current: AttentionLevel | nu
 export function HandoffBrief({ ticket, rpc, run, pending, onOpenThread }: { ticket: Ticket; rpc: Rpc; run: RunAction; pending: boolean; onOpenThread: (threadId: string) => void }) {
   const reviews = useBriefReviews(ticket, rpc);
   const plan = useReadingPlan(ticket, rpc);
+  // After a hand-off or a stop there is no level, so no reading plan is asked for and Accept waits on nothing.
+  const assessed = ticket.loop === null || !unassessed(ticket.loop);
   const navigate = useBbNavigate();
   const [levelForm, setLevelForm] = useState(false);
   const [deselected, setDeselected] = useState<string[]>([]);
@@ -451,6 +467,8 @@ export function HandoffBrief({ ticket, rpc, run, pending, onOpenThread }: { tick
   const approved = awaiting.filter((finding) => !deselected.includes(finding.id)).map((finding) => finding.id);
   const id = ticket.id;
   const level = sections.find((section) => section.kind === "level")!;
+  // Retry is the loop menu's item, shown here too after a loop error, with the menu's label, reason and words.
+  const retry = ticket.loop?.reason === "loop-error" ? loopMenuItems(ticket).find((entry) => entry.id === "retry") : undefined;
   const openPlan = () => {
     const stepper = plan !== null && plan.narrated && plan.level !== "glance";
     if (stepper) openInStepper();
@@ -508,13 +526,7 @@ export function HandoffBrief({ ticket, rpc, run, pending, onOpenThread }: { tick
           action="accept"
           keyHint="A"
           label={unviewed === 0 ? "Accept" : `Accept (${unviewed} unviewed)`}
-          title={
-            unviewed > 0
-              ? "At Scrutinize, mark every file of the reading plan viewed in the changes view first"
-              : ticket.pr === null
-                ? "The card's thread lands the change with the project's finishing steps; the card moves to Done when it has"
-                : "Mark it accepted; merging is yours on GitHub"
-          }
+          title={acceptTitle(unviewed, ticket.pr !== null)}
           disabled={!stopped || (ticket.pr === null && noThread) || unviewed > 0}
           onDecide={decide}
         />
@@ -527,7 +539,17 @@ export function HandoffBrief({ ticket, rpc, run, pending, onOpenThread }: { tick
           onDecide={decide}
         />
         <ActionButton action="rethink" label="Rethink" keyHint="R" title="Stop the loop and have the card's thread propose a new approach" disabled={!stopped || noThread} onDecide={decide} />
-        <ActionButton action="open-plan" label="Reading plan" keyHint="P" title="Open the changes at the level's reading plan, in the narrative stepper when there is one" disabled={false} onDecide={decide} />
+        {retry === undefined ? null : (
+          <KeyedButton label={retry.label} title={`${retry.disabled ?? retry.hint}; also in the loop menu (m)`} data-kanban-action="retry" disabled={pending || retry.disabled !== null} onClick={() => runLoopItem("retry", ticket, rpc, run)} />
+        )}
+        <ActionButton
+          action="open-plan"
+          label="Reading plan"
+          keyHint="P"
+          title={assessed ? "Open the changes at the level's reading plan, in the narrative stepper when there is one" : "Not assessed: no reading plan; open the changes with the button in the header"}
+          disabled={!assessed}
+          onDecide={decide}
+        />
         <ActionButton action="change-level" label="Change level" keyHint="L" title="Set the attention level yourself, with a reason; it holds until the head moves" disabled={!stopped || levelForm} onDecide={decide} />
       </div>
       {levelForm ? (
@@ -618,6 +640,22 @@ export function PlanApproval({ ticket, rpc, run, pending }: { ticket: Ticket; rp
   );
 }
 
+/** The approved plan's group, which the loop strip's Plan step scrolls to. */
+export const APPROVED_PLAN = "[data-kanban-approved-plan]";
+
+/** The plan the user approved, once the loop is past planning: what the thread builds to and every review holds the change to. Folded, since the strip's Plan step is the way to it. */
+export function ApprovedPlan({ ticket }: { ticket: Ticket }) {
+  const loop = ticket.loop;
+  if (loop === null || !loop.monitored || loop.phase === "planning" || loop.plan === null) return null;
+  return (
+    <div data-kanban-approved-plan="">
+      <Group title="Approved plan" summary={<Badge tone="outline">approved</Badge>} defaultOpen={false}>
+        <Markdown content={loop.plan} className="text-xs" />
+      </Group>
+    </div>
+  );
+}
+
 /** Findings an accepted card left open, each with a card of its own to make. */
 export function LeftOpenFindings({ ticket, rpc, run, pending }: { ticket: Ticket; rpc: Rpc; run: RunAction; pending: boolean }) {
   const loop = ticket.loop;
@@ -657,8 +695,8 @@ export function HandoffStrip({ ticket, rpc, plan: planMode, onOpenThread }: { ti
       <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="flex w-full min-w-0 items-center gap-1.5 text-left text-xs">
         <Icon name="ChevronRight" className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
         <span className="font-semibold">Handoff</span>
-        <LevelBadge level={level.level} />
-        <span className={cn("min-w-0 truncate", level.escalation !== null ? "text-destructive" : "text-muted-foreground")}>{level.escalation ?? level.reasons.join("; ")}</span>
+        <LevelBadge level={level.level} assessed={level.assessed} />
+        <span className={cn("min-w-0 truncate", escalationClass(level))}>{level.escalation ?? level.reasons.join("; ")}</span>
       </button>
       {open ? (
         <div className="grid gap-3 py-1.5 pl-5 sm:grid-cols-2">

@@ -6,6 +6,8 @@ import type { Column } from "../shared/board";
 import { todoColumnId } from "../shared/columns";
 import type { Dump, ProposedTicket } from "../shared/dump";
 import { BOARD_CHANGED } from "../shared/events";
+import { plural } from "../shared/format";
+import { defaultGates } from "../shared/loop";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
@@ -14,6 +16,8 @@ import { cn } from "@/lib/utils";
 import { relativeTime } from "./format";
 import { useNow } from "./data";
 import { Badge, Select, COMPACT, Group } from "./primitives";
+import { RunModeControl } from "./run-mode";
+import { runModeFlags, type RunMode } from "./run-mode-flags";
 import { TagBadges } from "./tags";
 import { usePendingAction, toastError } from "./actions";
 
@@ -61,8 +65,8 @@ export function ProposalsList({ onOpen }: { onOpen: (id: string) => void }) {
             <DumpStatusBadge dump={dump} />
             {dump.proposal !== null ? (
               <span className="text-xs text-muted-foreground">
-                {dump.proposal.tickets.length} ticket{dump.proposal.tickets.length === 1 ? "" : "s"}
-                {dump.proposal.questions.length > 0 ? ` · ${dump.proposal.questions.length} question${dump.proposal.questions.length === 1 ? "" : "s"}` : ""}
+                {plural(dump.proposal.tickets.length, "ticket")}
+                {dump.proposal.questions.length > 0 ? ` · ${plural(dump.proposal.questions.length, "question")}` : ""}
               </span>
             ) : null}
             <span className="ml-auto text-xs text-muted-foreground">{relativeTime(dump.updatedAt, now)}</span>
@@ -81,7 +85,9 @@ export function ProposalView({ dumpId, columns, onBack, onOpenThread, onOpenTick
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState("");
   const [columnId, setColumnId] = useState(todoColumnId(columns) ?? "");
-  const [startThreads, setStartThreads] = useState(false);
+  // The dump has a project, so the cards default to the review loop as the new-card dialog's do.
+  const [runMode, setRunMode] = useState<RunMode>("loop");
+  const [gates, setGates] = useState(() => defaultGates("adhoc"));
   const [showText, setShowText] = useState(false);
   const loadedProposal = useRef<string | null>(null);
   const load = useCallback(() => {
@@ -246,35 +252,36 @@ export function ProposalView({ dumpId, columns, onBack, onOpenThread, onOpenTick
               ))}
             </ul>
             {!closed ? (
-              <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  Column
-                  <Select aria-label="Column for new cards" value={columnId} onChange={setColumnId} className="h-7 w-auto">
-                    {columns.map((column) => (
-                      <option key={column.id} value={column.id}>
-                        {column.name}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Checkbox checked={startThreads} onCheckedChange={(checked) => setStartThreads(checked === true)} aria-label="Start a thread for each card" />
-                  start a thread per card
-                </label>
-                <Button
-                  type="button"
-                  className={cn(COMPACT, "ml-auto")}
-                  disabled={pending || included.length === 0 || dump.status === "planning"}
-                  onClick={() =>
-                    void run(
-                      () => rpc.call("dump_finalize", { id: dump.id, tickets: included.map(({ include, ...ticket }) => ticket), columnId, startThreads }),
-                      `Created ${included.length} card${included.length === 1 ? "" : "s"}`,
-                    )
-                  }
-                >
-                  <Icon name="Plus" className="size-3.5" />
-                  Create {included.length} card{included.length === 1 ? "" : "s"}
-                </Button>
+              <div className="flex flex-col gap-2 border-t border-border pt-2">
+                <RunModeControl value={runMode} onChange={setRunMode} gates={gates} onGatesChange={setGates} hasProject disabled={pending} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    Column
+                    <Select aria-label="Column for new cards" value={columnId} onChange={setColumnId} className="h-7 w-auto">
+                      {columns.map((column) => (
+                        <option key={column.id} value={column.id}>
+                          {column.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                  <Button
+                    type="button"
+                    className={cn(COMPACT, "ml-auto")}
+                    disabled={pending || included.length === 0 || dump.status === "planning"}
+                    onClick={() => {
+                      const { startThread, ...flags } = runModeFlags(runMode, gates);
+                      void run(
+                        () => rpc.call("dump_finalize", { id: dump.id, tickets: included.map(({ include, ...ticket }) => ticket), columnId, startThreads: startThread, ...flags }),
+                        `Created ${plural(included.length, "card")}`,
+                      );
+                    }}
+                  >
+                    <Icon name="Plus" className="size-3.5" />
+                    Create {plural(included.length, "card")}
+                    {runMode === "card" ? "" : " and start"}
+                  </Button>
+                </div>
               </div>
             ) : null}
             {dump.status === "done" && dump.createdTicketIds.length > 0 ? (

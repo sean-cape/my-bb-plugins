@@ -4,7 +4,7 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { PRESS, enter, speed, useEntrance, usePopOnChange } from "bb-motion";
 import { useNerdFont } from "bb-nerd-font";
 import type { Board, Column, Ticket } from "../shared/board";
-import { defaultGates } from "../shared/loop";
+import { defaultGates, type LoopGates } from "../shared/loop";
 import { doneColumnId } from "../shared/columns";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,16 +18,78 @@ import { ExternalLink, ThreadStatusDot, Select, HEADER_ICON_BUTTON, COMPACT, Gro
 import { ProjectSelect } from "./project-select";
 import { TagEditor } from "./tags";
 import { ReviewPanel } from "./review-panel";
-import { HandoffBrief, LeftOpenFindings, PlanApproval } from "./brief-panel";
+import { ApprovedPlan, HandoffBrief, LeftOpenFindings, PlanApproval } from "./brief-panel";
 import { LoopSection } from "./loop-section";
+import { composerMode } from "./loop-menu-items";
+import { RunModeControl } from "./run-mode";
+import type { RunMode } from "./run-mode-flags";
 import { ChecksMark, JiraStatusGlyph, PrStateGlyph, checksHref } from "./badges";
 import { jiraStatusMark } from "./source-marks";
 import { CommentsPanel } from "./comments-panel";
 import { SubtasksGroup } from "./subtasks";
 import { type RunAction, usePendingAction } from "./actions";
 
+const STARTED_IN_LOOP = "Thread started in the review loop";
+
 /** The header line truncates, which clips an outline to a sliver at the link's end, so focus draws inside the link. */
 const LINE_LINK = "rounded-sm hover:text-foreground hover:underline focus-visible:bg-state-hover focus-visible:text-foreground focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+
+/**
+ * Starts a thread for a card that has none: into the review loop, with the gates chosen here, or on its own. A card
+ * already monitored (by a tag, or the switch below) just starts; its thread gets the loop's contract either way.
+ */
+function ThreadStartRow({
+  ticket,
+  projects,
+  projectId,
+  onProjectChange,
+  gates,
+  onGatesChange,
+  pending,
+  run,
+  rpc,
+}: {
+  ticket: Ticket;
+  projects: ProjectOption[];
+  projectId: string;
+  onProjectChange: (projectId: string) => void;
+  gates: LoopGates;
+  onGatesChange: (gates: LoopGates) => void;
+  pending: boolean;
+  run: RunAction;
+  rpc: Rpc;
+}) {
+  const monitored = ticket.loop?.monitored === true;
+  const [mode, setMode] = useState<RunMode>("loop");
+  const start = () => {
+    if (mode === "loop" && !monitored) {
+      void run(async () => {
+        await rpc.call("ticket_set_monitored", { id: ticket.id, monitored: true, gates });
+        return rpc.call("ticket_start_thread", { id: ticket.id, projectId });
+      }, STARTED_IN_LOOP);
+      return;
+    }
+    void run(() => rpc.call("ticket_start_thread", { id: ticket.id, projectId }), monitored ? STARTED_IN_LOOP : "Thread started");
+  };
+  return (
+    <Property label="Thread">
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <ProjectSelect projects={projects} value={projectId} onChange={onProjectChange} allowNone={false} className="h-7 w-auto max-w-48" />
+          <Button type="button" variant="secondary" className={COMPACT} disabled={pending || projectId === ""} onClick={start}>
+            <Icon name="Play" className="size-3.5" />
+            Start
+          </Button>
+        </div>
+        {monitored ? (
+          <span className="text-xs text-muted-foreground">Starts into the review loop; the thread's instructions carry the loop's contract</span>
+        ) : (
+          <RunModeControl value={mode} onChange={setMode} gates={gates} onGatesChange={onGatesChange} hasProject={projectId !== ""} cardOnly={false} disabled={pending} />
+        )}
+      </div>
+    </Property>
+  );
+}
 
 function TicketDetails({
   ticket,
@@ -122,8 +184,15 @@ function TicketDetails({
       () => rpc.call("ticket_set_monitored", monitored ? { id: ticket.id, monitored: false } : { id: ticket.id, monitored: true, gates: gateChoice }),
       monitored ? "Monitoring off; the loop stops after its current step" : "Monitoring on",
     );
+  const [loopMenuOpen, setLoopMenuOpen] = useState(false);
+  useEffect(() => setLoopMenuOpen(false), [ticket.id]);
+  // Someone else's PR shows no loop section, so m toggles the loop there as before.
+  const loopSectionShown = ticket.pr?.role !== "other";
+  // The loop's composer is the card's main text box (`i`) while it is shown and can send; otherwise the description is.
+  const composer = composerMode(ticket.loop);
+  const composerMain = loopSectionShown && ticket.threadId !== null && composer !== null && composer !== "paused";
   const keys = useCardKeys(rootRef, ticket.id, focusOnMount, {
-    onMonitor: toggleMonitored,
+    onLoopMenu: () => (loopSectionShown && monitored ? setLoopMenuOpen(true) : toggleMonitored()),
     onThread: () => {
       if (ticket.threadId !== null) onOpenThread(ticket.threadId);
     },
@@ -240,6 +309,7 @@ function TicketDetails({
 
       <HandoffBrief ticket={ticket} rpc={rpc} run={run} pending={pending} onOpenThread={onOpenThread} />
       <PlanApproval ticket={ticket} rpc={rpc} run={run} pending={pending} />
+      <ApprovedPlan ticket={ticket} />
       <LeftOpenFindings ticket={ticket} rpc={rpc} run={run} pending={pending} />
 
       {/* A PR card is read for its review: findings, PR comments and the PR's own description come before the card's properties. */}
@@ -310,21 +380,7 @@ function TicketDetails({
               </ParentProperty>
             ) : null}
             {ticket.threadId !== null ? null : (
-              <Property label="Thread">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <ProjectSelect projects={projects} value={projectId} onChange={setProjectId} allowNone={false} className="h-7 w-auto max-w-48" />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className={COMPACT}
-                    disabled={pending || projectId === ""}
-                    onClick={() => void run(() => rpc.call("ticket_start_thread", { id: ticket.id, projectId }), "Thread started")}
-                  >
-                    <Icon name="Play" className="size-3.5" />
-                    Start
-                  </Button>
-                </div>
-              </Property>
+              <ThreadStartRow ticket={ticket} projects={projects} projectId={projectId} onProjectChange={setProjectId} gates={gateChoice} onGatesChange={setGateChoice} pending={pending} run={run} rpc={rpc} />
             )}
             {ticket.jira !== null ? (
               <>
@@ -376,21 +432,7 @@ function TicketDetails({
               </ParentProperty>
             ) : null}
             {ticket.threadId !== null ? null : (
-              <Property label="Thread">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <ProjectSelect projects={projects} value={projectId} onChange={setProjectId} allowNone={false} className="h-7 w-auto max-w-48" />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className={COMPACT}
-                    disabled={pending || projectId === ""}
-                    onClick={() => void run(() => rpc.call("ticket_start_thread", { id: ticket.id, projectId }), "Thread started")}
-                  >
-                    <Icon name="Play" className="size-3.5" />
-                    Start
-                  </Button>
-                </div>
-              </Property>
+              <ThreadStartRow ticket={ticket} projects={projects} projectId={projectId} onProjectChange={setProjectId} gates={gateChoice} onGatesChange={setGateChoice} pending={pending} run={run} rpc={rpc} />
             )}
             {ticket.jira !== null ? (
               <>
@@ -440,7 +482,11 @@ function TicketDetails({
           onToggle={toggleMonitored}
           onGatesChange={(gates) => (monitored ? void run(() => rpc.call("loop_set_gates", { id: ticket.id, gates })) : setGateChoice(gates))}
           onOpenThread={onOpenThread}
+          onOpenDiff={() => onOpenDiff(ticket.id)}
           onLeave={keys.leave}
+          menuOpen={loopMenuOpen}
+          onMenuOpenChange={setLoopMenuOpen}
+          composerMain={composerMain}
         />
       )}
       <SubtasksGroup ticket={ticket} tickets={tickets} columns={columns} threads={threads} rpc={rpc} pending={pending} run={run} onOpenTicket={openTicket} onOpenThread={onOpenThread} />
@@ -451,7 +497,8 @@ function TicketDetails({
         defaultOpen
       >
         <textarea
-          data-kanban-main-input=""
+          // While the loop's composer is the card's main text box, `i` goes there instead.
+          {...(composerMain ? {} : { "data-kanban-main-input": "" })}
           aria-label={ticket.kind === "adhoc" ? "Description" : "Notes"}
           value={description}
           rows={ticket.kind === "adhoc" ? 6 : 3}

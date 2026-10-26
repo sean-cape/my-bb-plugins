@@ -23,7 +23,7 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
     dump_create: ({ text, projectId }) => dumps.createDump(text, projectId),
     dumps_list: ({ includeClosed }) => dumps.listDumps(includeClosed),
     dump_refine: ({ id, answers, notes }) => dumps.refineDump(id, answers, notes),
-    dump_finalize: ({ id, tickets, columnId, startThreads }) => dumps.finalizeDump(id, tickets, columnId, startThreads),
+    dump_finalize: ({ id, tickets, columnId, startThreads, monitored, gates }) => dumps.finalizeDump(id, tickets, columnId, { startThreads, monitored, gates }),
     dump_discard: ({ id }) => dumps.discardDump(id),
     ticket_create: async (input) => {
       const columns = await board.getColumns();
@@ -47,6 +47,7 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
           parentId: input.parentId,
           dueDate: input.dueDate,
           ...(input.monitored === undefined ? {} : { monitored: input.monitored }),
+          ...(input.gates === undefined ? {} : { gates: input.gates }),
         });
         for (const subtask of input.subtasks) {
           board.createTicket({
@@ -110,6 +111,12 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
     loop_set_level: ({ id, level, reason }) => loop.setLevel(id, level, reason),
     loop_reading_plan: ({ id }) => loop.readingPlan(id),
     loop_decide_dispute: ({ id, findingId, decision }) => loop.decideDispute(id, findingId, decision),
+    loop_set_directive: ({ id, directive }) => loop.setDirective(id, directive),
+    loop_clear_directive: ({ id }) => loop.clearDirective(id),
+    loop_stop: ({ id }) => loop.stopNow(id),
+    loop_retry: ({ id }) => loop.retry(id),
+    loop_resume: ({ id, message }) => loop.resume(id, message),
+    loop_steer: ({ id, message }) => loop.steer(id, message),
     project_set_check_command: ({ projectId, checkCommand }) => projectSettings.setProjectSettings(projectId, { checkCommand: checkCommand === "" ? null : checkCommand }),
     project_set_path_rules: ({ projectId, pathRules }) => projectSettings.setProjectSettings(projectId, { pathRules }),
     ticket_review_pr: ({ id, projectId, mode, depth }) => reviews.startReview(id, projectId, mode, depth),

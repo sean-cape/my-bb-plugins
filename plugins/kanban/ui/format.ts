@@ -15,9 +15,7 @@ export function relativeTime(epochMs: number, now: number): string {
   return `${Math.round(hours / 24)} d ago`;
 }
 
-export function shortSha(sha: string | null): string {
-  return sha === null ? "?" : sha.slice(0, 7);
-}
+export { shortSha } from "../shared/format";
 
 /** The first sentence of a text: up to a full stop followed by a capitalised word ("e.g. at" is not an end); the whole text without one. */
 export function firstSentence(text: string): string {

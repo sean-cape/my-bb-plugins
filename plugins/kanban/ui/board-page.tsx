@@ -3,9 +3,10 @@ import type { DragEvent } from "react";
 import { useBbNavigate, experimental_useAppPanel as useAppPanel } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { SHIMMER, enter, speed, useArrivals } from "bb-motion";
-import { scrollKeepingCursor } from "bb-vim-keys";
+import { focusWhenShown, scrollKeepingCursor } from "bb-vim-keys";
 import type { Ticket } from "../shared/board";
 import { COLUMN, agedOut, doneColumnId } from "../shared/columns";
+import { COLUMN_HOLDER } from "../shared/stages";
 import { cn } from "@/lib/utils";
 import { ticketHasDiff, useBoard, useProjects, useThreadIndex, useOpenThread, useNow } from "./data";
 import { localDay } from "./format";
@@ -18,10 +19,11 @@ import { ColumnsDialog } from "./columns-dialog";
 import { SourcesDialog } from "./sources-dialog";
 import { type TodoKeys, TodoView } from "./todo-view";
 import { ProposalsList, ProposalView } from "./proposals";
-import { toastError } from "./actions";
+import { toastError, usePendingAction } from "./actions";
+import { LoopMenu } from "./loop-menu";
 import { type BoardCommand, byAttention, cursorAfter, movePlacement, placementIndex } from "./board-nav";
 import { useBoardKeys } from "./board-keys";
-import { cardShown, requestCardFocus } from "./card-keys";
+import { CARD, LOOP_COMPOSER, cardShown, requestCardFocus } from "./card-keys";
 import { bandStops, focusStop, focusedStop, moveAlongBand, nearestStop, pressStop } from "./stops";
 import { BoardKeysDialog } from "./board-keys-dialog";
 
@@ -79,6 +81,8 @@ export function BoardPage({ subPath }: { subPath: string }) {
   const selected = board?.tickets.find((ticket) => ticket.id === selectedId) ?? null;
   const today = localDay(now);
   const doneId = board === null ? null : doneColumnId(board.columns);
+  // Only a board with the loop's Checking column says who holds the ball in each column.
+  const loopColumns = board?.columns.some((column) => column.id === COLUMN.checking) === true;
   const sourceTags = useMemo(() => new Set((board?.sources ?? []).flatMap((source) => source.tags)), [board]);
   const appPanel = useAppPanel();
   const showTicket = (ticketId: string, focus = false) => {
@@ -173,6 +177,11 @@ export function BoardPage({ subPath }: { subPath: string }) {
     refetch();
   };
 
+  // The loop menu `m` opens on the focused card, and where that card was when it opened.
+  const [loopMenu, setLoopMenu] = useState<{ ticketId: string; rect: DOMRect } | null>(null);
+  const loopMenuTicket = loopMenu === null ? undefined : board?.tickets.find((entry) => entry.id === loopMenu.ticketId);
+  const { run: loopRun } = usePendingAction(refetch);
+
   const todoKeys = useRef<TodoKeys | null>(null);
   const todoRef = useRef<HTMLDivElement>(null);
   const columnCards = (columnId: string | undefined) => layout[board?.columns.findIndex((column) => column.id === columnId) ?? -1] ?? [];
@@ -254,9 +263,17 @@ export function BoardPage({ subPath }: { subPath: string }) {
       case "diff":
         if (ticket !== undefined && ticketHasDiff(ticket)) openDiff(ticket.id);
         return;
-      case "monitor":
-        if (ticket !== undefined) void toggleMonitored(ticket);
+      case "loop": {
+        if (ticket === undefined) return;
+        if (ticket.loop?.monitored !== true) {
+          void toggleMonitored(ticket);
+          return;
+        }
+        // The menu anchors to the focused card; DropdownMenu has no anchor of its own, so a fixed span stands in for the trigger.
+        const card = boardRef.current?.querySelector<HTMLElement>(`[data-ticket-id="${CSS.escape(ticket.id)}"]`);
+        if (card != null) setLoopMenu({ ticketId: ticket.id, rect: card.getBoundingClientRect() });
         return;
+      }
       case "delete":
         if (at === null && ticket !== undefined) void deleteTicket(ticket);
         return;
@@ -404,6 +421,7 @@ export function BoardPage({ subPath }: { subPath: string }) {
               hiddenCount={hiddenByColumn.get(column.id) ?? 0}
               revealed={revealed.has(column.id)}
               onToggleHidden={() => toggleHidden(column.id)}
+              holder={loopColumns ? (COLUMN_HOLDER[column.id] ?? null) : null}
             />
           ))}
         </div>
@@ -440,6 +458,32 @@ export function BoardPage({ subPath }: { subPath: string }) {
             onChanged={refetch}
           />
           <BoardKeysDialog open={dialog === "keys"} onOpenChange={(open) => pageUi.set({ dialog: open ? "keys" : null })} />
+          {loopMenuTicket === undefined || loopMenu === null ? null : (
+            <LoopMenu
+              ticket={loopMenuTicket}
+              rpc={rpc}
+              run={loopRun}
+              open
+              onOpenChange={(open) => {
+                if (!open) setLoopMenu(null);
+              }}
+              align="start"
+              handlers={{
+                onCompose: () => {
+                  showTicket(loopMenuTicket.id, true);
+                  focusWhenShown(() => document.querySelector<HTMLElement>(`${CARD} ${LOOP_COMPOSER}`));
+                },
+                onToggleMonitored: () => void toggleMonitored(loopMenuTicket),
+              }}
+              onCloseAutoFocus={(event) => {
+                // The anchor can't take focus; the keys go back to the card the menu was opened on.
+                event.preventDefault();
+                focusCard(loopMenuTicket.id);
+              }}
+            >
+              <span aria-hidden style={{ position: "fixed", left: loopMenu.rect.left, top: loopMenu.rect.top, width: loopMenu.rect.width, height: loopMenu.rect.height, pointerEvents: "none" }} />
+            </LoopMenu>
+          )}
           <TicketDialog
             ticket={selected}
             columns={board.columns}

@@ -1,9 +1,11 @@
 import { GLYPH, Glyph, useNerdFont } from "bb-nerd-font";
 import type { JiraIssue, PullRequest, Ticket } from "../shared/board";
-import { LOOP_ROUND_CAP, phaseChip } from "../shared/loop";
+import { LOOP_ROUND_CAP } from "../shared/loop";
 import { REVIEW_DEPTH_LABEL } from "../shared/review";
+import { chipFor } from "../shared/stages";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { useNow } from "./data";
 import { dueStatus } from "./format";
 import { ExternalLink, Badge } from "./primitives";
 import { CHECKS_MARK, PR_STATE_MARK, jiraStatusMark, type SourceMark } from "./source-marks";
@@ -89,9 +91,11 @@ export function JiraBadges({ ticket }: { ticket: Ticket }) {
   );
 }
 
-/** Marks a monitored card with the review loop's phase, or why it needs you, and a pip per fix round used of the cap. */
+/** Marks a monitored card with the loop's step in the strip's words, or why it needs you, and a pip per fix round used of the cap. */
 export function LoopChip({ ticket }: { ticket: Ticket }) {
-  const chip = ticket.loop === null ? null : phaseChip(ticket.loop);
+  // The chip shows how long a card has waited past an hour, so it re-reads the clock each minute.
+  const now = useNow(60_000);
+  const chip = ticket.loop === null ? null : chipFor(ticket.loop, now);
   if (chip === null) return null;
   const round = ticket.loop!.round;
   return (

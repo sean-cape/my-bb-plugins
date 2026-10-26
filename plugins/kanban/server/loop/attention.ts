@@ -1,3 +1,4 @@
+import { plural } from "../../shared/format";
 import type { Attention, AttentionLevel, ClassifiedFile, PathRule } from "../../shared/loop";
 
 export interface AttentionSignals {
@@ -28,8 +29,6 @@ const SMALL_LINES = 100;
 function riskLevel(risk: number): AttentionLevel {
   return risk >= 5 ? "scrutinize" : risk >= 3 ? "read" : "glance";
 }
-
-const plural = (count: number, one: string, many = `${one}s`): string => `${count} ${count === 1 ? one : many}`;
 
 /** `**` crosses directories, `*` and `?` don't; a glob without a slash matches a file name in any directory. */
 export function globMatches(glob: string, path: string): boolean {

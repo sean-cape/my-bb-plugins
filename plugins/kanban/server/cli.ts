@@ -4,7 +4,9 @@ import { PluginCliError, cliCommand, defineCli } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { locationLabel } from "bb-diff-view/line-range";
 import { dueDateSchema, tagSchema, type Column, type Ticket } from "../shared/board";
-import { PLAN_MAX_LENGTH, evidenceSchema, findingAnswerSchema, phaseChip, type Evidence, type LoopGates } from "../shared/loop";
+import { shortSha } from "../shared/format";
+import { PLAN_MAX_LENGTH, boardRunning, evidenceSchema, findingAnswerSchema, type Evidence, type LoopGates } from "../shared/loop";
+import { DIRECTIVE_TEXT, phaseChip } from "../shared/stages";
 import { DEFAULT_REVIEW_DEPTH, REVIEW_DEPTH_LABEL, reviewDepthSchema, type ReviewDepth } from "../shared/review";
 import { initialColumn } from "./board";
 import type { KanbanContext } from "./context";
@@ -25,7 +27,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
   const { diffThreadRoot } = services.diffComments;
   const { startChildren } = services.subtasks;
   const { runSync } = services.sourceSync;
-  const { setMonitored, proposePlan, answerFindings, reportReady, recordChecks, reportLanded } = services.loop;
+  const { setMonitored, proposePlan, answerFindings, reportReady, recordChecks, reportLanded, setDirective, clearDirective, stopNow, retry, resume, steer } = services.loop;
 
   const COMMIT_SHA = /^[0-9a-f]{7,40}$/iu;
 
@@ -221,9 +223,15 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
             "no-link": { type: "boolean", description: "Do not link the card to the current thread" },
             monitor: { type: "boolean", description: "Monitor the card with the default gates, whatever its tags' default" },
             "no-monitor": { type: "boolean", description: "Leave the card unmonitored, even when one of its tags monitors new cards" },
+            gates: {
+              type: "string",
+              description: "The comma-separated gates a monitored card turns on (plan, findings, auto-accept), or `none`; implies --monitor. Defaults to auto-accept, plus plan approval on Jira cards",
+            },
             json: { type: "boolean", description: "Emit JSON" },
           },
           async run({ positionals, options }, ctx) {
+            const gates = options.gates === undefined ? undefined : parseGates(options.gates);
+            if (gates !== undefined && options["no-monitor"]) throw new PluginCliError("--gates picks the gates of a monitored card, so it can't go with --no-monitor", { code: "contradictory_options" });
             const columns = await getColumns();
             const columnId =
               options.column !== undefined && columns.some((column) => column.id === options.column)
@@ -251,7 +259,8 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
               pr: null,
               parentId: options.parent ?? null,
               dueDate,
-              ...(options.monitor ? { monitored: true } : options["no-monitor"] ? { monitored: false } : {}),
+              ...(options.monitor || gates !== undefined ? { monitored: true } : options["no-monitor"] ? { monitored: false } : {}),
+              ...(gates === undefined ? {} : { gates }),
             });
             publish();
             if (ctx.threadId !== undefined && options.parent === undefined && !options["no-link"] && !options["start-thread"] && options.project === undefined) {
@@ -395,7 +404,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
             ...ticketOption,
             gates: {
               type: "string",
-              description: "With `on`: the comma-separated gates to turn on (plan, findings, auto-accept), or `none`; defaults to plan approval on Jira cards only",
+              description: "With `on`: the comma-separated gates to turn on (plan, findings, auto-accept), or `none`; defaults to auto-accept, plus plan approval on Jira cards",
             },
             json: { type: "boolean", description: "Emit JSON" },
           },
@@ -408,6 +417,65 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
               exitCode: 0,
               stdout: options.json ? JSON.stringify(updated) : state === "on" ? `Monitoring ${formatTicket(updated, await getColumns())}` : `Stopped monitoring ${ticket.id}; the loop stops after its current step`,
             };
+          },
+        }),
+        loop: cliCommand({
+          summary: "Step into a monitored card's review loop (for the user, not the card's agent): hand the card to you, skip a review, stop or retry the board's step, steer or resume its thread",
+          positionals: [
+            { name: "action", description: "`hand-off` (at the next ready, or after the step the board is running), `skip-review`, `stop`, `retry`, `steer <message>` or `resume <message>`", required: true },
+            { name: "message", description: "With `steer` or `resume`: what to tell the card's thread", required: false },
+          ],
+          options: {
+            ...ticketOption,
+            clear: { type: "boolean", description: "With `hand-off` or `skip-review`: take the pending directive back instead" },
+            json: { type: "boolean", description: "Emit JSON" },
+          },
+          async run({ positionals, options }, ctx) {
+            const ticket = ticketForContext(options.ticket, ctx.threadId);
+            const action = positionals.action.toLowerCase();
+            const message = positionals.message?.trim() ?? "";
+            if ((action === "steer" || action === "resume") && message === "") throw new PluginCliError(`\`${action}\` needs a message`, { code: "message_required" });
+            if (action !== "steer" && action !== "resume" && positionals.message !== undefined) throw new PluginCliError(`\`${action}\` takes no message`, { code: "unexpected_message" });
+            const running = ticket.loop !== null && boardRunning(ticket.loop);
+            let updated: Ticket;
+            let said: string;
+            try {
+              switch (action) {
+                case "hand-off":
+                case "skip-review":
+                  if (options.clear) {
+                    updated = await clearDirective(ticket.id);
+                    said = "Directive cleared; the loop carries on as before";
+                  } else {
+                    const directive = action === "skip-review" ? "skip-review-once" : running ? "hand-off-after-step" : "hand-off-at-ready";
+                    updated = await setDirective(ticket.id, directive);
+                    said = DIRECTIVE_TEXT[directive];
+                  }
+                  break;
+                case "stop":
+                  updated = await stopNow(ticket.id);
+                  said = "Stopped the board's step; the card is yours";
+                  break;
+                case "retry":
+                  updated = await retry(ticket.id);
+                  said = `Running the failed step again at ${shortSha(updated.loop?.commit ?? null)}`;
+                  break;
+                case "steer":
+                  updated = await steer(ticket.id, message);
+                  said = "Sent to the card's thread as steering";
+                  break;
+                case "resume":
+                  updated = await resume(ticket.id, message);
+                  said = "Back to building with your message, as a round of yours";
+                  break;
+                default:
+                  throw new PluginCliError(`Unknown action "${positionals.action}"`, { code: "invalid_action", hint: "Actions are hand-off, skip-review, stop, retry, steer and resume." });
+              }
+            } catch (error) {
+              if (!(error instanceof LoopTurnError)) throw error;
+              throw new PluginCliError(error.message, { code: "loop_turn" });
+            }
+            return { exitCode: 0, stdout: options.json ? JSON.stringify(updated) : `${said}: ${formatTicket(updated, await getColumns())}` };
           },
         }),
         plan: cliCommand({

@@ -33,6 +33,8 @@ export function createDiffSubjects(ctx: KanbanContext, { board }: { board: Board
       sourceId: null,
       threadId,
       reviewThreadId: null,
+      checksThreadId: null,
+      classifyThreadId: null,
       latestReview: null,
       comments: null,
       parentId: null,

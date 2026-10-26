@@ -4,8 +4,8 @@ import { useSdk } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { PRESS, enter, speed } from "bb-motion";
 import type { Column } from "../shared/board";
+import { defaultGates } from "../shared/loop";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,8 @@ import { errorMessage, parseQuickAdd, parseTagList } from "./format";
 import { type Rpc, type ProjectOption } from "./data";
 import { Select, Textarea, SegmentedTabs } from "./primitives";
 import { ProjectSelect } from "./project-select";
+import { RunModeControl } from "./run-mode";
+import { runModeFlags, type RunMode } from "./run-mode-flags";
 import { toastError } from "./actions";
 
 /** Records microphone audio and transcribes it with bb's voice service. */
@@ -142,6 +144,8 @@ const MODE_OPTIONS = [
   { value: "dump", label: "Brain dump" },
 ] as const;
 
+const ADHOC_GATES = defaultGates("adhoc");
+
 export function NewTicketDialog({
   open,
   onOpenChange,
@@ -173,7 +177,16 @@ export function NewTicketDialog({
   const [subtaskText, setSubtaskText] = useState("");
   const [columnId, setColumnId] = useState(initialColumnId ?? columns[0]?.id ?? "");
   const [projectId, setProjectId] = useState("");
-  const [startThread, setStartThread] = useState(true);
+  const [runMode, setRunMode] = useState<RunMode>("card");
+  const [gates, setGates] = useState(ADHOC_GATES);
+  // Review loop once a project is picked, Card only without one.
+  const pickProject = (next: string) => {
+    setProjectId(next);
+    if (next === "") setRunMode("card");
+    else if (projectId === "") setRunMode("loop");
+  };
+  // A card without a project can only be a card, whatever the control last showed.
+  const effectiveMode: RunMode = projectId === "" ? "card" : runMode;
   const [pending, setPending] = useState(false);
   const [dump, setDump] = useState("");
   const [dumpProject, setDumpProject] = useState("");
@@ -184,6 +197,13 @@ export function NewTicketDialog({
       if (dumpProject === "" && projects[0] !== undefined) setDumpProject(projects[0].id);
     }
   }, [open, initialColumnId, columns, projects, dumpProject]);
+  // The dialog stays mounted between uses, so the project and run mode start over each time it opens: nothing is remembered between dialogs.
+  useEffect(() => {
+    if (!open) return;
+    setProjectId("");
+    setRunMode("card");
+    setGates(ADHOC_GATES);
+  }, [open]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (title.trim() === "" || pending) return;
@@ -200,7 +220,7 @@ export function NewTicketDialog({
         tags: [...new Set([...parsed.tags, ...extraTags])],
         dueDate: dueDate === "" ? null : dueDate,
         projectId: projectId === "" ? null : projectId,
-        startThread: projectId !== "" && startThread,
+        ...runModeFlags(effectiveMode, gates),
         subtasks: subtaskList,
       });
       setTitle("");
@@ -269,23 +289,20 @@ export function NewTicketDialog({
               </label>
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                 Project
-                <ProjectSelect projects={projects} value={projectId} onChange={setProjectId} allowNone />
+                <ProjectSelect projects={projects} value={projectId} onChange={pickProject} allowNone />
               </label>
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                 Due date
                 <Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} aria-label="Due date" />
               </label>
             </div>
-            <label className={cn("flex items-center gap-2 text-sm", projectId === "" && "pointer-events-none opacity-50")}>
-              <Checkbox checked={startThread} onCheckedChange={(checked) => setStartThread(checked === true)} aria-label="Start a thread now" />
-              Start a thread now
-            </label>
+            <RunModeControl value={runMode} onChange={setRunMode} gates={gates} onGatesChange={setGates} hasProject={projectId !== ""} disabled={pending} />
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
               <Button type="submit" disabled={pending || parseQuickAdd(title).title === ""}>
-                Create
+                {effectiveMode === "card" ? "Create" : "Create and start"}
               </Button>
             </DialogFooter>
           </form>

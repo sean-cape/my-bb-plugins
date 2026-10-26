@@ -1,7 +1,8 @@
-import { LOOP_ROUND_CAP, NEEDS_YOU_REASON_LABEL, effectiveLevel, type AttentionLevel, type LevelOverride, type CheckCommand, type ChecksOutcome, type Evidence, type LoopDispute, type LoopFinding, type LoopState } from "../shared/loop";
+import { LOOP_ROUND_CAP, NEEDS_YOU_REASON_LABEL, effectiveLevel, failuresInARow, type AttentionLevel, type LevelOverride, type CheckCommand, type ChecksOutcome, type Evidence, type LoopDispute, type LoopFinding, type LoopState } from "../shared/loop";
 import { findingTallies, type Dispute, type Finding, type FindingSeverity, type Review, type ReviewReport } from "../shared/review";
+import { shortSha } from "./format";
 
-export type BriefReview = Pick<Review, "id" | "status" | "createdAt" | "report">;
+export type BriefReview = Pick<Review, "id" | "status" | "createdAt" | "commitSha" | "report">;
 
 export interface BriefFinding {
   id: string;
@@ -24,8 +25,11 @@ export interface BriefRound {
 }
 
 export type BriefSection =
-  /** `reasons` are the computed level's; `override` is the level the user set over it. */
-  | { kind: "level"; level: AttentionLevel | null; reasons: string[]; override: LevelOverride | null; escalation: string | null; failedThreadId: string | null }
+  /**
+   * `reasons` are the computed level's; `override` is the level the user set over it. `assessed` is false after a
+   * hand-off or a stop: the user chose to look themselves, so no level is read and Accept waits on no reading plan.
+   */
+  | { kind: "level"; level: AttentionLevel | null; assessed: boolean; reasons: string[]; override: LevelOverride | null; escalation: string | null; failedThreadId: string | null }
   /** `known` is false when no review ran, so nobody listed the gaps. */
   | { kind: "not-covered"; items: string[]; known: boolean }
   | { kind: "evidence"; reran: Array<ChecksOutcome & { command: string | null }>; reranBy: CheckCommand["source"] | null; claimed: Evidence["commands"]; screenshots: string[] }
@@ -50,11 +54,38 @@ export function briefShown(loop: LoopState | null): loop is LoopState {
   return loop !== null && loop.monitored && (loop.phase === "needs-you" || loop.phase === "paused");
 }
 
-function escalation(loop: LoopState, report: ReviewReport | null): string | null {
+/** Whether the user asked for this stop (a hand-off or a stop now), so the change reaches them unassessed. */
+export function unassessed(loop: LoopState): boolean {
+  return loop.phase === "needs-you" && (loop.reason === "handed-off" || loop.reason === "stopped");
+}
+
+/** What the board did and did not verify at the commit it handed over: the checks' result at it, and whether a review completed. */
+function handedOver(loop: LoopState, reviews: readonly BriefReview[]): string {
+  const last = loop.checks.at(-1);
+  const checked = last !== undefined && last.commit === loop.commit;
+  const at = loop.commit === null ? "" : ` at ${shortSha(loop.commit)}`;
+  const checks = checked ? `checks${at} ${last.passed ? "passed" : `failed (exit code ${last.exitCode})`}` : loop.reason === "stopped" ? `checks${at} stopped` : `checks${at} not run`;
+  // The row's commit is what `review-record` stored; the report's is the thread's own word, kept as the fallback for rows stored without one.
+  const reviewed = loop.commit !== null && reviews.some((review) => review.status === "completed" && review.report !== null && (review.commitSha ?? review.report.commit) === loop.commit);
+  const review = reviewed ? "review completed" : loop.reason === "stopped" && checked ? "review stopped" : "no review";
+  return `${loop.reason === "stopped" ? "Stopped" : "Handed off"} as you asked: ${checks}; ${review}`;
+}
+
+/** A hand-off pending at a check brings one failure to the user; otherwise the loop stops at the second. */
+function checksFailed(failures: number): string {
+  if (failures <= 1) return "Checks failed";
+  if (failures === 2) return "Checks failed twice in a row";
+  return `Checks failed ${failures} times in a row`;
+}
+
+function escalation(loop: LoopState, report: ReviewReport | null, reviews: readonly BriefReview[]): string | null {
   const reason = loop.phase === "paused" ? "question" : loop.reason;
   if (reason === null || reason === "clean") return null;
   const last = loop.checks.at(-1);
   switch (reason) {
+    case "handed-off":
+    case "stopped":
+      return handedOver(loop, reviews);
     case "cap":
       return `Stopped at the ${LOOP_ROUND_CAP}-round cap with serious findings still open`;
     case "not-converging": {
@@ -62,7 +93,7 @@ function escalation(loop: LoopState, report: ReviewReport | null): string | null
       return `Not converging: a finding the agent marked fixed is still open${carried.length === 0 ? "" : ` (${carried.map((finding) => `${finding.id} ${finding.title}`).join(", ")})`}`;
     }
     case "checks":
-      return `Checks failed twice in a row${last === undefined ? "" : `, last exit code ${last.exitCode} at ${last.commit.slice(0, 7)}`}`;
+      return `${checksFailed(failuresInARow(loop))}${last === undefined ? "" : `, last exit code ${last.exitCode} at ${shortSha(last.commit)}`}`;
     case "dispute":
       return "The verifier rejected the agent's dispute of a serious finding";
     case "question":
@@ -90,12 +121,14 @@ export function handoffBrief(loop: LoopState | null, reviews: readonly BriefRevi
   const report = (loop.reviewId === null ? null : (byId.get(loop.reviewId)?.report ?? null)) ?? latest?.report ?? null;
   const sections: BriefSection[] = [];
 
-  const reason = escalation(loop, report);
+  const reason = escalation(loop, report, reviews);
+  const assessed = !unassessed(loop);
   sections.push({
     kind: "level",
-    level: effectiveLevel(loop),
-    reasons: loop.attention?.reasons ?? [],
-    override: loop.levelOverride,
+    level: assessed ? effectiveLevel(loop) : null,
+    assessed,
+    reasons: assessed ? (loop.attention?.reasons ?? []) : [],
+    override: assessed ? loop.levelOverride : null,
     escalation: reason,
     failedThreadId: loop.phase === "needs-you" && loop.reason === "loop-error" ? loop.failedThreadId : null,
   });
@@ -104,11 +137,13 @@ export function handoffBrief(loop: LoopState | null, reviews: readonly BriefRevi
 
   const claimed = loop.evidence?.commands ?? [];
   const screenshots = loop.evidence?.screenshots ?? [];
-  if (loop.checks.length > 0 || claimed.length > 0 || screenshots.length > 0) {
+  // After a hand-off or a stop the first group already says what the checks did, so the evidence is the agent's alone.
+  const reran = assessed ? loop.checks.map((outcome) => ({ ...outcome, command: loop.checkCommand?.command ?? null })) : [];
+  if (reran.length > 0 || claimed.length > 0 || screenshots.length > 0) {
     sections.push({
       kind: "evidence",
-      reran: loop.checks.map((outcome) => ({ ...outcome, command: loop.checkCommand?.command ?? null })),
-      reranBy: loop.checkCommand?.source ?? null,
+      reran,
+      reranBy: assessed ? (loop.checkCommand?.source ?? null) : null,
       claimed,
       screenshots,
     });

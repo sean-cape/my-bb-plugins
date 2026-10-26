@@ -5,10 +5,13 @@ import { TICKET_TITLE_MAX_LENGTH, boardSchema, columnSchema, dueDateSchema, sour
 import { commentApplySchema, conversationDataSchema, diffCommentSchema, diffCommentTargetSchema, pendingReviewStateSchema, prCommentSchema, reviewEventSchema } from "./shared/comments";
 import { blameLineSchema, commitRangeSchema, diffCommitsSchema, diffDeltaSchema, diffSideSchema, structuralDiffSchema, suggestionItemSchema, symbolLookupSchema, symbolUsagesSchema, ticketDiffSchema } from "./shared/diff";
 import { dumpSchema, proposedTicketSchema } from "./shared/dump";
-import { PLAN_MAX_LENGTH, attentionLevelSchema, levelOverrideSchema, loopGatesSchema, pathRuleSchema, projectSettingsSchema } from "./shared/loop";
+import { PLAN_MAX_LENGTH, attentionLevelSchema, levelOverrideSchema, loopDirectiveSchema, loopGatesSchema, pathRuleSchema, projectSettingsSchema } from "./shared/loop";
 import { readingPlanSchema } from "./shared/reading-plan";
 import { DEFAULT_REVIEW_DEPTH, findingEditSchema, reviewDepthSchema, reviewSchema } from "./shared/review";
 import { codeReviewThreadSchema, hunkExplanationSchema, narrativeSchema, narrativeStorySchema } from "./shared/tour";
+
+/** A message the user sends the card's thread from the board. */
+const loopMessageSchema = z.string().trim().min(1).max(PLAN_MAX_LENGTH);
 
 export const rpcContract = defineRpcContract({
   board_get: { input: z.null(), output: boardSchema },
@@ -23,6 +26,8 @@ export const rpcContract = defineRpcContract({
         startThread: z.boolean().default(false),
         /** The card's own monitoring flag; absent, the tags' monitoring default decides. */
         monitored: z.boolean().optional(),
+        /** The gates a monitored card runs with; absent, its kind picks the defaults. */
+        gates: loopGatesSchema.optional(),
         /** Create the card as a subtask of this card. */
         parentId: z.string().nullable().default(null),
         dueDate: dueDateSchema.nullable().default(null),
@@ -65,6 +70,9 @@ export const rpcContract = defineRpcContract({
         tickets: z.array(proposedTicketSchema).min(1),
         columnId: z.string().optional(),
         startThreads: z.boolean().default(false),
+        /** Each card's own monitoring flag and gates, as for `ticket_create`. */
+        monitored: z.boolean().optional(),
+        gates: loopGatesSchema.optional(),
       })
       .strict(),
     output: z.object({ dump: dumpSchema, tickets: z.array(ticketSchema) }),
@@ -157,6 +165,17 @@ export const rpcContract = defineRpcContract({
   loop_pull_in: { input: z.object({ id: z.string(), findingId: z.string() }).strict(), output: ticketSchema },
   /** At Needs you: uphold a rejected dispute, which sends its finding to fix, or close it. */
   loop_decide_dispute: { input: z.object({ id: z.string(), findingId: z.string(), decision: z.enum(["uphold", "close"]) }).strict(), output: ticketSchema },
+  /** What the loop does at its next step instead of carrying on: hand off at the next ready, after the running step, or skip the next review. Replaces a pending one. */
+  loop_set_directive: { input: z.object({ id: z.string(), directive: loopDirectiveSchema }).strict(), output: ticketSchema },
+  loop_clear_directive: { input: z.object({ id: z.string() }).strict(), output: ticketSchema },
+  /** While the board checks, classifies or reviews: stop its thread, discard the step and come to Needs you as stopped. */
+  loop_stop: { input: z.object({ id: z.string() }).strict(), output: ticketSchema },
+  /** At a loop error: run the failed step again at the same commit. */
+  loop_retry: { input: z.object({ id: z.string() }).strict(), output: ticketSchema },
+  /** At Needs you: back to building with the user's message, as a round of theirs. */
+  loop_resume: { input: z.object({ id: z.string(), message: loopMessageSchema }).strict(), output: ticketSchema },
+  /** The user's message goes to the card's thread as steering, whenever it has a thread and the loop isn't over. */
+  loop_steer: { input: z.object({ id: z.string(), message: loopMessageSchema }).strict(), output: ticketSchema },
   /** The project's check command, which monitored cards' checks re-run; null leaves the choice to each card's agent. */
   project_set_check_command: {
     input: z.object({ projectId: z.string(), checkCommand: z.string().trim().max(2000).nullable() }).strict(),

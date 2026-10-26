@@ -5,7 +5,7 @@ import type { DiffCommentTarget } from "../shared/comments";
 import type { Review } from "../shared/review";
 import type { KanbanContext } from "./context";
 import { rowToComment, rowToReview, rowToTicket, type TicketRow } from "./db/rows";
-import { defaultGates, INITIAL_LOOP_STATE } from "../shared/loop";
+import { defaultGates, INITIAL_LOOP_STATE, type LoopGates } from "../shared/loop";
 import { reduce } from "./loop/reducer";
 import type { Spend } from "./spend/spend";
 import { errorMessage, normalizeTags, parseStringArray, shortId } from "./util";
@@ -111,6 +111,8 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
       defaultCommentTarget: defaultCommentTarget(row),
       children: childCounts(row),
       spend: spend.spendOf(row.id),
+      checksThreadId: stmts.runningChecksRuns.all(row.id)[0]?.thread_id ?? null,
+      classifyThreadId: stmts.runningClassifyRuns.all(row.id)[0]?.thread_id ?? null,
     });
   }
 
@@ -213,6 +215,8 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
     dueDate?: string | null;
     /** The card's own monitoring flag, which wins over the defaults; absent, its tags decide. */
     monitored?: boolean;
+    /** The gates a monitored card runs with; absent, its kind picks the defaults. */
+    gates?: LoopGates;
   }): Ticket {
     const now = Date.now();
     const id = shortId();
@@ -254,7 +258,8 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
     const tags = normalizeTags(input.tags ?? []);
     if (input.monitored ?? tags.some((tag) => monitorTagsCache.has(tag))) {
       // A new card has no thread to tell, so the monitor event's only other action is the columns.
-      stmts.setLoopState.run(JSON.stringify(reduce(INITIAL_LOOP_STATE, { type: "monitor", hasThread: false, gates: defaultGates(input.kind) }).state), id);
+      const state = reduce(INITIAL_LOOP_STATE, { type: "monitor", hasThread: false, gates: input.gates ?? defaultGates(input.kind) }).state;
+      stmts.setLoopState.run(JSON.stringify({ ...state, phaseSince: now }), id);
       ensureLoopColumns().catch((error: unknown) => bb.log.warn(`could not add the review loop's columns: ${errorMessage(error)}`));
     }
     return getTicket(id);
