@@ -1,0 +1,2 @@
+overrides:
+  bb-motion: link:../motion/lib
