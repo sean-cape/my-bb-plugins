@@ -13,10 +13,25 @@ const TITLE_GROUP = `${TITLE_ROW} div:has(> div > p > ${THREAD_TITLE})`;
 const MENU_TRIGGER = 'button[aria-label="Thread actions"]';
 const WORKFLOW_ACTION =
   "[data-thread-header-workflow-actions] [data-thread-header-responsive-action]";
+const RAIL_SIDEBAR = '[data-side="left"][data-collapsible="rail"]';
 // The Settings, Plugins, and Skills pages mount their page list in the
 // sidebar, even while it is collapsed to the rail.
-const LIST_PAGE_SIDEBAR =
-  '[data-side="left"][data-collapsible="rail"]:has([data-testid="settings-sidebar-body"], [data-testid="plugins-sidebar-body"], [data-testid="skills-sidebar-body"])';
+const LIST_PAGES =
+  '[data-testid="settings-sidebar-body"], [data-testid="plugins-sidebar-body"], [data-testid="skills-sidebar-body"]';
+const LIST_PAGE_SIDEBAR = `${RAIL_SIDEBAR}:has(${LIST_PAGES})`;
+const RAIL_ONLY_SIDEBAR = `${RAIL_SIDEBAR}:not(:has(${LIST_PAGES}))`;
+const LIST_BODY = '[data-testid="nav-rail-sidebar-body"]';
+const FOOTER_BODY = '[data-testid="sidebar-footer-row"] > [data-sidebar="collapsible-body"]';
+// A footer icon's disclosure (Provider usage) and More → Customize footer
+// open at the bottom of the thread list, which the rail hides.
+const FOOTER_PANEL_CONTENT =
+  ':is([data-testid^="plugin-sidebar-footer-disclosure-"], [data-testid="sidebar-footer-customize-inline"])';
+const FOOTER_PANEL = `${RAIL_ONLY_SIDEBAR} [data-testid="app-sidebar-body"] > div:has(${FOOTER_PANEL_CONTENT})`;
+const INERT_IN_RAIL = `${RAIL_SIDEBAR} :is(${LIST_BODY}, ${FOOTER_BODY})[inert]`;
+const RAIL_COLUMN = "(var(--bb-sidebar-control-size) + 2 * var(--bb-sidebar-rail-padding))";
+/** Wide enough that bb never folds a footer icon into its More menu. */
+const FOOTER_MEASURE_WIDTH_PX = 400;
+const FOOTER_ICON_PX = 32;
 // bb only renders this element at desktop widths; compact windows get a
 // drawer, which is itself the panel.
 const EXPANDED_SIDEBAR =
@@ -42,9 +57,88 @@ ${LIST_PAGE_SIDEBAR} > [data-sidebar="gap"],
 ${LIST_PAGE_SIDEBAR} > [data-sidebar="panel"] {
   width: var(--sidebar-width) !important;
 }
-${LIST_PAGE_SIDEBAR} [data-testid="nav-rail-sidebar-body"],
+${LIST_PAGE_SIDEBAR} ${LIST_BODY},
 ${LIST_PAGE_SIDEBAR} [data-testid="sidebar-footer-row"] > :not(:first-child) {
   visibility: visible !important;
+}
+/* Elsewhere the footer's own icons (Provider usage, More footer actions,
+   update badges) sit beside Settings, in the part of the footer the rail
+   hides, so they stack above it instead. */
+${RAIL_ONLY_SIDEBAR} [data-testid="sidebar-footer-row"] {
+  flex-direction: column-reverse;
+}
+${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} {
+  visibility: visible !important;
+  border-color: transparent !important;
+  border-radius: 0 !important;
+}
+${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} > div {
+  width: auto !important;
+}
+/* bb shows as many footer icons as fit across the footer's width and folds
+   the rest into a More menu. A wide, click-through list keeps them all
+   visible while they stack. */
+${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} [data-sidebar="footer"] {
+  align-items: flex-start;
+  padding: 8px 0 0 calc(${RAIL_COLUMN} / 2 - ${FOOTER_ICON_PX / 2}px);
+}
+${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} ul[data-sidebar="menu"] {
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  width: ${FOOTER_MEASURE_WIDTH_PX}px !important;
+  max-width: none !important;
+  pointer-events: none;
+}
+${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} li[data-sidebar="menu-item"] {
+  flex: none;
+  min-width: 0;
+}
+${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} :is(a, button) {
+  pointer-events: auto;
+}
+/* The update badges are labelled pills sized for the full sidebar; in the
+   rail they shrink to icon circles, and the tooltip still names the update. */
+${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} :has(> [data-testid^="sidebar-updates-badge"]) {
+  flex-direction: column;
+  max-width: none;
+}
+${RAIL_ONLY_SIDEBAR} [data-testid^="sidebar-updates-badge"] {
+  width: ${FOOTER_ICON_PX}px;
+  height: ${FOOTER_ICON_PX}px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  font-size: 0;
+}
+${RAIL_ONLY_SIDEBAR} [data-testid="sidebar-updates-badge-providers"] > svg:not(.animate-spin),
+${RAIL_ONLY_SIDEBAR} [data-testid="sidebar-updates-badge-providers"]:has(> svg.animate-spin) > span {
+  display: none;
+}
+${RAIL_ONLY_SIDEBAR} [data-testid="sidebar-updates-badge-providers"] > span {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+/* So it floats as a card beside the rail, above the footer. The list's
+   clip-path would clip it even though it is fixed. */
+${FOOTER_PANEL} {
+  visibility: visible;
+  position: fixed;
+  left: calc(var(--sidebar-rail-width) + 4px);
+  bottom: 8px;
+  width: 280px;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 0.5rem;
+  background: var(--sidebar);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+${FOOTER_PANEL} [data-testid^="plugin-sidebar-footer-disclosure-"] {
+  border: 0;
+  border-radius: 0;
+}
+${RAIL_ONLY_SIDEBAR}:has(${FOOTER_PANEL_CONTENT}) ${LIST_BODY} {
+  clip-path: none !important;
 }
 [${HIDDEN_ATTRIBUTE}] {
   display: none !important;
@@ -110,6 +204,26 @@ function collapseSidebar(doc: Document) {
 }
 
 /**
+ * bb marks the list and the footer's icons `inert` while the sidebar is
+ * collapsed to the rail, which no stylesheet can undo, so the page lists, the
+ * stacked footer icons, and a footer panel shown above would take no clicks.
+ * What stays hidden is still unreachable, since it is `visibility: hidden`.
+ */
+function liftRailInert(doc: Document, lifted: Set<Element>) {
+  for (const element of doc.querySelectorAll(INERT_IN_RAIL)) {
+    element.removeAttribute("inert");
+    lifted.add(element);
+  }
+}
+
+function restoreRailInert(lifted: Set<Element>) {
+  for (const element of lifted) {
+    if (element.isConnected && element.closest(RAIL_SIDEBAR) !== null) element.setAttribute("inert", "");
+  }
+  lifted.clear();
+}
+
+/**
  * A single click on a header title opens the thread menu. It waits briefly so
  * a double-click still reaches bb's rename. Wide windows get a radix dropdown,
  * which opens on pointerdown; compact ones get a sheet, which opens on click.
@@ -158,6 +272,7 @@ export function mountMinimalTopBar(doc: Document, win: Window): () => void {
   style.setAttribute(STYLE_ATTRIBUTE, "");
   style.textContent = MINIMAL_TOP_BAR_CSS;
   doc.head.append(style);
+  const lifted = new Set<Element>();
   let frame = 0;
   const schedule = () => {
     if (frame !== 0) return;
@@ -165,6 +280,7 @@ export function mountMinimalTopBar(doc: Document, win: Window): () => void {
       frame = 0;
       hideCommitButtons(doc, true);
       collapseSidebar(doc);
+      liftRailInert(doc, lifted);
     });
   };
   const observer = new MutationObserver(schedule);
@@ -172,7 +288,7 @@ export function mountMinimalTopBar(doc: Document, win: Window): () => void {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["data-state", "class"],
+    attributeFilter: ["data-state", "data-collapsible", "class", "inert"],
   });
   // Focus settles on its new target by the next frame, when schedule runs.
   doc.addEventListener("focusout", schedule);
@@ -184,6 +300,7 @@ export function mountMinimalTopBar(doc: Document, win: Window): () => void {
     if (frame !== 0) win.cancelAnimationFrame(frame);
     style.remove();
     hideCommitButtons(doc, false);
+    restoreRailInert(lifted);
     removeTitleMenu();
   };
 }

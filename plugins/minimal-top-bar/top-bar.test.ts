@@ -167,6 +167,52 @@ describe("mountMinimalTopBar", () => {
     cleanup();
   });
 
+  it("shows the footer's icons above Settings while the sidebar is collapsed to the rail", () => {
+    document.body.innerHTML = `
+      <div data-side="left" data-collapsible="rail">
+        <div data-testid="sidebar-footer-row">
+          <div id="settings-cell"></div>
+          <div id="footer-icons" data-sidebar="collapsible-body" style="visibility: hidden"></div>
+        </div>
+      </div>`;
+    const cleanup = mountMinimalTopBar(document, window);
+    expect(getComputedStyle(document.getElementById("footer-icons")!).visibility).toBe("visible");
+    expect(
+      getComputedStyle(document.querySelector('[data-testid="sidebar-footer-row"]')!).flexDirection,
+    ).toBe("column-reverse");
+    cleanup();
+  });
+
+  it("lifts bb's inert from the collapsed list and footer, again whenever bb sets it, and puts it back on cleanup", async () => {
+    document.body.innerHTML = `
+      <div data-side="left" data-collapsible="rail">
+        <div id="list" data-testid="nav-rail-sidebar-body" inert></div>
+        <div data-testid="sidebar-footer-row">
+          <div id="settings-cell"></div>
+          <div id="footer-icons" data-sidebar="collapsible-body" inert></div>
+        </div>
+      </div>
+      <div data-side="right" data-collapsible="rail">
+        <div id="other" data-testid="nav-rail-sidebar-body" inert></div>
+      </div>`;
+    const list = document.getElementById("list")!;
+    const footer = document.getElementById("footer-icons")!;
+    const cleanup = mountMinimalTopBar(document, window);
+    await nextFrame();
+    expect(list.hasAttribute("inert")).toBe(false);
+    expect(footer.hasAttribute("inert")).toBe(false);
+    expect(document.getElementById("other")!.hasAttribute("inert")).toBe(true);
+
+    footer.setAttribute("inert", "");
+    await nextFrame();
+    await nextFrame();
+    expect(footer.hasAttribute("inert")).toBe(false);
+
+    cleanup();
+    expect(list.hasAttribute("inert")).toBe(true);
+    expect(footer.hasAttribute("inert")).toBe(true);
+  });
+
   it("applies at every window width", () => {
     // bb's compact layout brings back the ⋯ and close buttons, so the restyle can't be limited to wide windows.
     expect(MINIMAL_TOP_BAR_CSS).not.toContain("@media");
