@@ -397,7 +397,8 @@ interface StubPendingReview {
 let ghPending: { reviews: StubPendingReview[]; nextComment: number; created: Array<Record<string, unknown>> } = { reviews: [], nextComment: 9000, created: [] };
 let host: Host | null = null;
 
-async function load(settings: Record<string, string | number | boolean> = {}, { extraProjects = [] }: { extraProjects?: Array<{ id: string; name: string; gitRemoteUrl: string | null }> } = {}) {
+/** `null` leaves a setting at the plugin's own default; the harness otherwise starts a thread per PR card, as most tests here assume. */
+async function load(settings: Record<string, string | number | boolean | null> = {}, { extraProjects = [] }: { extraProjects?: Array<{ id: string; name: string; gitRemoteUrl: string | null }> } = {}) {
   spawned = [];
   threadOutputs.clear();
   threadStatuses.clear();
@@ -409,7 +410,7 @@ async function load(settings: Record<string, string | number | boolean> = {}, { 
     agentSkillIds: ["kanban"],
     // The direct-post tests predate staging drafts on GitHub and keep exercising that path; staging tests turn it on.
     // Guessing a card's project would run the real `claude`; the guess's tests point it at a stub.
-    settings: { githubToken: "tok", stageOnGithub: false, guessProjects: false, ...settings },
+    settings: Object.fromEntries(Object.entries({ githubToken: "tok", stageOnGithub: false, guessProjects: false, autoStartThreads: true, ...settings }).filter(([, value]) => value !== null)),
     sdk: {
       projects: {
         list: async () => [
@@ -670,8 +671,8 @@ describe("CLI", () => {
 });
 
 describe("GitHub sync", () => {
-  it("creates PR cards in To Do and spawns threads for matched projects", async () => {
-    const fetchMock = stubGithub({
+  const arrivals = () =>
+    stubGithub({
       authored: [
         searchItem("acme-co/widgets", 1, { title: "Add thing", user: { login: "sean" } }),
         searchItem("acme-co/widgets", 2, { title: "WIP", draft: true, user: { login: "sean" } }),
@@ -679,29 +680,42 @@ describe("GitHub sync", () => {
       ],
       requested: [searchItem("acme-co/widgets", 4, { title: "Please review", user: { login: "alice" } })],
     });
-    vi.stubGlobal("fetch", fetchMock);
-    await load();
+
+  it("places PR cards by who holds them and, by default, starts no thread for them", async () => {
+    vi.stubGlobal("fetch", arrivals());
+    await load({ autoStartThreads: null });
     await current().harness.behavior.callRpc("sync_now", null);
 
     const { tickets, sync } = await board();
     const byNumber = new Map(tickets.map((ticket) => [ticket.pr?.number, ticket]));
     expect(sync.login).toBe("sean");
     expect(sync.lastError).toBeNull();
-    expect(byNumber.get(1)).toMatchObject({ columnId: "todo", kind: "pr", projectId: "proj_acme" });
-    expect(byNumber.get(2)).toMatchObject({ columnId: "todo", pr: { state: "draft" } });
+    // Your open PR waits on its reviewers; your draft is still being made; a review asked of you is yours to do (To Do here, Needs you on a board with the loop's column).
+    expect(byNumber.get(1)).toMatchObject({ columnId: "waiting", kind: "pr", projectId: "proj_acme", tags: ["my-prs"], sourceId: "my-prs" });
+    expect(byNumber.get(2)).toMatchObject({ columnId: "in-progress", pr: { state: "draft" } });
     expect(byNumber.get(4)).toMatchObject({ columnId: "todo", tags: ["pr-reviews"], sourceId: "pr-reviews", pr: { role: "other", author: "alice" } });
-    expect(byNumber.get(1)).toMatchObject({ tags: ["my-prs"], sourceId: "my-prs" });
-    // No project matches other/repo and no fallback project is set: card without a thread.
+    // No project matches other/repo and no fallback project is set: card without a project.
     expect(byNumber.get(3)).toMatchObject({ projectId: null, threadId: null });
+    expect(tickets.every((ticket) => ticket.threadId === null)).toBe(true);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("with threads on, your PR's thread reads its status and a review request's thread briefs you instead of reviewing on its own", async () => {
+    vi.stubGlobal("fetch", arrivals());
+    await load({ autoStartThreads: true });
+    await current().harness.behavior.callRpc("sync_now", null);
 
     expect(spawned).toHaveLength(3);
     const titles = spawned.map((args) => String(args.title));
     expect(titles).toContain("widgets#1: Add thing");
-    const reviewPrompt = spawned.find((args) => String(args.title).startsWith("widgets#4"));
-    expect(String(reviewPrompt?.prompt)).toContain("gh pr diff 4 --repo acme-co/widgets");
-    const ownPrompt = spawned.find((args) => String(args.title).startsWith("widgets#1"));
-    expect(String(ownPrompt?.prompt)).toContain("tracks your pull request");
-    expect(String(reviewPrompt?.prompt)).toContain("Do not post comments");
+    const ownPrompt = String(spawned.find((args) => String(args.title).startsWith("widgets#1"))?.prompt);
+    expect(ownPrompt).toContain("tracks your pull request");
+    const requestPrompt = String(spawned.find((args) => String(args.title).startsWith("widgets#4"))?.prompt);
+    expect(requestPrompt).toContain("You were asked to review pull request acme-co/widgets#4");
+    expect(requestPrompt).toContain("hasn't reviewed it yet");
+    expect(requestPrompt).not.toContain("Review it for correctness");
+    expect(requestPrompt).toContain("Don't move the card");
+    expect(requestPrompt).toContain("Do not post comments");
   });
 
   it("is idempotent and moves merged, closed, and reviewed PRs to done", async () => {
@@ -2616,7 +2630,8 @@ describe("monitored review loop", () => {
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("ticket_create", { title: "A" });
     host = await current().harness.lifecycle.reload(plugin);
-    expect((await board()).columns.map((column) => column.name)).toEqual(["Backlog", "To Do", "In Progress", "In Review", "Done"]);
+    // Waiting is added to every board in use that lacks it; the rest keep their pre-loop names.
+    expect((await board()).columns.map((column) => column.name)).toEqual(["Backlog", "To Do", "In Progress", "In Review", "Waiting", "Done"]);
   });
 
   /** A monitored local card whose first review came back clean, so it waits at Needs you. */
@@ -2881,10 +2896,10 @@ describe("tags and sources", () => {
     await current().harness.behavior.callRpc("sync_now", null);
     expect((await board()).tickets[0]).toMatchObject({ tags: ["mine", "my-prs", "work"], sourceId: "my-prs" });
 
-    // The PR leaves the only source but stays open: the original source (my-prs) is gone, so it is not moved.
+    // The PR leaves the only source but stays open: the original source (my-prs) is gone, so it is not moved from where it waits.
     vi.stubGlobal("fetch", stubGithub({ authored: [], pulls: { "acme-co/widgets#1": { state: "open", merged: false } } }));
     await current().harness.behavior.callRpc("sync_now", null);
-    expect((await board()).tickets[0]!.columnId).toBe("todo");
+    expect((await board()).tickets[0]!.columnId).toBe("waiting");
 
     await expect(
       current().harness.behavior.callRpc("sources_set", {
@@ -3063,6 +3078,121 @@ describe("source narratives", () => {
     await current().harness.behavior.callRpc("sync_now", null);
     expect(narrativeThreads()).toHaveLength(1);
     expect((await board()).sync.lastError).toBeNull();
+  });
+});
+
+describe("review request briefs", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  const newSha = "fedcba9876543210fedcba9876543210fedcba98";
+  const ctx = (threadId: string) => ({ threadId, signal: new AbortController().signal });
+  const source = (extra: Record<string, unknown>) => ({
+    id: "pr-reviews",
+    name: "Review requests",
+    kind: "github-search",
+    query: "is:pr is:open user-review-requested:@me",
+    tags: ["pr-reviews"],
+    doneWhenGone: true,
+    enabled: true,
+    reviewNewPrs: "standard",
+    ...extra,
+  });
+  const roleOf = (args: Record<string, unknown>) => (args.pluginMetadata as { role?: string } | undefined)?.role;
+  const cardThreads = () => spawned.filter((args) => roleOf(args) === undefined);
+  const workerOf = (role: string) => spawned.find((args) => roleOf(args) === role)!;
+  const threadIdOf = (args: Record<string, unknown>) => `thr_${spawned.indexOf(args) + 1}`;
+  const findings = (commit: string, items: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) =>
+    ["## Review Findings", `Reviewed commit: ${commit}`, "```json review-findings", JSON.stringify({ version: 5, summary: "x", commit, findings: items, ...extra }), "```"].join("\n");
+  const nilCheck = { id: "F1", severity: "important", title: "Nil check missing", description: "d", fix: "Check for nil before use. Then return.", locations: [{ file: "a.go", startLine: 3, endLine: 3 }], flaggedBy: ["quality"], category: "correctness" };
+  async function completeReview(threadId: string, body: string, commit: string): Promise<void> {
+    await current().harness.behavior.runCli(["review-record", "--commit", commit, "--base", "main"], ctx(threadId));
+    await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadId, projectId: "proj_acme" }), lastAssistantText: body });
+  }
+  const finishNarrative = (threadId: string) =>
+    current().harness.behavior.emitThreadEvent("thread.idle", {
+      thread: makeThreadResponse({ id: threadId, projectId: "proj_acme" }),
+      lastAssistantText: ["```json kanban-narrative", JSON.stringify({ version: 1, summary: "Adds `add`.", readingOrder: [{ path: "a.go", role: "key", note: "The new function.", lines: [2], risk: 4 }], watchOut: ["The nil path."] }), "```"].join("\n"),
+    });
+  async function requested(extra: Record<string, unknown> = {}): Promise<Ticket> {
+    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 4, { title: "Please review", user: { login: "alice" } })] }));
+    await load({ autoStartThreads: null });
+    await current().harness.behavior.callRpc("sources_set", { sources: [source(extra)] });
+    await current().harness.behavior.callRpc("sync_now", null);
+    return (await board()).tickets[0]!;
+  }
+
+  it("starts the card's thread once the source's review is done, with the findings as its brief, and only once", async () => {
+    const card = await requested();
+    expect(card.threadId).toBeNull();
+    const review = workerOf("review");
+    expect(review).toMatchObject({ visibility: "hidden" });
+    expect(review.lifecycleOwnerThreadId).toBeUndefined();
+    expect(cardThreads()).toHaveLength(0);
+
+    await completeReview(threadIdOf(review), findings(sha, [nilCheck]), sha);
+    expect(cardThreads()).toHaveLength(1);
+    const prompt = String(cardThreads()[0]!.prompt);
+    expect(cardThreads()[0]).toMatchObject({ projectId: "proj_acme", title: "widgets#4: Please review", pluginMetadata: { ticketId: card.id } });
+    expect(prompt).toContain("You were asked to review pull request acme-co/widgets#4");
+    expect(prompt).toContain("Code review (standard) at 0123456: 1 open finding");
+    expect(prompt).toContain("- [important] F1 Nil check missing (a.go:3). Fix: Check for nil before use.");
+    expect(prompt).toContain("reviewer's brief");
+    expect(prompt).toContain("Don't move the card");
+    expect((await board()).tickets[0]!.threadId).toBe(threadIdOf(cardThreads()[0]!));
+
+    // The review thread idling again (a follow-up) briefs nothing more.
+    await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadIdOf(review), projectId: "proj_acme" }), lastAssistantText: "Anything else?" });
+    expect(cardThreads()).toHaveLength(1);
+  });
+
+  it("waits for the narrative the source asked for and briefs from both", async () => {
+    await requested({ narrateNewPrs: true });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const review = workerOf("review");
+    const narrative = workerOf("narrative");
+    expect(narrative).toBeDefined();
+
+    await completeReview(threadIdOf(review), findings(sha, [nilCheck]), sha);
+    expect(cardThreads()).toHaveLength(0);
+    await finishNarrative(threadIdOf(narrative));
+    expect(cardThreads()).toHaveLength(1);
+    const prompt = String(cardThreads()[0]!.prompt);
+    expect(prompt).toContain("## Narrative\nAdds `add`.");
+    expect(prompt).toContain("- a.go (key, risk 4): The new function.");
+    expect(prompt).toContain("Watch out:\n- The nil path.");
+    expect(prompt).toContain("Nil check missing");
+  });
+
+  it("sends a re-review into the thread it already has instead of starting another", async () => {
+    const open = { state: "open" as const, merged: false };
+    await requested();
+    await completeReview(threadIdOf(workerOf("review")), findings(sha, [nilCheck]), sha);
+    expect(cardThreads()).toHaveLength(1);
+    current().harness.sdk.stub("threads.send", async () => ({ ok: true }));
+
+    vi.stubGlobal("fetch", stubGithub({ requested: [], pulls: { "acme-co/widgets#4": open } }));
+    await current().harness.behavior.callRpc("sync_now", null);
+    vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 4, { title: "Please review", user: { login: "alice" } })], pulls: { "acme-co/widgets#4": open } }));
+    await current().harness.behavior.callRpc("sync_now", null);
+    const reReview = spawned.filter((args) => roleOf(args) === "review").at(-1)!;
+    expect(String(reReview.title)).toContain("Re-review");
+    await completeReview(threadIdOf(reReview), findings(newSha, [], { resolved: [{ id: "F1", title: "Nil check missing", note: "fixed" }] }), newSha);
+
+    expect(cardThreads()).toHaveLength(1);
+    const sent = current().harness.inspection.sdk.callsTo("threads.send") as Array<[{ threadId: string; input: Array<{ text: string }> }]>;
+    expect(sent).toHaveLength(1);
+    expect(sent[0]![0].threadId).toBe(threadIdOf(cardThreads()[0]!));
+    expect(sent[0]![0].input[0]!.text).toContain("The board re-reviewed this pull request of the commits since 0123456.");
+    expect(sent[0]![0].input[0]!.text).toContain("Resolved since the last review:\n- F1 Nil check missing");
+    expect(sent[0]![0].input[0]!.text).toContain("Update your brief");
+  });
+
+  it("briefs nothing for your own PR, which no one asked you to review", async () => {
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { title: "Refactor", user: { login: "sean" } })] }));
+    await load({ autoStartThreads: null });
+    const [card] = (await board()).tickets.length === 0 ? [(await (async () => { await current().harness.behavior.callRpc("sync_now", null); return (await board()).tickets[0]!; })())] : (await board()).tickets;
+    await current().harness.behavior.callRpc("ticket_review_pr", { id: card!.id });
+    await completeReview(threadIdOf(workerOf("review")), findings(sha, [nilCheck]), sha);
+    expect(cardThreads()).toHaveLength(0);
   });
 });
 

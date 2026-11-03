@@ -22,8 +22,10 @@ export function initialColumn(columns: Column[], pr: PullRequest | null, jira: J
   }
   if (pr === null) return pick(COLUMN.backlog, COLUMN.todo);
   if (pr.state === "merged" || pr.state === "closed") return pick(COLUMN.done);
-  // Every new PR card, authored or review-requested, starts as work to do.
-  return pick(COLUMN.todo, COLUMN.backlog);
+  // By who holds the ball: a review asked of you needs you; your own draft is still being made; your open PR waits on its reviewers.
+  if (pr.role === "other") return pick(COLUMN.review, COLUMN.todo, COLUMN.backlog);
+  if (pr.state === "draft") return pick(COLUMN.inProgress, COLUMN.todo, COLUMN.backlog);
+  return pick(COLUMN.waiting, COLUMN.todo, COLUMN.backlog);
 }
 
 /** Columns are never empty: storage falls back to the defaults and `columns_set` requires one. */
@@ -49,6 +51,17 @@ export function withLoopColumns(columns: Column[]): Column[] {
   if (!has(COLUMN.inProgress)) insertBefore(COLUMN.inProgress, has(COLUMN.checking) ? COLUMN.checking : COLUMN.review);
   if (!has(COLUMN.checking)) insertBefore(COLUMN.checking, COLUMN.review);
   return next.length === columns.length ? columns : next;
+}
+
+/** The board with a `waiting` column, just after `review` (else before the done column), for the PRs that wait on others. */
+export function withWaitingColumn(columns: Column[]): Column[] {
+  if (columns.some((column) => column.id === COLUMN.waiting)) return columns;
+  const next = [...columns];
+  const afterReview = next.findIndex((column) => column.id === COLUMN.review);
+  const beforeDone = next.findIndex((column) => column.id === doneColumnId(next));
+  const at = afterReview !== -1 ? afterReview + 1 : beforeDone !== -1 ? beforeDone : next.length;
+  next.splice(at, 0, { id: COLUMN.waiting, name: "Waiting" });
+  return next;
 }
 
 /** Tables whose rows belong to one card through `ticket_id` and go with it when it's deleted. */
@@ -377,6 +390,15 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
     return { columns };
   }
 
+  /** Adds `waiting` to a board in use that lacks it, where authored PRs sit while their reviewers have them. */
+  async function ensureWaitingColumn(): Promise<void> {
+    const columns = await getColumns();
+    const next = withWaitingColumn(columns);
+    if (next === columns) return;
+    await bb.storage.kv.set("columns", next);
+    publish();
+  }
+
   /** Adds the columns the review loop needs to a board that lacks them; a no-op once it has them. */
   async function ensureLoopColumns(): Promise<void> {
     const columns = await getColumns();
@@ -398,6 +420,7 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
 
   return {
     hydrate,
+    ensureWaitingColumn,
     getTicket,
     createTicket,
     moveTicket,

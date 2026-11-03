@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_COLUMNS, PRE_LOOP_DEFAULT_COLUMNS, type JiraIssue, type PullRequest } from "../shared/board";
-import { doneColumn, initialColumn, withLoopColumns } from "./board";
+import { doneColumn, initialColumn, withLoopColumns, withWaitingColumn } from "./board";
 
-const pr = (state: PullRequest["state"]): PullRequest => ({ repo: "acme/widgets", number: 7, url: "", role: "authored", state, author: "", updatedAt: "", headRef: null, checks: null });
+const pr = (state: PullRequest["state"], role: PullRequest["role"] = "authored"): PullRequest => ({ repo: "acme/widgets", number: 7, url: "", role, state, author: "", updatedAt: "", headRef: null, checks: null });
 const jira = (statusCategory: JiraIssue["statusCategory"]): JiraIssue => ({ key: "PROJ-1", url: "", status: "", statusCategory, issueType: "", priority: null, assignee: null, updatedAt: "" });
 
 describe("initialColumn", () => {
-  it("puts ad hoc cards in the backlog, open PRs and new Jira issues in To Do, and finished items in Done", () => {
+  it("places cards by who holds them: ad hoc in the backlog, your open PR in Waiting, your draft in Doing, a review asked of you in Needs you, new Jira issues in To Do, finished items in Done", () => {
     expect(initialColumn(DEFAULT_COLUMNS, null)).toBe("backlog");
-    expect(initialColumn(DEFAULT_COLUMNS, pr("open"))).toBe("todo");
-    expect(initialColumn(DEFAULT_COLUMNS, pr("draft"))).toBe("todo");
+    expect(initialColumn(DEFAULT_COLUMNS, pr("open"))).toBe("waiting");
+    expect(initialColumn(DEFAULT_COLUMNS, pr("draft"))).toBe("in-progress");
+    // A board without the loop's Needs you column has no better place for a review request than To Do.
+    expect(initialColumn(DEFAULT_COLUMNS, pr("open", "other"))).toBe("todo");
+    expect(initialColumn(withLoopColumns(DEFAULT_COLUMNS), pr("open", "other"))).toBe("review");
+    expect(initialColumn(withLoopColumns(DEFAULT_COLUMNS), pr("draft", "other"))).toBe("review");
     expect(initialColumn(DEFAULT_COLUMNS, pr("merged"))).toBe("done");
     expect(initialColumn(DEFAULT_COLUMNS, pr("closed"))).toBe("done");
     expect(initialColumn(DEFAULT_COLUMNS, null, jira("new"))).toBe("todo");
@@ -24,6 +28,7 @@ describe("initialColumn", () => {
       { id: "shipped", name: "Shipped" },
     ];
     expect(initialColumn(columns, null)).toBe("todo");
+    expect(initialColumn(columns, pr("open"))).toBe("todo");
     expect(initialColumn(columns, null, jira("indeterminate"))).toBe("todo");
     expect(initialColumn(columns, pr("merged"))).toBe("ideas");
     expect(doneColumn(columns)).toBe("shipped");
@@ -55,5 +60,18 @@ describe("withLoopColumns", () => {
     expect(ids(withLoopColumns([{ id: "todo", name: "To Do" }, { id: "done", name: "Done" }]))).toEqual(["todo", "in-progress", "checking", "review", "done"]);
     // With no `done` column the last one is where finished cards go, so the loop's columns stay ahead of it.
     expect(ids(withLoopColumns([{ id: "ideas", name: "Ideas" }, { id: "review", name: "Review" }, { id: "shipped", name: "Shipped" }]))).toEqual(["ideas", "in-progress", "checking", "review", "shipped"]);
+  });
+});
+
+describe("withWaitingColumn", () => {
+  const ids = (columns: { id: string }[]) => columns.map((column) => column.id);
+
+  it("adds Waiting after Needs you on a board from before it, and before the done column where there is no Needs you", () => {
+    expect(ids(withWaitingColumn(PRE_LOOP_DEFAULT_COLUMNS))).toEqual(["backlog", "todo", "in-progress", "review", "waiting", "done"]);
+    expect(ids(withWaitingColumn([{ id: "todo", name: "To Do" }, { id: "shipped", name: "Shipped" }]))).toEqual(["todo", "waiting", "shipped"]);
+  });
+
+  it("leaves a board that has it alone", () => {
+    expect(withWaitingColumn(DEFAULT_COLUMNS)).toBe(DEFAULT_COLUMNS);
   });
 });

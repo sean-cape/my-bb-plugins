@@ -69,9 +69,10 @@ A kanban board where every card is a BB thread.
 Cards live in this plugin's own storage on the BB server. GitHub is read with
 the token you paste into the plugin settings, or with the token from `gh auth
 token` on the server machine; Jira uses the site URL, email and API token
-settings. PR cards are matched to projects by git remote, and a thread is
-started in that project so the agent can brief itself on the PR and wait for
-instructions. The thread top-bar Changes button and side panel come from the
+settings. PR cards are matched to projects by git remote. A review asked of
+you gets its thread once the board's review of the PR is done, with the
+findings and narrative as its brief, and then answers your questions; other
+cards get a thread when you start one. The thread top-bar Changes button and side panel come from the
 separate Diff view plugin, whose diff library this plugin embeds.
 
 ## For agents

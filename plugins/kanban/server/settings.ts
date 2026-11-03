@@ -45,8 +45,8 @@ export function defineSettings(bb: BbPluginApi) {
       type: "boolean",
       label: "Start a thread for each new pull request card",
       description:
-        "When on, a thread is spawned in the matching project as soon as a PR card is created. The agent briefs itself on the PR and waits.",
-      default: true,
+        "When on, a thread is spawned in the matching project as soon as a PR card is created: one that reads your PR's status and waits, or one that reads a PR you were asked to review and waits for questions. Off, a review request gets its thread once the board's review of it is done (with the review as its brief), a PR from a bb thread's branch joins that thread, and t on a card starts one.",
+      default: false,
     },
     autoCreateProjects: {
       type: "boolean",

@@ -3,12 +3,16 @@ import { doneColumn, type BoardStore } from "./board";
 import type { KanbanContext } from "./context";
 import type { Dumps } from "./dumps";
 import type { Loop } from "./loop/loop";
+import type { ReviewBrief } from "./review-brief";
 import type { ReviewResume } from "./reviews/resume";
 import type { Reviews } from "./reviews/reviews";
 import type { Tour } from "./tour";
 
 /** Cards follow their threads: activity moves them on, archiving finishes them, and idle threads deliver their output. */
-export function registerThreadLifecycle(ctx: KanbanContext, { board, dumps, tour, reviews, loop, reviewResume }: { board: BoardStore; dumps: Dumps; tour: Tour; reviews: Reviews; loop: Loop; reviewResume: ReviewResume }): void {
+export function registerThreadLifecycle(
+  ctx: KanbanContext,
+  { board, dumps, tour, reviews, loop, reviewResume, reviewBrief }: { board: BoardStore; dumps: Dumps; tour: Tour; reviews: Reviews; loop: Loop; reviewResume: ReviewResume; reviewBrief: ReviewBrief },
+): void {
   const { bb, settings, stmts, publish } = ctx;
   const { getColumns, moveTicket } = board;
 
@@ -26,14 +30,20 @@ export function registerThreadLifecycle(ctx: KanbanContext, { board, dumps, tour
     if (idleColumns.has(row.column_id)) moveTicket(row.id, target.id, null);
   });
 
-  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
+  bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     // Skills like code-review fan out to background agents, and the thread idles between their reports; only the idle after the last one is final.
     if (thread.activeBackgroundAgentCount > 0) return;
     loop.quietIdle(thread.id);
     if (dumps.handleIdle(thread.id, lastAssistantText)) return;
-    if (tour.handleIdle(thread.id, lastAssistantText)) return;
+    if (tour.handleIdle(thread.id, lastAssistantText)) {
+      await reviewBrief.workerFinished(thread.id);
+      return;
+    }
     if (loop.handleIdle(thread.id, lastAssistantText)) return;
-    if (reviews.handleIdle(thread.id, lastAssistantText)) void loop.reviewFinished(thread.id);
+    if (reviews.handleIdle(thread.id, lastAssistantText)) {
+      void loop.reviewFinished(thread.id);
+      await reviewBrief.workerFinished(thread.id);
+    }
   });
 
   bb.events.on("thread.failed", ({ thread, error }) => reviewResume.threadFailed(thread.id, error));

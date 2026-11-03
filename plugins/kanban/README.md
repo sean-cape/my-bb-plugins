@@ -29,10 +29,13 @@ its PR is reviewed and its review findings and comments are handed to agents.
   - **GitHub search**: a GitHub search query; PRs or issues become cards.
     Two ship by default: your open PRs (`#my-prs`) and open, non-draft PRs
     where your review is requested (`#pr-reviews`, "done when it leaves this
-    search"). Merged or closed PRs move to Done. An open PR card in Done
-    that left its source and comes back (your review is requested again, or
-    a closed PR is reopened) returns to Todo. A PR whose branch ends in an
-    ad hoc card's thread id joins that card instead.
+    search"). A new PR card lands by who holds the ball: a review asked of
+    you in Needs you (`review`; To Do on a board without that column), your
+    own open PR in Waiting (its reviewers have it), your draft in the
+    in-progress column. Merged or closed PRs move to Done. An open PR card in
+    Done that left its source and comes back (your review is requested again,
+    or a closed PR is reopened) returns to where it would arrive. A PR whose
+    branch ends in an ad hoc card's thread id joins that card instead.
   - **Jira (JQL)**: a JQL query on your Jira Cloud site. Needs the Jira site
     URL, account email, and API token plugin settings. Cards land in To Do or
     In Progress from the issue's status category, carry key, status, priority
@@ -46,7 +49,18 @@ its PR is reviewed and its review findings and comments are handed to agents.
   depth, as if Review PR had been pressed, and a re-review of the commits since
   whenever the PR comes back to the search (your review is requested again).
   Turn it on for `#pr-reviews` to have everything you're asked to review
-  reviewed by the time you open it. Cards already on the board are left alone.
+  reviewed by the time you open it. Once that review is done (and the
+  narrative, where the source asks for one), the card gets its thread: its
+  first message carries the open findings, the not-covered list, the
+  narrative's reading order and watch-outs, the PR's description and the open
+  comment count, and asks for one short brief of what to read first and which
+  findings matter, after which it waits for your questions. That message is
+  what reaches your unread list, one per review request. A re-review sends the
+  new findings into the same thread as an update. The brief thread is told
+  never to move the card: submitting your review from the changes page does.
+  A source without a review depth produces no thread; the card in Needs you is
+  the signal, and `t` on it starts a thread that reads the PR and waits.
+  Cards already on the board are left alone.
   A review waits while the PR is a draft, while its project is still being
   cloned, or while another review of it runs; a monitored card's loop runs its
   own reviews instead. Several sources on one PR take the deepest depth.
@@ -739,8 +753,11 @@ files. Point the **Claude Code CLI binary** setting at it if it isn't on bb's
 PATH or in `~/.local/bin`, or turn off **Guess a card's project**.
 
 Optional settings: sync interval, whether to spawn a thread for every new PR
-card, a fallback project for PRs whose repository matches no project's git
-remote, and whether a card moves to In Progress when its thread starts working.
+card as it arrives (off by default: a review request gets its thread once the
+board's review is done, with the review as its brief, and `t` on any card
+starts one), a fallback project for PRs whose repository matches no project's
+git remote, and whether a card moves to In Progress when its thread starts
+working.
 
 ## Columns
 
@@ -751,10 +768,12 @@ loop's columns: `checking` (Checking) just before `review`, and `review`
 (Needs you) just after `in-progress` when the board lacks it (and puts back
 an `in-progress` column that was removed), so a new board becomes Doing,
 Checking, Needs you, Waiting, Done. Edit them
-under Settings → Columns on the page; agents refer to columns by id. New PR cards land in `todo`,
-whether you authored them or were asked to review. Sync never moves an open PR
-card you placed by hand, except one in Done that comes back to its source after
-leaving it.
+under Settings → Columns on the page; agents refer to columns by id. A board in
+use that lacks `waiting` gets it, after `review`. New PR cards land by who
+holds them: a review asked of you in `review` (Needs you), your open PR in
+`waiting`, your draft in `in-progress`. Sync never moves an open PR card you
+placed by hand, except one in Done that comes back to its source after leaving
+it.
 
 Each column has options behind its cog in Settings → Columns. "Hide cards
 that have been in this column for more than N days" keeps old cards off the

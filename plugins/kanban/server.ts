@@ -52,6 +52,7 @@ export default async function plugin(bb: BbPluginApi) {
   await projectSettings.loadProjectSettings();
   await services.projectGuess.loadGuesses();
   await board.keepPreLoopDefaults();
+  await board.ensureWaitingColumn();
   sourceSync.registerService();
   spend.registerService();
   board.setReviewTag((await settings.get()).reviewTag);

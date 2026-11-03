@@ -2,6 +2,7 @@ import type { Column, Ticket } from "../shared/board";
 import type { BoardStore } from "./board";
 import type { KanbanContext } from "./context";
 import { prShortName } from "./github";
+import { reviewRequestPrompt } from "./review-brief-prompt";
 import { threadTitle } from "./util";
 
 /** The thread behind each card: starting it, prompting it, and linking existing threads. */
@@ -38,16 +39,8 @@ export function createCardThreads(ctx: KanbanContext, { board }: { board: BoardS
       return `${ticket.title}${body === "" ? "" : `\n\n${body}`}${context}\n${footer}`;
     }
     const { repo, number, role } = ticket.pr;
-    if (role === "other") {
-      return [
-        `You were asked to look at pull request ${repo}#${number}: "${ticket.title}" (${ticket.pr.url}).`,
-        "",
-        `1. Run \`gh pr view ${number} --repo ${repo}\` and \`gh pr diff ${number} --repo ${repo}\` to read the description and the change.`,
-        "2. Review it for correctness, edge cases, and anything risky. Be concise and concrete; cite file paths.",
-        "3. Summarize your findings here and stop. The user decides what to post.",
-        footer,
-      ].join("\n");
-    }
+    // A review request's thread briefs from the board's review; started before one exists, it reads enough to answer and waits.
+    if (role === "other") return reviewRequestPrompt(ticket, columns, { review: null, narrative: null });
     return [
       `This thread tracks your pull request ${repo}#${number}: "${ticket.title}" (${ticket.pr.url}).`,
       "",
@@ -58,7 +51,8 @@ export function createCardThreads(ctx: KanbanContext, { board }: { board: BoardS
     ].join("\n");
   }
 
-  async function spawnThreadForTicket(ticketId: string, projectId: string): Promise<Ticket> {
+  /** Starts the card's thread; `prompt` replaces the card's usual first message (a review request's brief). */
+  async function spawnThreadForTicket(ticketId: string, projectId: string, prompt?: string): Promise<Ticket> {
     const ticket = getTicket(ticketId);
     if (ticket.threadId !== null) return ticket;
     const columns = await getColumns();
@@ -72,7 +66,7 @@ export function createCardThreads(ctx: KanbanContext, { board }: { board: BoardS
     const thread = await bb.sdk.threads.spawn({
       projectId,
       environment: { type: "project-default" },
-      prompt: threadPrompt(ticket, columns),
+      prompt: prompt ?? threadPrompt(ticket, columns),
       title: threadTitle(title),
       ...(parentThreadId === null ? {} : { parentThreadId }),
       pluginMetadata: { ticketId: ticket.id },

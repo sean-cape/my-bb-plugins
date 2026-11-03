@@ -296,5 +296,7 @@ export function migrate(bb: BbPluginApi, db: KanbanDatabase): void {
     `ALTER TABLE reviews ADD COLUMN resolved_finding_ids TEXT`,
     `ALTER TABLE tickets ADD COLUMN priority INTEGER`,
     `ALTER TABLE tickets ADD COLUMN snoozed_until TEXT`,
+    // When a review-request card's thread was briefed on this review, so a second completion (a late narrative, a resync) doesn't brief it again.
+    `ALTER TABLE reviews ADD COLUMN briefed_at INTEGER`,
   ]);
 }

@@ -136,6 +136,7 @@ export interface ReviewRow {
   resolved_finding_ids: string | null;
   selection_overrides: string | null;
   finding_edits: string | null;
+  briefed_at: number | null;
 }
 
 export interface PrCommentRow {

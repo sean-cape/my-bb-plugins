@@ -177,6 +177,7 @@ export function prepareStatements(db: KanbanDatabase) {
     completeReview: db.prepare<[string | null, string | null, number, string]>(
       `UPDATE reviews SET status = 'completed', body = ?, commit_sha = COALESCE(commit_sha, ?), completed_at = ? WHERE id = ?`,
     ),
+    setReviewBriefed: db.prepare<[number, string]>(`UPDATE reviews SET briefed_at = ? WHERE id = ?`),
     failReview: db.prepare<[string | null, number, string]>(
       `UPDATE reviews SET status = 'failed', body = ?, completed_at = ? WHERE id = ?`,
     ),
