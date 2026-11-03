@@ -179,11 +179,11 @@ export function NewTicketDialog({
   const [projectId, setProjectId] = useState("");
   const [runMode, setRunMode] = useState<RunMode>("card");
   const [gates, setGates] = useState(ADHOC_GATES);
-  // Review loop once a project is picked, Card only without one.
+  // Thread once a project is picked, Card only without one.
   const pickProject = (next: string) => {
     setProjectId(next);
     if (next === "") setRunMode("card");
-    else if (projectId === "") setRunMode("loop");
+    else if (projectId === "") setRunMode("thread");
   };
   // A card without a project can only be a card, whatever the control last showed.
   const effectiveMode: RunMode = projectId === "" ? "card" : runMode;

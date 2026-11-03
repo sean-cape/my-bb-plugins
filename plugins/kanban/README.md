@@ -154,8 +154,9 @@ its PR is reviewed and its review findings and comments are handed to agents.
 - **Ad hoc cards** from the page, from `bb kanban add`, or from an agent inside
   a thread (the card is linked to that thread).
 - **Monitored cards**: choose Review loop under How it runs when creating the
-  card (the default once a project is picked; the gates sit inline, and Create
-  and start makes the card, sets its loop and starts its thread in one go), in
+  card (Thread is the default once a project is picked; the gates sit inline,
+  and Create and start makes the card, sets its loop and starts its thread in
+  one go), in
   the card panel's Thread row for a card without a thread, or in the
   proposals' accept step; or turn on the switch in the card panel's Review
   loop section (or press `m`, or run `bb kanban monitor on`, or `bb kanban add

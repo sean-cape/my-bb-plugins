@@ -85,8 +85,8 @@ export function ProposalView({ dumpId, columns, onBack, onOpenThread, onOpenTick
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState("");
   const [columnId, setColumnId] = useState(todoColumnId(columns) ?? "");
-  // The dump has a project, so the cards default to the review loop as the new-card dialog's do.
-  const [runMode, setRunMode] = useState<RunMode>("loop");
+  // The dump has a project, so the cards default to a thread as the new-card dialog's do.
+  const [runMode, setRunMode] = useState<RunMode>("thread");
   const [gates, setGates] = useState(() => defaultGates("adhoc"));
   const [showText, setShowText] = useState(false);
   const loadedProposal = useRef<string | null>(null);

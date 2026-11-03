@@ -60,7 +60,7 @@ function ThreadStartRow({
   rpc: Rpc;
 }) {
   const monitored = ticket.loop?.monitored === true;
-  const [mode, setMode] = useState<RunMode>("loop");
+  const [mode, setMode] = useState<RunMode>("thread");
   const start = () => {
     if (mode === "loop" && !monitored) {
       void run(async () => {
