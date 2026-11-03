@@ -199,7 +199,7 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["Enter", "Space"], action: "Press the button, or start typing in the field" },
       { keys: ["i"], action: "Start typing in the field, or the description" },
       { keys: ["Esc"], action: "Leave the text box (twice with vim-mode), then close the card" },
-      { keys: ["t", "D"], action: "Open the card's thread / changes" },
+      { keys: ["t", "D"], action: "Open the card's thread (on a card with none, start one in its project and open it) / changes" },
       { keys: ["m"], action: "Open the loop menu: every intervention with its key, the gates, and loop off, with greyed items saying why; with the loop off, turns it on" },
       { keys: ["s"], action: "Steer: type a message to the card's thread; at Needs you it resumes the loop with it. Enter sends, Shift-Enter breaks a line" },
       { keys: ["f"], action: "Hand to me: at the thread's next ready while it builds or fixes, or after the step the board is running" },

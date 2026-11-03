@@ -219,7 +219,16 @@ function TicketDetails({
   const keys = useCardKeys(rootRef, ticket.id, focusOnMount, {
     onLoopMenu: () => (loopSectionShown && monitored ? setLoopMenuOpen(true) : toggleMonitored()),
     onThread: () => {
-      if (ticket.threadId !== null) onOpenThread(ticket.threadId);
+      if (ticket.threadId !== null) {
+        onOpenThread(ticket.threadId);
+        return;
+      }
+      // One key hands a card to an agent: the thread starts in the picked (or guessed) project and opens.
+      if (projectId === "" || pending) return;
+      void run(async () => {
+        const started = (await rpc.call("ticket_start_thread", { id: ticket.id, projectId })) as Ticket;
+        if (started.threadId !== null) onOpenThread(started.threadId);
+      }, monitored ? STARTED_IN_LOOP : "Thread started");
     },
     onDiff: () => {
       if (hasDiff) onOpenDiff(ticket.id);

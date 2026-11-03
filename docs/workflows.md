@@ -172,6 +172,14 @@ opens it; `D` the changes; `m` the loop menu; `x` done (as in the Todo view);
 `j`/`k`/Enter); `i` the description. On the board `T` stays for the Todo
 view and `gT` toggles the grouping there.
 
+Landed Nov 3: `t` on a card without a thread starts one in the picked or
+guessed project and opens it. Checked and left as they are: the loop section
+already starts folded while the loop is off, the review panel's finding rows
+are buttons the card's `j`/`k` reach, and "How to read the change" is the
+diff's Files / Narrative / Conversation switch, which `S` cycles. Still to do:
+the what-needs-you lead section, the one-line Run row, `x` and `N` on an open
+card, `gs` and `gT` on the board.
+
 ## Flow 3: a review requested of you on GitHub
 
 ### Today

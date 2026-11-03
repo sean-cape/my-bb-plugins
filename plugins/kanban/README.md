@@ -110,7 +110,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
   it and returns to the keys. Escape returns to the keys;
   with vim-mode it takes two (the first enters vim's normal mode). Escape again
   closes the card and puts the cursor back on the board, and `h` past a row's
-  left edge goes back to the board leaving the card open. `t` and `D` open the card's thread and
+  left edge goes back to the board leaving the card open. `t` and `D` open the card's thread (on a card with none, `t` starts one in the project picked or guessed in the Thread row, and opens it) and
   changes; `m` opens its loop menu, `s` types in the loop's composer, `f` hands
   the card to you and `x` stops the board's step (see Monitored cards). Inside
   the loop menu `j`/`k` move, `s`/`f`/`x` pick their item, Enter picks and
