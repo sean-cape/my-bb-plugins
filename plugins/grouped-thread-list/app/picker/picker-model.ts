@@ -11,10 +11,7 @@ import {
   isRuntimeBusyThread,
   isUnreadDoneThread,
 } from "../model/thread-activity.js";
-import {
-  threadLastActiveAt,
-  type SidebarProjectIdResolver,
-} from "../model/active-project.js";
+import type { SidebarProjectIdResolver } from "../model/active-project.js";
 
 export type PickerColumn = "left" | "right" | "preview";
 
@@ -326,17 +323,26 @@ function isRunningClaudeThread(thread: SidebarThread): boolean {
 }
 
 /**
- * Every thread, children included, strictly by last activity: running and
- * waiting threads aren't floated up, so the order reads as a timeline.
+ * A running thread is active now; an idle one was last active at its latest
+ * response. Not `updatedAt`, which pinning and marking read also bump.
+ */
+export function recentActivityAt(thread: SidebarThread, now: number): number {
+  return isRunning(thread) ? now : threadActivityAt(thread);
+}
+
+/**
+ * Every thread, children included, strictly by last activity: waiting
+ * threads aren't floated up, so the order reads as a timeline.
  */
 export function recentThreads(
   threads: readonly SidebarThread[],
+  now: number,
 ): SidebarThread[] {
   return threads
     .filter(isSidebarProjectThread)
     .sort(
       (left, right) =>
-        threadLastActiveAt(right) - threadLastActiveAt(left) ||
+        recentActivityAt(right, now) - recentActivityAt(left, now) ||
         compareStandardThreads(left, right),
     );
 }
@@ -386,10 +392,10 @@ export function threadRowsForEntry({
         now,
       );
     case "recent":
-      return recentThreads(visible).map((thread) => ({
+      return recentThreads(visible, now).map((thread) => ({
         thread,
         depth: 0,
-        section: ageSection(threadLastActiveAt(thread), now),
+        section: ageSection(recentActivityAt(thread, now), now),
       }));
     case "search":
       return searchThreads(visible, entry.query).map((thread) => ({

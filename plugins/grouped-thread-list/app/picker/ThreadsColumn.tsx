@@ -3,10 +3,7 @@ import { enter, PRESS, speed, STAGGER, stagger, useChangedSinceMount, SOFT } fro
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { threadListIndicatorStateForThread } from "../model/thread-activity.js";
-import {
-  threadLastActiveAt,
-  type SidebarProjectIdResolver,
-} from "../model/active-project.js";
+import type { SidebarProjectIdResolver } from "../model/active-project.js";
 import type { SidebarThread } from "../model/sidebar-thread.js";
 import type { SidebarProject } from "../model/use-sidebar-data.js";
 import { ThreadStatusGlyph } from "../rows/ThreadStatusGlyph.js";
@@ -14,6 +11,7 @@ import { getProjectColor, ProjectMonogram } from "../rows/ProjectMonogram.js";
 import { CurrentMarker, GroupLabel, ROW_NUMBER_CLASS } from "./CurrentMarker.js";
 import {
   formatAge,
+  recentActivityAt,
   THREAD_SECTION_LABELS,
   threadActivityAt,
   type LeftEntry,
@@ -54,7 +52,7 @@ function rowAge(
   entry: LeftEntry | undefined,
   now: number,
 ): string {
-  if (entry?.kind === "recent") return formatAge(threadLastActiveAt(row.thread), now);
+  if (entry?.kind === "recent") return formatAge(recentActivityAt(row.thread, now), now);
   return formatAge(
     row.section === "running" ? row.thread.createdAt : threadActivityAt(row.thread),
     now,

@@ -24,9 +24,10 @@ no default shortcut and can be bound in bb's keyboard settings.
 
 The picker's left column lists Open folder…, Unassociated (bb's
 built-in personal project), Recent (every thread across all projects, children
-included and unnested, strictly by last activity, the later of `updatedAt` and
-`latestAttentionAt`, grouped Today, Yesterday, Past week, and Older by that
-time, which is also the age shown), Pinned, and Unread (finished threads you haven't opened
+included and unnested, strictly by last activity: now while running, else
+`latestAttentionAt`, never `updatedAt`, which pinning and marking read bump;
+grouped Today, Yesterday, Past week, and Older by that time, which is also the
+age shown), Pinned, and Unread (finished threads you haven't opened
 since their latest response, plus Claude sessions with a prompt running, across all projects; a running automation run is left out, and the server marks a run read when it finishes, so only a failed run or one you replied to shows), then the current project under a
 "Current" label, then the other standard projects under "Projects" by most
 recent activity, each showing how long ago it was last active. The picker opens with Unread selected.

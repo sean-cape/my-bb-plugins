@@ -299,6 +299,7 @@ describe("Recent", () => {
 
   it("lists every thread, children too, by last activity, filed by its age", () => {
     const threads = [
+      makeSidebarThread({ id: "just-pinned", projectId: "proj_b", pinnedAt: now, latestAttentionAt: now - 20 * DAY, updatedAt: now, lastReadAt: now }),
       makeSidebarThread({ id: "old", projectId: "proj_a", latestAttentionAt: now - 30 * DAY, updatedAt: now - 30 * DAY, lastReadAt: now }),
       makeSidebarThread({ id: "asking", projectId: "proj_b", hasPendingInteraction: true, latestAttentionAt: now - 3 * DAY, updatedAt: now - 3 * DAY }),
       makeSidebarThread({ id: "running", projectId: "proj_a", status: "active", latestAttentionAt: now - 10 * DAY, updatedAt: now - 60_000 }),
@@ -318,6 +319,7 @@ describe("Recent", () => {
       ["child", 0, "today"],
       ["parent", 0, "yesterday"],
       ["asking", 0, "week"],
+      ["just-pinned", 0, "older"],
       ["old", 0, "older"],
     ]);
   });
