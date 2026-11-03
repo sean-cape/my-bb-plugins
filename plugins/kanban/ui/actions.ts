@@ -30,7 +30,7 @@ export function usePendingAction(onDone: () => void): { pending: boolean; run: R
 }
 
 /** The board's and the todo list's to-do keys: a priority, or a snooze that wakes a card already snoozed. */
-export async function runTodoKey(rpc: Rpc, ticket: Ticket, command: TodoKeyCommand, today: string): Promise<void> {
+export async function runTodoKey(rpc: Rpc, ticket: Ticket, command: TodoKeyCommand, today: string, onDone: () => void): Promise<void> {
   try {
     if (command.kind === "priority") {
       await rpc.call("ticket_set_priority", { id: ticket.id, priority: command.priority });
@@ -41,9 +41,10 @@ export async function runTodoKey(rpc: Rpc, ticket: Ticket, command: TodoKeyComma
     await rpc.call("ticket_snooze", { id: ticket.id, until });
     toast.success(until === null ? "Awake" : `Snoozed until ${dueStatus(until, today).label}`, {
       description: ticket.title,
-      ...(until === null ? {} : { action: { label: "Undo", onClick: () => void rpc.call("ticket_snooze", { id: ticket.id, until: null }).catch(toastError) } }),
+      ...(until === null ? {} : { action: { label: "Undo", onClick: () => void rpc.call("ticket_snooze", { id: ticket.id, until: null }).then(onDone, toastError) } }),
     });
   } catch (cause) {
     toastError(cause);
   }
+  onDone();
 }

@@ -42,7 +42,11 @@ export function BoardPage({ subPath }: { subPath: string }) {
     if (trimmed === "" && lastView.get() === "todo") navigate.toPluginPanel("board", { subPath: "todo", replace: true });
     // Mount only: a later visit to the root is a choice to see the board.
   }, []);
+  // The board shown before that redirect lands is not a choice, so it isn't remembered.
+  const redirecting = useRef(trimmed === "" && lastView.get() === "todo");
   useEffect(() => {
+    if (redirecting.current && view === "board") return;
+    redirecting.current = false;
     if (trimmed === "" || trimmed === "todo") lastView.set(view);
   }, [trimmed, view]);
   const { rpc, board, setBoard, error, refetch } = useBoard();
@@ -308,7 +312,7 @@ export function BoardPage({ subPath }: { subPath: string }) {
           const neighbour = below !== ticket.id ? below : cursorAfter(layout, ticket.id, "up");
           pendingFocusId.current = neighbour !== ticket.id ? neighbour : null;
         }
-        void runTodoKey(rpc, ticket, command, today).then(refetch);
+        void runTodoKey(rpc, ticket, command, today, refetch);
         return;
       }
       case "add":

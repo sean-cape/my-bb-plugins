@@ -49,11 +49,14 @@ export function nextWeekday(today: string, weekday: number): string {
   return addDays(today, ((weekday - current + 6) % 7) + 1);
 }
 
-/** A typed day (`today`, `tomorrow`, a weekday or its first three letters, `YYYY-MM-DD`) as `YYYY-MM-DD`; null for anything else. */
+/**
+ * A typed day (`today`, `tomorrow`, a weekday or its first three letters, `YYYY-MM-DD`) as `YYYY-MM-DD`; null for
+ * anything else. No `tom`: "@tom" in a title is far more often a person.
+ */
 export function parseDay(word: string, today: string): string | null {
   const lower = word.toLowerCase();
-  if (lower === "today" || lower === "tod") return today;
-  if (lower === "tomorrow" || lower === "tom") return addDays(today, 1);
+  if (lower === "today") return today;
+  if (lower === "tomorrow") return addDays(today, 1);
   if (/^\d{4}-\d{2}-\d{2}$/u.test(lower)) return Number.isNaN(Date.parse(`${lower}T00:00:00Z`)) ? null : lower;
   const weekday = lower.length >= 3 ? WEEKDAYS.findIndex((name) => name.startsWith(lower)) : -1;
   return weekday === -1 ? null : nextWeekday(today, weekday);

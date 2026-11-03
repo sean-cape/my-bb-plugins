@@ -298,7 +298,7 @@ function TicketDetails({
       {ticket.jira !== null ? (
         <>
           <Property label="Type">{ticket.jira.issueType || "issue"}</Property>
-          {ticket.jira.priority !== null ? <Property label="Priority">{ticket.jira.priority}</Property> : null}
+          {ticket.jira.priority !== null ? <Property label="Jira priority">{ticket.jira.priority}</Property> : null}
           {ticket.jira.assignee !== null ? <Property label="Assignee">{ticket.jira.assignee}</Property> : null}
         </>
       ) : null}

@@ -134,7 +134,8 @@ describe("parseDay", () => {
   const today = "2026-11-03";
   it("reads today, tomorrow and weekdays from the day after today", () => {
     expect(parseDay("today", today)).toBe(today);
-    expect(parseDay("tom", today)).toBe("2026-11-04");
+    expect(parseDay("tomorrow", today)).toBe("2026-11-04");
+    expect(parseDay("tom", today)).toBeNull();
     expect(parseDay("tuesday", today)).toBe("2026-11-10");
     expect(parseDay("wed", today)).toBe("2026-11-04");
     expect(parseDay("mo", today)).toBeNull();

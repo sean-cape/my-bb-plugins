@@ -154,7 +154,7 @@ export function TodoView({
           const neighbour = rows[index + 1] ?? rows[index - 1] ?? null;
           if (neighbour !== null) pendingFocusId.current = neighbour.dataset.ticketId ?? null;
         }
-        void runTodoKey(rpc, ticket, command, today).then(refetch);
+        void runTodoKey(rpc, ticket, command, today, refetch);
         return;
       }
       case "add":
