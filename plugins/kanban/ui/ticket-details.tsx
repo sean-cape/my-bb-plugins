@@ -151,7 +151,7 @@ function TicketDetails({
   }, [ticket.id, ticket.projectId]);
   const [showAgentRow, setShowAgentRow] = useState(false);
   useEffect(() => setShowAgentRow(false), [ticket.id]);
-  // A plain to-do asks for no guess until it is about to become an agent task.
+  // A plain to-do shows no project picker, so it reads the guess only once it's about to become an agent task.
   const suggestion = useProjectSuggestion(ticket, ticket.threadId === null && (isAgentCard(ticket) || showAgentRow));
   const settled = suggestion === null || suggestion.pending ? { guess: null, fallbackProjectId: null } : suggestion;
   const listed = (id: string | undefined | null) => projects.some((project) => project.id === id);
