@@ -23,6 +23,8 @@ function ticket(overrides: Partial<Ticket> = {}): Ticket {
     comments: null,
     parentId: null,
     dueDate: null,
+    priority: null,
+    snoozedUntil: null,
     children: { total: 0, done: 0, withThread: 0 },
     pendingDiffComments: 0,
     canPostToGithub: false,

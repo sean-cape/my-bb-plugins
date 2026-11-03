@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_COLUMNS, DEFAULT_SOURCES, PRE_LOOP_DEFAULT_COLUMNS, columnSchema, sourceSchema, type Column, type JiraIssue, type PullRequest, type Source, type Ticket } from "../shared/board";
+import { DEFAULT_COLUMNS, DEFAULT_SOURCES, LOOP_COLUMN_NAMES, PRE_LOOP_DEFAULT_COLUMNS, columnSchema, sourceSchema, type Column, type JiraIssue, type PullRequest, type Source, type Ticket } from "../shared/board";
 import { COLUMN, doneColumnId } from "../shared/columns";
 import type { DiffCommentTarget } from "../shared/comments";
 import type { Review } from "../shared/review";
@@ -31,22 +31,21 @@ export function doneColumn(columns: Column[]): string {
   return doneColumnId(columns)!;
 }
 
-/** Names for loop columns a board gets back or gains; columns it already has keep their own names. */
-const LOOP_COLUMN_NAMES: Record<string, string> = Object.fromEntries(DEFAULT_COLUMNS.map((column) => [column.id, column.name]));
-
 /**
- * The board with every column the review loop moves cards to: a missing `review` goes before the column finished
- * cards go to, a missing `in-progress` before the loop's later columns, and `checking` just before `review`. The same
- * array when nothing is missing.
+ * The board with every column the review loop moves cards to: a missing `review` goes just after `in-progress` (else
+ * before the column finished cards go to), a missing `in-progress` before the loop's later columns, and `checking` just
+ * before `review`. The same array when nothing is missing.
  */
 export function withLoopColumns(columns: Column[]): Column[] {
   const next = [...columns];
   const has = (id: string) => next.some((column) => column.id === id);
-  const insertBefore = (id: string, before: string | undefined) => {
-    const at = before === undefined ? -1 : next.findIndex((column) => column.id === before);
-    next.splice(at === -1 ? next.length : at, 0, { id, name: LOOP_COLUMN_NAMES[id]! });
-  };
-  if (!has(COLUMN.review)) insertBefore(COLUMN.review, next.length > 1 ? doneColumnId(next)! : undefined);
+  const insertAt = (id: keyof typeof LOOP_COLUMN_NAMES, at: number) => next.splice(at === -1 ? next.length : at, 0, { id, name: LOOP_COLUMN_NAMES[id] });
+  const insertBefore = (id: keyof typeof LOOP_COLUMN_NAMES, before: string | undefined) => insertAt(id, before === undefined ? -1 : next.findIndex((column) => column.id === before));
+  if (!has(COLUMN.review)) {
+    const building = next.findIndex((column) => column.id === COLUMN.inProgress);
+    if (building !== -1) insertAt(COLUMN.review, building + 1);
+    else insertBefore(COLUMN.review, next.length > 1 ? doneColumnId(next)! : undefined);
+  }
   if (!has(COLUMN.inProgress)) insertBefore(COLUMN.inProgress, has(COLUMN.checking) ? COLUMN.checking : COLUMN.review);
   if (!has(COLUMN.checking)) insertBefore(COLUMN.checking, COLUMN.review);
   return next.length === columns.length ? columns : next;
@@ -170,6 +169,20 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
     return getTicket(id);
   }
 
+  function setPriority(id: string, priority: number | null): Ticket {
+    getTicket(id);
+    stmts.setPriority.run(priority, Date.now(), id);
+    publish();
+    return getTicket(id);
+  }
+
+  function setSnoozedUntil(id: string, snoozedUntil: string | null): Ticket {
+    getTicket(id);
+    stmts.setSnoozedUntil.run(snoozedUntil, Date.now(), id);
+    publish();
+    return getTicket(id);
+  }
+
   function getTicket(id: string): Ticket {
     const row = stmts.byId.get(id);
     if (row === undefined) throw new Error(`No ticket with id ${id}`);
@@ -213,6 +226,7 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
     jira?: JiraIssue | null;
     parentId?: string | null;
     dueDate?: string | null;
+    priority?: number | null;
     /** The card's own monitoring flag, which wins over the defaults; absent, its tags decide. */
     monitored?: boolean;
     /** The gates a monitored card runs with; absent, its kind picks the defaults. */
@@ -251,6 +265,7 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
       jira_assignee: input.jira?.assignee ?? null,
       jira_updated_at: input.jira?.updatedAt ?? null,
       due_date: input.dueDate ?? null,
+      priority: input.priority ?? null,
       position: nextPosition(input.columnId),
       created_at: now,
       updated_at: now,
@@ -392,6 +407,8 @@ export function createBoardStore(ctx: KanbanContext, { spend }: { spend: Spend }
     setParent,
     setTags,
     setDueDate,
+    setPriority,
+    setSnoozedUntil,
     allTags,
     getColumns,
     setColumns,

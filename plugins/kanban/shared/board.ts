@@ -36,6 +36,10 @@ export const dueDateSchema = z
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
   }, "Not a real calendar date");
 
+/** How much a card matters, Todoist-style: 1 is the most urgent, 4 the least; a card without one has none. */
+export const prioritySchema = z.number().int().min(1).max(4);
+export type Priority = z.infer<typeof prioritySchema>;
+
 /**
  * Where tickets come from automatically. Every item a source returns becomes a
  * card tagged with the source's tags; a card can be fed by several sources.
@@ -158,6 +162,9 @@ export const ticketSchema = z.object({
   /** Parent card when this is a subtask; null for top-level cards. */
   parentId: z.string().nullable(),
   dueDate: z.string().nullable(),
+  priority: prioritySchema.nullable(),
+  /** A calendar day the card stays hidden until: snoozed while the viewer's day is before it; null when awake. */
+  snoozedUntil: z.string().nullable(),
   /** Subtask progress: how many children exist and how many are in the done column. */
   children: z.object({ total: z.number().int(), done: z.number().int(), withThread: z.number().int() }),
   /** Comments the user left on the card's diff that have not been submitted for addressing yet. */
@@ -210,15 +217,25 @@ export const boardSchema = z.object({
 });
 export type Board = z.infer<typeof boardSchema>;
 
-/** A new board's columns, named for the monitored review loop; the ids are the ones agents have always moved cards by. */
+/**
+ * A new board's columns, for any kind of to-do; the ids are the ones agents have always moved cards by. The review
+ * loop adds its own columns the first time a card is monitored.
+ */
 export const DEFAULT_COLUMNS: Column[] = [
   { id: COLUMN.backlog, name: "Backlog" },
   { id: COLUMN.todo, name: "To Do" },
-  { id: COLUMN.inProgress, name: "Building" },
-  { id: COLUMN.checking, name: "Checking" },
-  { id: COLUMN.review, name: "Needs you" },
+  { id: COLUMN.inProgress, name: "Doing" },
+  { id: COLUMN.waiting, name: "Waiting" },
   { id: COLUMN.done, name: "Done" },
 ];
+
+/** What the review loop calls the columns it adds to a board; columns a board already has keep their own names. */
+export const LOOP_COLUMN_NAMES = {
+  [COLUMN.inProgress]: "Building",
+  [COLUMN.checking]: "Checking",
+  [COLUMN.review]: "Needs you",
+} as const;
+
 
 /** The defaults before the review loop. A board that never stored its columns showed these, and keeps them. */
 export const PRE_LOOP_DEFAULT_COLUMNS: Column[] = [

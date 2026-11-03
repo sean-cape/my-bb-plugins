@@ -22,6 +22,12 @@ A kanban board where every card is a BB thread.
   thread proposes cards (with subtasks, dependencies and open questions) that
   you edit and accept on the board.
 - **Due dates** on any card, shown on the board and flagged when overdue.
+- **Plain to-dos** next to agent work: priority (P1 to P4), snooze until a
+  day, and a Todo list grouped by date (Overdue, Today, Upcoming) with
+  quick-add markers (`!p1 @fri +project #tag`). A card with no project or
+  thread leaves out the code review, the loop and the changes until you run
+  it as an agent task. New boards start with Backlog, To Do, Doing, Waiting
+  and Done; the loop adds its columns the first time a card is monitored.
 - **Subtasks** on any card, written by you (also while creating the card) or
   by the card's agent, with agents started on them one thread each or one
   thread working through them in order.
@@ -45,7 +51,7 @@ A kanban board where every card is a BB thread.
   thread commits and reports ready with evidence; a hidden thread re-runs the
   project's check command at that commit in a fresh worktree; failing checks go
   back to the card's thread with the output, and a second failure in a row
-  stops at Needs you. The card moves through Building, Checking and Needs you
+  stops at Needs you. The card moves through Doing, Checking and Needs you
   on its own and shows the loop's phase.
 - An agent-written **narrative review** of the change: reading order, risk
   and watch-outs, plus a step-by-step walk that covers every changed line,
@@ -55,7 +61,7 @@ A kanban board where every card is a BB thread.
 - PR repositories with no matching project are cloned and registered as
   projects automatically.
 - Each card shows its thread's live status; cards in Backlog or To Do move to
-  Building (In Progress on boards made before the loop) when their thread starts working, and agents move them on with
+  the in-progress column (Doing; Building or In Progress on older boards) when their thread starts working, and agents move them on with
   `bb kanban move <column>`.
 
 ## How it works

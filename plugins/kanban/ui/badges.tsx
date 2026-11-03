@@ -6,7 +6,7 @@ import { chipFor } from "../shared/stages";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { useNow } from "./data";
-import { dueStatus } from "./format";
+import { dueStatus, PRIORITY_LABEL } from "./format";
 import { ExternalLink, Badge } from "./primitives";
 import { CHECKS_MARK, PR_STATE_MARK, jiraStatusMark, type SourceMark } from "./source-marks";
 
@@ -141,6 +141,35 @@ export function ReviewBadge({ ticket }: { ticket: Ticket }) {
     <Badge tone={counts.critical > 0 ? "danger" : counts.important > 0 ? "warning" : "neutral"} title={detail.join("; ")}>
       {total} finding{total === 1 ? "" : "s"}
     </Badge>
+  );
+}
+
+export const PRIORITY_TONE: Record<number, string> = {
+  1: "text-destructive",
+  2: "text-amber-700 dark:text-amber-300",
+  3: "text-sky-700 dark:text-sky-300",
+  4: "text-muted-foreground",
+};
+
+/** A flag and `P1`..`P4`; nothing for a card without a priority. */
+export function PriorityMark({ priority, className }: { priority: number | null; className?: string }) {
+  if (priority === null) return null;
+  return (
+    <span className={cn("inline-flex items-center gap-0.5 font-medium tabular-nums", PRIORITY_TONE[priority], className)} title={`Priority ${priority}: ${PRIORITY_LABEL[priority]}`}>
+      <Icon name="kanban-flag" className="size-3" />P{priority}
+    </span>
+  );
+}
+
+/** Shown only where snoozed cards are let back in view: when the card comes back. */
+export function SnoozeMark({ snoozedUntil, today, className }: { snoozedUntil: string | null; today: string; className?: string }) {
+  if (snoozedUntil === null || snoozedUntil <= today) return null;
+  const back = dueStatus(snoozedUntil, today);
+  return (
+    <span className={cn("inline-flex items-center gap-1 text-muted-foreground", className)} title={`Snoozed until ${back.title.replace(/^Due /u, "")}`}>
+      <Icon name="kanban-moon" className="size-3" />
+      {back.label}
+    </span>
   );
 }
 

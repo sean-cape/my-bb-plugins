@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agedOut, doneColumnId, todoColumnId } from "../shared/columns";
-import { cardSnippet, dueStatus, firstSentence, localDay, parseQuickAdd, parseTagList, relativeTime, shortAge, slugify } from "./format";
+import { cardSnippet, dueStatus, firstSentence, isSnoozed, localDay, parseDay, parseQuickAdd, parseTagList, parseTodo, relativeTime, shortAge, slugify } from "./format";
 
 describe("parseQuickAdd", () => {
   it("pulls #tags out of a title, lowercased and deduplicated", () => {
@@ -112,5 +112,39 @@ describe("firstSentence", () => {
     expect(firstSentence("Runs on every startup, e.g. at 3.5s intervals! Then more.")).toBe("Runs on every startup, e.g. at 3.5s intervals!");
     expect(firstSentence("No sentence end here")).toBe("No sentence end here");
     expect(firstSentence("  Trimmed.  ")).toBe("Trimmed.");
+  });
+});
+
+describe("parseTodo", () => {
+  // 2026-11-03 is a Tuesday.
+  const today = "2026-11-03";
+  const projects = [{ id: "prj_1", name: "Home Admin" }];
+
+  it("takes the priority, due day and project out of the title", () => {
+    expect(parseTodo("Call the bank !p1 @fri +home-admin #errands", today, projects)).toEqual({ title: "Call the bank", tags: ["errands"], priority: 1, dueDate: "2026-11-06", projectId: "prj_1" });
+    expect(parseTodo("Renew passport !3 @2026-12-01", today)).toMatchObject({ title: "Renew passport", priority: 3, dueDate: "2026-12-01" });
+  });
+
+  it("leaves words that name no day or project, and !5, in the title", () => {
+    expect(parseTodo("Email @jordan about C++ +nothing !5", today, projects)).toEqual({ title: "Email @jordan about C++ +nothing !5", tags: [], priority: null, dueDate: null, projectId: null });
+  });
+});
+
+describe("parseDay", () => {
+  const today = "2026-11-03";
+  it("reads today, tomorrow and weekdays from the day after today", () => {
+    expect(parseDay("today", today)).toBe(today);
+    expect(parseDay("tom", today)).toBe("2026-11-04");
+    expect(parseDay("tuesday", today)).toBe("2026-11-10");
+    expect(parseDay("wed", today)).toBe("2026-11-04");
+    expect(parseDay("mo", today)).toBeNull();
+  });
+});
+
+describe("isSnoozed", () => {
+  it("holds a card back until its snooze day", () => {
+    expect(isSnoozed({ snoozedUntil: "2026-11-04" }, "2026-11-03")).toBe(true);
+    expect(isSnoozed({ snoozedUntil: "2026-11-03" }, "2026-11-03")).toBe(false);
+    expect(isSnoozed({ snoozedUntil: null }, "2026-11-03")).toBe(false);
   });
 });

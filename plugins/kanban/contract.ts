@@ -1,7 +1,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { COMMIT_SHA_PATTERN } from "bb-diff-view/types";
-import { TICKET_TITLE_MAX_LENGTH, boardSchema, projectGuessSchema, columnSchema, dueDateSchema, sourceSchema, syncStatusSchema, tagSchema, ticketSchema } from "./shared/board";
+import { TICKET_TITLE_MAX_LENGTH, boardSchema, projectGuessSchema, columnSchema, dueDateSchema, prioritySchema, sourceSchema, syncStatusSchema, tagSchema, ticketSchema } from "./shared/board";
 import { commentApplySchema, conversationDataSchema, diffCommentSchema, diffCommentTargetSchema, pendingReviewStateSchema, prCommentSchema, reviewEventSchema } from "./shared/comments";
 import { blameLineSchema, commitRangeSchema, diffCommitsSchema, diffDeltaSchema, diffSideSchema, structuralDiffSchema, suggestionItemSchema, symbolLookupSchema, symbolUsagesSchema, ticketDiffSchema } from "./shared/diff";
 import { dumpSchema, proposedTicketSchema } from "./shared/dump";
@@ -31,6 +31,7 @@ export const rpcContract = defineRpcContract({
         /** Create the card as a subtask of this card. */
         parentId: z.string().nullable().default(null),
         dueDate: dueDateSchema.nullable().default(null),
+        priority: prioritySchema.nullable().default(null),
         /** Created under the new card, in its column and project, before any thread starts. */
         subtasks: z
           .array(
@@ -102,6 +103,16 @@ export const rpcContract = defineRpcContract({
   /** `null` clears the due date. */
   ticket_set_due_date: {
     input: z.object({ id: z.string(), dueDate: dueDateSchema.nullable() }).strict(),
+    output: ticketSchema,
+  },
+  /** `null` clears the priority. */
+  ticket_set_priority: {
+    input: z.object({ id: z.string(), priority: prioritySchema.nullable() }).strict(),
+    output: ticketSchema,
+  },
+  /** Hides the card until the given day; `null` wakes it. */
+  ticket_snooze: {
+    input: z.object({ id: z.string(), until: dueDateSchema.nullable() }).strict(),
     output: ticketSchema,
   },
   sources_set: {

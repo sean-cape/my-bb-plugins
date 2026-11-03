@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { locationLabel } from "bb-diff-view/line-range";
-import { dueDateSchema, tagSchema, type Column, type Ticket } from "../shared/board";
+import { dueDateSchema, prioritySchema, tagSchema, type Column, type Ticket } from "../shared/board";
 import { shortSha } from "../shared/format";
 import { PLAN_MAX_LENGTH, boardRunning, evidenceSchema, findingAnswerSchema, type Evidence, type LoopGates } from "../shared/loop";
 import { DIRECTIVE_TEXT, phaseChip } from "../shared/stages";
@@ -19,7 +19,7 @@ import { normalizeTags, shortId } from "./util";
 /** `bb kanban …`: the commands agents and users run against the board. */
 export function registerCli(ctx: KanbanContext, services: Services): void {
   const { bb, stmts, sync, publish } = ctx;
-  const { getTicket, hydrate, getColumns, getSources, createTicket, moveTicket, setParent, setTags, setDueDate } = services.board;
+  const { getTicket, hydrate, getColumns, getSources, createTicket, moveTicket, setParent, setTags, setDueDate, setPriority, setSnoozedUntil } = services.board;
   const { spawnThreadForTicket, linkThread } = services.threads;
   const { projectForTicket, fallbackProject } = services.projects;
   const { reviewUnavailableReason, startReview, spawnApplyForReview, completeApply: completeReviewApply } = services.reviews;
@@ -41,12 +41,14 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
           : "";
     const tags = ticket.tags.length === 0 ? "" : `  ${ticket.tags.map((tag) => `#${tag}`).join(" ")}`;
     const due = ticket.dueDate === null ? "" : `  due ${ticket.dueDate}`;
+    const priority = ticket.priority === null ? "" : `  p${ticket.priority}`;
+    const snoozed = ticket.snoozedUntil === null ? "" : `  snoozed until ${ticket.snoozedUntil}`;
     const thread = ticket.threadId === null ? "" : `  @thread:${ticket.threadId}`;
     const review = ticket.reviewThreadId === null ? "" : `  review:@thread:${ticket.reviewThreadId}`;
     const nesting = ticket.parentId !== null ? `  ↳ ${ticket.parentId}` : ticket.children.total > 0 ? `  (${ticket.children.done}/${ticket.children.total} subtasks)` : "";
     const chip = ticket.loop === null ? null : phaseChip(ticket.loop);
     const loop = chip === null ? "" : `  monitored: ${chip.label}`;
-    return `${ticket.id}  [${column}]  ${ticket.title}${tags}${due}${pr}${thread}${review}${nesting}${loop}`;
+    return `${ticket.id}  [${column}]  ${ticket.title}${priority}${tags}${due}${snoozed}${pr}${thread}${review}${nesting}${loop}`;
   }
 
   function ticketForContext(ticketOption: string | undefined, threadId: string | undefined): Ticket {
@@ -80,6 +82,12 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
         hint: "Pass a date as YYYY-MM-DD, e.g. 2026-10-31.",
       });
     }
+    return parsed.data;
+  }
+
+  function parsePriority(raw: string): number {
+    const parsed = prioritySchema.safeParse(Number(raw.toLowerCase().replace(/^p/u, "")));
+    if (!parsed.success) throw new PluginCliError(`Invalid priority "${raw}"; expected 1 to 4 (p1 is the most urgent).`, { code: "invalid_priority" });
     return parsed.data;
   }
 
@@ -214,6 +222,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
             column: { type: "string", description: "Column id; defaults to backlog" },
             tag: { type: "string", repeatable: true, split: ",", description: "Tag to add (repeatable)" },
             due: { type: "string", description: "Due date, YYYY-MM-DD" },
+            priority: { type: "string", description: "Priority, 1 to 4 or p1 to p4 (p1 is the most urgent)" },
             parent: { type: "string", description: "Create the card as a subtask of this ticket id (implies --no-link)" },
             project: { type: "string", description: "Project id for a new thread; implies --start-thread" },
             "start-thread": {
@@ -244,6 +253,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
               });
             }
             const dueDate = options.due === undefined ? null : parseDueDate(options.due);
+            const priority = options.priority === undefined ? null : parsePriority(options.priority);
             const parentRow = options.parent === undefined ? undefined : stmts.byId.get(options.parent);
             if (options.parent !== undefined && parentRow === undefined) {
               throw new PluginCliError(`No ticket with id ${options.parent}`, { code: "unknown_parent", hint: "Run `bb kanban list`." });
@@ -259,6 +269,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
               pr: null,
               parentId: options.parent ?? null,
               dueDate,
+              priority,
               ...(options.monitor || gates !== undefined ? { monitored: true } : options["no-monitor"] ? { monitored: false } : {}),
               ...(gates === undefined ? {} : { gates }),
             });
@@ -825,6 +836,28 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
             const ticket = ticketForContext(options.ticket, ctx.threadId);
             const dueDate = positionals.date.toLowerCase() === "none" ? null : parseDueDate(positionals.date);
             const updated = setDueDate(ticket.id, dueDate);
+            return { exitCode: 0, stdout: options.json ? JSON.stringify(updated) : formatTicket(updated, await getColumns()) };
+          },
+        }),
+        priority: cliCommand({
+          summary: "Set or clear a card's priority (defaults to the current thread's card)",
+          positionals: [{ name: "priority", description: "1 to 4 or p1 to p4 (p1 is the most urgent), or `none` to clear", required: true }],
+          options: { ...ticketOption, json: { type: "boolean", description: "Emit JSON" } },
+          async run({ positionals, options }, ctx) {
+            const ticket = ticketForContext(options.ticket, ctx.threadId);
+            const priority = positionals.priority.toLowerCase() === "none" ? null : parsePriority(positionals.priority);
+            const updated = setPriority(ticket.id, priority);
+            return { exitCode: 0, stdout: options.json ? JSON.stringify(updated) : formatTicket(updated, await getColumns()) };
+          },
+        }),
+        snooze: cliCommand({
+          summary: "Hide a card from the board and the todo list until a day, or wake it (defaults to the current thread's card)",
+          positionals: [{ name: "until", description: "The day it comes back, YYYY-MM-DD, or `none` to wake it now", required: true }],
+          options: { ...ticketOption, json: { type: "boolean", description: "Emit JSON" } },
+          async run({ positionals, options }, ctx) {
+            const ticket = ticketForContext(options.ticket, ctx.threadId);
+            const until = positionals.until.toLowerCase() === "none" ? null : parseDueDate(positionals.until);
+            const updated = setSnoozedUntil(ticket.id, until);
             return { exitCode: 0, stdout: options.json ? JSON.stringify(updated) : formatTicket(updated, await getColumns()) };
           },
         }),

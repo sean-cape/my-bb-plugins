@@ -6,6 +6,8 @@ export const COLUMN = {
   /** Owned by the monitored review loop: cards wait here while the board re-runs their checks and reviews them. */
   checking: "checking",
   review: "review",
+  /** Waiting on someone or something else; nothing moves cards here but you. */
+  waiting: "waiting",
   done: "done",
 } as const;
 

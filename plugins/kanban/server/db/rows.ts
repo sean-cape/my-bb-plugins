@@ -45,6 +45,8 @@ export interface TicketRow {
   left_source: number;
   parent_id: string | null;
   due_date: string | null;
+  priority: number | null;
+  snoozed_until: string | null;
   position: number;
   /** Null only for rows written before the column existed and not yet migrated. */
   column_entered_at: number | null;
@@ -414,6 +416,8 @@ export function rowToTicket(
     comments,
     parentId: row.parent_id,
     dueDate: row.due_date,
+    priority: row.priority,
+    snoozedUntil: row.snoozed_until,
     children: extras.children,
     pendingDiffComments: extras.pendingDiffComments,
     canPostToGithub: extras.canPostToGithub,

@@ -53,12 +53,13 @@ function cardInstructions(stmts: Statements, projectSettings: ProjectSettingsSto
   const childCount = stmts.childrenOf.all(row.id).length;
   const childNote = childCount === 0 ? "" : ` It has ${childCount} subtask(s): \`bb kanban subtasks\` lists them; add more with \`bb kanban add "<title>" --parent ${row.id}\`.`;
   const dueNote = row.due_date === null ? "" : ` It is due ${row.due_date}.`;
+  const priorityNote = row.priority === null ? "" : ` Its priority is p${row.priority} (p1 is the most urgent, p4 the least).`;
   const loop = parseLoopState(row.loop_state);
   const workflow = loop.monitored
     ? builderContract(row.kind === "pr", projectSettings.projectSettings(row.project_id).checkCommand, loop.phase === "planning")
     : "When you start working move it with `bb kanban move in-progress`; when the work is finished and verified, `bb kanban move done`. Run `bb kanban columns` to see the available columns.";
   return [
-    `This thread is kanban ticket ${JSON.stringify(row.id)} titled ${JSON.stringify(row.title)}, currently in column ${JSON.stringify(row.column_id)}.${pr}${dueNote}${parentNote}${childNote}`,
+    `This thread is kanban ticket ${JSON.stringify(row.id)} titled ${JSON.stringify(row.title)}, currently in column ${JSON.stringify(row.column_id)}.${pr}${dueNote}${priorityNote}${parentNote}${childNote}`,
     workflow,
   ].join(" ");
 }

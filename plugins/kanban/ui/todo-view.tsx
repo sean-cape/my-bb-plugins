@@ -4,19 +4,20 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { PRESS, STAGGER, enter, exit, speed, stagger, type Arrival, useArrivals, useEntrance, usePopOnChange, usePresenceList } from "bb-motion";
 import { Kbd } from "bb-vim-keys/react";
 import { scrollKeepingCursor } from "bb-vim-keys";
-import type { Board, Column, Ticket } from "../shared/board";
+import type { Board, Ticket } from "../shared/board";
 import { doneColumnId, todoColumnId } from "../shared/columns";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { localDay, parseQuickAdd } from "./format";
-import { type Rpc, useNow } from "./data";
-import { ThreadStatusDot } from "./primitives";
+import { isSnoozed, localDay, parseTodo } from "./format";
+import { type Rpc, useNow, useProjects } from "./data";
+import { SegmentedTabs, ThreadStatusDot } from "./primitives";
 import { tagTone, TagBadges } from "./tags";
-import { PrBadges, JiraBadges, ReviewBadge, DueBadge } from "./badges";
-import { toastError } from "./actions";
+import { PrBadges, JiraBadges, ReviewBadge, DueBadge, PriorityMark, SnoozeMark } from "./badges";
+import { runTodoKey, toastError } from "./actions";
+import { type TodoGrouping, todoGroups } from "./todo-groups";
 import type { BoardCommand } from "./board-nav";
 import { focusStop, focusedStop, moveAlongBand, nearestStop, pressStop } from "./stops";
 
@@ -46,22 +47,28 @@ export function TodoView({
 }) {
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [showDone, setShowDone] = useState(false);
+  const [showSnoozed, setShowSnoozed] = useState(false);
+  const [grouping, setGrouping] = useState<TodoGrouping>(storedGrouping);
   const [quick, setQuick] = useState("");
+  const projects = useProjects();
   const today = localDay(useNow(60_000));
   const doneId = doneColumnId(board.columns);
   const todoId = todoColumnId(board.columns);
-  const matches = (ticket: Ticket) => (showDone || ticket.columnId !== doneId) && tagFilter.every((tag) => ticket.tags.includes(tag));
+  const matches = (ticket: Ticket) =>
+    (showDone || ticket.columnId !== doneId) && (showSnoozed || !isSnoozed(ticket, today)) && tagFilter.every((tag) => ticket.tags.includes(tag));
   const byId = new Map(board.tickets.map((ticket) => [ticket.id, ticket]));
-  // A subtask shows under its parent when the parent is listed; otherwise it stands on its own.
-  const visible = board.tickets
-    .filter((ticket) => matches(ticket) && (ticket.parentId === null || !byId.has(ticket.parentId) || !matches(byId.get(ticket.parentId)!)))
-    .sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
-  const childrenOf = (id: string) => board.tickets.filter((ticket) => ticket.parentId === id && matches(ticket)).sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
-  const groups = board.columns
-    .map((column) => ({ column, rows: visible.filter((ticket) => ticket.columnId === column.id).flatMap((ticket) => [ticket, ...childrenOf(ticket.id)]) }))
-    .filter((group) => group.rows.length > 0);
+  const groups = todoGroups(board.tickets, matches, grouping, board.columns, today, doneId);
+  const snoozedCount = board.tickets.filter((ticket) => ticket.columnId !== doneId && isSnoozed(ticket, today)).length;
   // Rows cascade as one list across sections.
-  const byColumn = groups.map((group, index) => ({ ...group, offset: groups.slice(0, index).reduce((sum, previous) => sum + previous.rows.length, 0) }));
+  const sections = groups.map((group, index) => ({ ...group, offset: groups.slice(0, index).reduce((sum, previous) => sum + previous.rows.length, 0) }));
+  const pickGrouping = (next: TodoGrouping) => {
+    setGrouping(next);
+    try {
+      window.localStorage.setItem(GROUPING_KEY, next);
+    } catch {
+      // ignore
+    }
+  };
   const arrival = useArrivals(board.tickets.map((ticket) => ticket.id));
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -139,6 +146,17 @@ export function TodoView({
         void toggleDone(ticket);
         return;
       }
+      case "priority":
+      case "snooze": {
+        if (ticket === undefined) return;
+        // Without "Show snoozed" a snoozed row leaves the list, so the cursor steps off it first.
+        if (command.kind === "snooze" && !showSnoozed && !isSnoozed(ticket, today)) {
+          const neighbour = rows[index + 1] ?? rows[index - 1] ?? null;
+          if (neighbour !== null) pendingFocusId.current = neighbour.dataset.ticketId ?? null;
+        }
+        void runTodoKey(rpc, ticket, command, today).then(refetch);
+        return;
+      }
       case "add":
       case "focus-input":
         inputRef.current?.focus();
@@ -167,10 +185,10 @@ export function TodoView({
   };
   const quickAdd = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const { title, tags } = parseQuickAdd(quick);
+    const { title, tags, priority, dueDate, projectId } = parseTodo(quick, today, projects);
     if (title === "" || todoId === null) return;
     try {
-      await rpc.call("ticket_create", { title, tags: [...new Set([...tags, ...tagFilter])], columnId: todoId });
+      await rpc.call("ticket_create", { title, tags: [...new Set([...tags, ...tagFilter])], columnId: todoId, priority, dueDate, projectId });
       setQuick("");
     } catch (cause) {
       toastError(cause);
@@ -190,50 +208,57 @@ export function TodoView({
           ref={inputRef}
           value={quick}
           onChange={(event) => setQuick(event.target.value)}
-          placeholder="Add a todo… use #tag for tags"
+          placeholder="Add a todo… #tag, !p1, @fri, +project"
           aria-label="New todo"
         />
-        <Button type="submit" disabled={parseQuickAdd(quick).title === ""}>
+        <Button type="submit" disabled={parseTodo(quick, today, projects).title === ""}>
           <Icon name="Plus" className="size-4" />
           Add
         </Button>
       </form>
-      {board.tags.length > 0 ? (
-        <div data-kanban-filters="" className="flex flex-wrap items-center gap-1.5">
-          {board.tags.map((tag) => {
-            const active = tagFilter.includes(tag);
-            return (
-              <button
-                key={tag}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setTagFilter(active ? tagFilter.filter((entry) => entry !== tag) : [...tagFilter, tag])}
-                className={cn(
-                  "inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                  PRESS,
-                  active ? cn(tagTone(tag).chip, "font-medium") : "border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
-                )}
-              >
-                <span className={cn("size-1.5 rounded-full", tagTone(tag).dot)} aria-hidden="true" />
-                {tag}
-              </button>
-            );
-          })}
-          <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+      <div data-kanban-filters="" className="flex flex-wrap items-center gap-1.5">
+        <SegmentedTabs label="Group by" value={grouping} options={GROUPING_OPTIONS} onChange={pickGrouping} className="mr-1.5" tabClassName="px-2 py-0.5 text-xs" />
+        {board.tags.map((tag) => {
+          const active = tagFilter.includes(tag);
+          return (
+            <button
+              key={tag}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setTagFilter(active ? tagFilter.filter((entry) => entry !== tag) : [...tagFilter, tag])}
+              className={cn(
+                "inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                PRESS,
+                active ? cn(tagTone(tag).chip, "font-medium") : "border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+              )}
+            >
+              <span className={cn("size-1.5 rounded-full", tagTone(tag).dot)} aria-hidden="true" />
+              {tag}
+            </button>
+          );
+        })}
+        <span className="ml-auto flex items-center gap-3">
+          {snoozedCount > 0 ? (
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Checkbox checked={showSnoozed} onCheckedChange={(checked) => setShowSnoozed(checked === true)} aria-label="Show snoozed" />
+              {snoozedCount} snoozed
+            </label>
+          ) : null}
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Checkbox checked={showDone} onCheckedChange={(checked) => setShowDone(checked === true)} aria-label="Show done" />
             Show done
           </label>
-        </div>
-      ) : null}
-      {byColumn.length === 0 ? (
+        </span>
+      </div>
+      {sections.length === 0 ? (
         <p className={cn("rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground", enter.fade)}>
           Nothing to do{tagFilter.length > 0 ? " with these tags" : ""}.
         </p>
       ) : null}
-      {byColumn.map(({ column, rows, offset }) => (
+      {sections.map(({ id, name, rows, offset }) => (
         <TodoSection
-          key={column.id}
-          column={column}
+          key={id}
+          name={name}
           rows={rows}
           offset={offset}
           arrival={arrival}
@@ -261,9 +286,25 @@ export function TodoView({
   );
 }
 
+const GROUPING_KEY = "kanban:todoGrouping";
+const GROUPING_OPTIONS = [
+  { value: "due", label: "By date" },
+  { value: "column", label: "By column" },
+] as const;
+
+function storedGrouping(): TodoGrouping {
+  try {
+    return window.localStorage.getItem(GROUPING_KEY) === "column" ? "column" : "due";
+  } catch {
+    return "due";
+  }
+}
+
 const TODO_HINTS = [
   { keys: ["j", "k"], action: "move" },
   { keys: ["x"], action: "done" },
+  { keys: ["p1"], action: "priority" },
+  { keys: ["zs"], action: "snooze" },
   { keys: ["o"], action: "open" },
   { keys: ["t"], action: "thread" },
   { keys: ["i"], action: "add" },
@@ -272,7 +313,7 @@ const TODO_HINTS = [
 ] as const;
 
 function TodoSection({
-  column,
+  name,
   rows,
   offset,
   arrival,
@@ -283,7 +324,7 @@ function TodoSection({
   onOpen,
   onOpenThread,
 }: {
-  column: Column;
+  name: string;
   rows: Ticket[];
   offset: number;
   arrival: (ticketId: string) => Arrival;
@@ -297,9 +338,9 @@ function TodoSection({
   const shown = usePresenceList(rows, (ticket) => ticket.id);
   const countPop = usePopOnChange(rows.length);
   return (
-    <section aria-label={column.name}>
+    <section aria-label={name}>
       <h2 className="mb-1.5 flex items-baseline gap-1.5 text-xs">
-        <span className="font-semibold">{column.name}</span>
+        <span className="font-semibold">{name}</span>
         <span key={countPop.key} onAnimationEnd={countPop.onAnimationEnd} className={cn("inline-block tabular-nums text-muted-foreground", countPop.className)}>
           {rows.length}
         </span>
@@ -370,6 +411,8 @@ function TodoRow({
         {ticket.title}
       </button>
       <div className="hidden flex-wrap items-center gap-1 sm:flex">
+        <PriorityMark priority={ticket.priority} className="text-[11px]" />
+        <SnoozeMark snoozedUntil={ticket.snoozedUntil} today={today} className="text-[11px]" />
         <PrBadges ticket={ticket} />
         <JiraBadges ticket={ticket} />
         <DueBadge ticket={ticket} today={today} isDone={isDone} />

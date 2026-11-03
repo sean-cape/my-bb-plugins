@@ -40,8 +40,15 @@ describe("withLoopColumns", () => {
     expect(columns.find((column) => column.id === "review")?.name).toBe("In Review");
   });
 
+  it("adds Checking and Needs you right after Doing on a new board, ahead of Waiting", () => {
+    const columns = withLoopColumns(DEFAULT_COLUMNS);
+    expect(ids(columns)).toEqual(["backlog", "todo", "in-progress", "checking", "review", "waiting", "done"]);
+    expect(columns.map((column) => column.name)).toEqual(["Backlog", "To Do", "Doing", "Checking", "Needs you", "Waiting", "Done"]);
+  });
+
   it("leaves a board that has every loop column alone", () => {
-    expect(withLoopColumns(DEFAULT_COLUMNS)).toBe(DEFAULT_COLUMNS);
+    const columns = withLoopColumns(DEFAULT_COLUMNS);
+    expect(withLoopColumns(columns)).toBe(columns);
   });
 
   it("restores a removed in-progress or review where it belongs, before the done column", () => {

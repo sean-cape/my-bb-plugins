@@ -39,6 +39,8 @@ export function createDiffSubjects(ctx: KanbanContext, { board }: { board: Board
       comments: null,
       parentId: null,
       dueDate: null,
+      priority: null,
+      snoozedUntil: null,
       children: { total: 0, done: 0, withThread: 0 },
       pendingDiffComments: stmts.pendingDiffCommentCount.get(id)?.n ?? 0,
       canPostToGithub: false,

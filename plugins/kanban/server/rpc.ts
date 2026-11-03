@@ -46,6 +46,7 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
           pr: null,
           parentId: input.parentId,
           dueDate: input.dueDate,
+          priority: input.priority,
           ...(input.monitored === undefined ? {} : { monitored: input.monitored }),
           ...(input.gates === undefined ? {} : { gates: input.gates }),
         });
@@ -80,6 +81,8 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
       return board.setTags(id, tags);
     },
     ticket_set_due_date: ({ id, dueDate }) => board.setDueDate(id, dueDate),
+    ticket_set_priority: ({ id, priority }) => board.setPriority(id, priority),
+    ticket_snooze: ({ id, until }) => board.setSnoozedUntil(id, until),
     sources_set: async ({ sources }) => {
       const ids = new Set<string>();
       for (const source of sources) {

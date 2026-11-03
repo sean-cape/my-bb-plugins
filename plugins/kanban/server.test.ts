@@ -626,7 +626,7 @@ describe("CLI", () => {
       signal: new AbortController().signal,
     });
     expect(move.exitCode).toBe(0);
-    expect(move.stdout).toContain("[Building]");
+    expect(move.stdout).toContain("[Doing]");
 
     const show = await current().harness.behavior.runCli(["show", "--json"], {
       threadId: "thr_9",
@@ -2583,9 +2583,16 @@ describe("monitored review loop", () => {
     expect(checks?.instructions).toContain("bb kanban checks-record");
   });
 
+  it("gives a new board to-do columns and adds the loop's the first time a card is monitored", async () => {
+    await load({ autoStartThreads: false });
+    expect((await board()).columns.map((column) => column.name)).toEqual(["Backlog", "To Do", "Doing", "Waiting", "Done"]);
+    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "A" })) as Ticket;
+    await current().harness.behavior.callRpc("ticket_set_monitored", { id: ticket.id, monitored: true });
+    expect((await board()).columns.map((column) => column.name)).toEqual(["Backlog", "To Do", "Doing", "Checking", "Needs you", "Waiting", "Done"]);
+  });
+
   it("adds Checking to an existing board the first time a card is monitored, keeping its column names", async () => {
     await load({ autoStartThreads: false });
-    expect((await board()).columns.map((column) => column.name)).toEqual(["Backlog", "To Do", "Building", "Checking", "Needs you", "Done"]);
     await current().harness.behavior.callRpc("columns_set", {
       columns: [
         { id: "backlog", name: "Backlog" },
@@ -2800,6 +2807,36 @@ describe("tags and sources", () => {
 
     const added = await current().harness.behavior.runCli(["add", "Later", "--due", "2026-12-01", "--no-link", "--json"]);
     expect((JSON.parse(added.stdout ?? "") as Ticket).dueDate).toBe("2026-12-01");
+  });
+
+  it("sets and clears priorities and snoozes from the RPC and the CLI, and tells the card's thread its priority", async () => {
+    await load();
+    const ticket = (await current().harness.behavior.callRpc("ticket_create", { title: "Call the bank", priority: 2 })) as Ticket;
+    expect(ticket.priority).toBe(2);
+    expect(ticket.snoozedUntil).toBeNull();
+    await expect(current().harness.behavior.callRpc("ticket_set_priority", { id: ticket.id, priority: 5 })).rejects.toThrow();
+
+    const snoozed = (await current().harness.behavior.callRpc("ticket_snooze", { id: ticket.id, until: "2026-11-10" })) as Ticket;
+    expect(snoozed.snoozedUntil).toBe("2026-11-10");
+    const shown = await current().harness.behavior.runCli(["show", "--ticket", ticket.id]);
+    expect(shown.stdout).toContain("p2");
+    expect(shown.stdout).toContain("snoozed until 2026-11-10");
+
+    const woken = await current().harness.behavior.runCli(["snooze", "none", "--ticket", ticket.id, "--json"]);
+    expect((JSON.parse(woken.stdout ?? "") as Ticket).snoozedUntil).toBeNull();
+    const urgent = await current().harness.behavior.runCli(["priority", "p1", "--ticket", ticket.id, "--json"]);
+    expect((JSON.parse(urgent.stdout ?? "") as Ticket).priority).toBe(1);
+    const cleared = await current().harness.behavior.runCli(["priority", "none", "--ticket", ticket.id, "--json"]);
+    expect((JSON.parse(cleared.stdout ?? "") as Ticket).priority).toBeNull();
+    const invalid = await current().harness.behavior.runCli(["priority", "high", "--ticket", ticket.id]);
+    expect(invalid.exitCode).not.toBe(0);
+    expect(invalid.stderr).toContain("Invalid priority");
+
+    const added = await current().harness.behavior.runCli(["add", "Later", "--priority", "3", "--no-link", "--json"]);
+    const later = JSON.parse(added.stdout ?? "") as Ticket;
+    expect(later.priority).toBe(3);
+    const configured = await current().harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ pluginMetadata: { ticketId: later.id } }));
+    expect(configured?.instructions).toContain("Its priority is p3");
   });
 
   it("ships the two GitHub sources by default and applies every matching source's tags", async () => {

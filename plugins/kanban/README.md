@@ -1,7 +1,8 @@
 # bb-plugin-kanban
 
-A kanban board for BB where every card is a thread. Cards come from GitHub
-and Jira searches, brain dumps, or by hand; each card's changes page is where
+A kanban board and todo list for BB. A card can be a plain to-do, coding or
+not, or an agent's work: cards come from GitHub and Jira searches, brain dumps,
+or by hand, any card can get a thread, and an agent card's changes page is where
 its PR is reviewed and its review findings and comments are handed to agents.
 
 ![Kanban board with To Do, In Progress, In Review and Done columns](../../docs/screenshots/kanban-board.jpg)
@@ -9,7 +10,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
 - **Kanban** page in the sidebar: columns, drag-and-drop cards. Each card shows
   its title, up to three of your own tags (tags applied by a source are hidden
   on cards), and one quiet footer: a thread dot (words only when it is working,
-  errored, or needs you), the PR or Jira id as text, the due date (red when
+  errored, or needs you), its priority (`P1`..`P4`), the PR or Jira id as text, the due date (red when
   overdue, amber when due today or tomorrow, never coloured in Done), and icon counters for
   subtasks, open PR comments, and unsent diff comments, coloured only when
   they need attention; the review badge is one count of open findings, with
@@ -62,12 +63,15 @@ its PR is reviewed and its review findings and comments are handed to agents.
   between columns (skipping empty ones), `j`/`k` between cards, `gg`/`G` jump
   to a column's first or last card, `0`/`$` to the first or last column.
   `H`/`L` move the card to the neighbouring column and `J`/`K` reorder it.
+  `x` marks the card done (or reopens it), `p1`..`p4` set its priority and
+  `p0` clears it, `zs`/`zw` snooze it until tomorrow or next Monday (or wake
+  a snoozed one, with an Undo in the toast),
   `o` (or Enter) opens the card, `t` its thread, `D` its changes, `m` opens its
   loop menu beside the card (or turns the loop on while it is off; see
   Monitored cards), `d` deletes
   it (no confirmation; `u` or the toast's Undo brings it back with its
   reviews, comments and subtasks, for up to a week), `a` adds a
-  card to the current column, `za` shows or hides the column's old cards
+  card to the current column, `za` shows or hides the column's snoozed and old cards
   (see Columns), Ctrl-d/Ctrl-u scroll the column, `T` switches to the Todo
   view, and `?` (or Settings → Keyboard shortcuts) lists them all, with `/` to search the list. Arrow keys
   work as `h`/`j`/`k`/`l`. `k` past a column's top card lands on its + button
@@ -76,7 +80,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   step through the plugin's menus (Settings, and the card's subtask and review menus).
   Opening a card from the keyboard, or by clicking one while a card is
   already open, puts the keys in the card, with the cursor
-  on its View changes button, greyed out when there are no changes; the keys move the way the card
+  on its View changes button, greyed out when there are no changes (a plain
+  to-do has no such button, so the cursor starts on its title); the keys move the way the card
   is laid out: `j`/`k` go to the field or button below or above (`k` from
   the buttons beside the title reaches the title),
   `h`/`l` along a row (such as the buttons beside the title), `gg`/`G` to the
@@ -96,8 +101,11 @@ its PR is reviewed and its review findings and comments are handed to agents.
   and the changes, with the count of unsent comments). A PR card is read for
   its review, so Code review, PR comments and the PR's description (as
   written on GitHub, synced with the card) come next, then the property list
-  (Column, Tags, Due, a Start row while the card has no thread, Jira fields);
-  other cards show the properties first. Then the Review loop (folded while
+  (Column, Tags, Due, Priority, Snooze, a Start row while the card has no thread, Jira fields);
+  other cards show the properties first. A plain to-do (no PR, project,
+  thread, loop or review) leaves out the changes button, Code review and the
+  Review loop: its Start row is one "Run as agent task…" button that opens
+  the project picker and How it runs, and `m` still turns the loop on. Then the Review loop (folded while
   off, and absent on someone else's PR), Subtasks (folded while there are
   none) and Description or Notes. While the loop runs, its section shows the
   loop as a strip of steps, Plan → Build → Checks → Review → Fix → Needs you →
@@ -140,11 +148,29 @@ its PR is reviewed and its review findings and comments are handed to agents.
 - **Due dates** on every card: a calendar day set in the New card dialog or the
   card panel's Due property, or with `bb kanban due` / `add --due`. Sync never
   changes them. A card's thread is told its due date.
+- **Priority** on every card, P1 (urgent) to P4 (low) or none: the New card
+  dialog, the card panel's Priority property, `p1`..`p4` on the board or the
+  todo list, `!p1` in a title, or `bb kanban priority` / `add --priority`. The
+  todo list sorts by it; the board keeps the order you give it. A card's
+  thread is told its priority.
+- **Snooze**: the card panel's Snooze property (Tomorrow, Next week or a
+  day), `zs`/`zw`, or `bb kanban snooze <day|none>`, hide a card from the
+  board and the todo list until that day. A column with snoozed cards says
+  so at its foot ("Show 2 snoozed", or `za`), the todo list has an "N
+  snoozed" checkbox, and a snoozed card in view shows the day it comes back.
 - **Todo view** (toggle at the top of the board, or `/plugins/kanban/board/todo`):
-  a flat checklist grouped by column with tag filters, quick-add
-  (`Fix thing #infra`), and a checkbox that moves a card to Done. Its keys:
+  a flat checklist grouped by date (Overdue, Today, Upcoming, No date, and
+  Done when shown) or by column, most urgent first within each, with tag
+  filters and a checkbox that moves a card to Done. The page opens on the
+  view it last showed, and the grouping is remembered too. Quick-add reads
+  `#tag`, `!p1`..`!p4`, `@today`/`@tomorrow`/`@fri`/`@2026-11-20` for the due
+  day and `+project` (a project's name or id, which makes it an agent card
+  without starting a thread): `Call the bank !p1 @fri #errands`. The New card
+  dialog's title reads the same markers; fields picked in the dialog win, and
+  Project and How it runs sit apart under "Agent (optional)". Its keys:
   `j`/`k` and `gg`/`G` move through the todos (`k` past the top reaches the
-  tag filters and the title bar), `x` marks done or reopens, `o`/Enter opens
+  grouping, the tag filters and the title bar), `x` marks done or reopens,
+  `p1`..`p4`/`p0` and `zs`/`zw` as on the board, `o`/Enter opens
   the card, `t` its thread, `i` or `a` types a new todo (Escape, twice with
   vim-mode, returns to the list), Ctrl-d/Ctrl-u scroll, and `T` goes back to
   the board.
@@ -243,7 +269,7 @@ its PR is reviewed and its review findings and comments are handed to agents.
   `needs you · clean|not reviewed|stopped`, `stuck · <reason>`), with how long
   the card has waited for you once that passes an hour, `→ you` while a
   directive is pending, and a pip per fix round used. On a board with the
-  loop's columns, Building, Checking and Needs you say who holds the ball
+  loop's columns, the in-progress column, Checking and Needs you say who holds the ball
   under their names (agent, board, you). Turning
   monitoring off stops the loop after its current step: a running check or
   review finishes, and its result is kept but drives nothing; a fix round in
@@ -719,10 +745,12 @@ remote, and whether a card moves to In Progress when its thread starts working.
 ## Columns
 
 Default columns: `backlog` (Backlog), `todo` (To Do), `in-progress`
-(Building), `checking` (Checking), `review` (Needs you), `done` (Done). The
-names are for new boards; a board already in use keeps its own, and the first
-monitored card adds Checking just before `review` (and puts back an
-`in-progress` or `review` column that was removed). Edit them
+(Doing), `waiting` (Waiting), `done` (Done). The names are for new boards; a
+board already in use keeps its own. The first monitored card adds the review
+loop's columns: `checking` (Checking) just before `review`, and `review`
+(Needs you) just after `in-progress` when the board lacks it (and puts back
+an `in-progress` column that was removed), so a new board becomes Doing,
+Checking, Needs you, Waiting, Done. Edit them
 under Settings → Columns on the page; agents refer to columns by id. New PR cards land in `todo`,
 whether you authored them or were asked to review. Sync never moves an open PR
 card you placed by hand, except one in Done that comes back to its source after

@@ -5,10 +5,10 @@ import { LIFT, OPACITY_TRANSITION, POP, PRESS, STAGGER, enter, stagger, type Arr
 import type { Ticket } from "../shared/board";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { cardSnippet, dueStatus, threadStatusText } from "./format";
+import { cardSnippet, dueStatus, isAgentCard, threadStatusText } from "./format";
 import { ExternalLink, ThreadStatusDot } from "./primitives";
 import { TagBadges } from "./tags";
-import { ChecksMark, JiraStatusGlyph, LoopChip, PrStateGlyph, ReviewBadge, checksHref } from "./badges";
+import { ChecksMark, JiraStatusGlyph, LoopChip, PriorityMark, PrStateGlyph, ReviewBadge, SnoozeMark, checksHref } from "./badges";
 import { jiraStatusMark } from "./source-marks";
 import { useTicketHasDiff } from "./data";
 
@@ -55,6 +55,7 @@ export function CardView({
 }) {
   const review = ticket.latestReview;
   const hasDiff = useTicketHasDiff(ticket, thread);
+  const agentCard = isAgentCard(ticket);
   const ownTags = ticket.tags.filter((tag) => !hiddenTags.has(tag));
   const iconButton = cn("flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground", PRESS);
   const entrance = useEntrance(arrival === "intro" ? cn(enter.rise, STAGGER) : arrival === "new" ? enter.pop : undefined);
@@ -120,7 +121,9 @@ export function CardView({
             {loud ? <span className={cn(status === "error" && "text-destructive", status === "needs you" && "text-amber-700 dark:text-amber-300")}>{status}</span> : null}
           </span>
         ) : null}
+        <PriorityMark priority={ticket.priority} />
         <span className="ml-auto flex shrink-0 items-center gap-2.5">
+          <SnoozeMark snoozedUntil={ticket.snoozedUntil} today={today} />
           {ticket.dueDate !== null ? <CardDueDate dueDate={ticket.dueDate} today={today} isDone={isDone} /> : null}
           {ticket.children.total > 0 ? (
             <CardCounter icon="ListTodo" count={`${ticket.children.done}/${ticket.children.total}`} tone={ticket.children.done === ticket.children.total ? "good" : "quiet"} title={`${ticket.children.done} of ${ticket.children.total} subtasks done`} />
@@ -132,36 +135,38 @@ export function CardView({
             <CardCounter icon="kanban-diff" count={ticket.pendingDiffComments} tone="attention" title={`${ticket.pendingDiffComments} diff comment${ticket.pendingDiffComments === 1 ? "" : "s"} not sent yet`} />
           ) : null}
         </span>
-        {/* Hover actions sit over the counters instead of reserving room for themselves. */}
-        <span className={`pointer-events-none absolute inset-y-0 right-0 flex items-center gap-0.5 bg-card pl-3 opacity-0 ${OPACITY_TRANSITION} [mask-image:linear-gradient(to_right,transparent,black_12px)] focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100`}>
-          {ticket.pr !== null || review !== null ? (
-            <button
-              type="button"
-              aria-label={review === null ? "Review PR" : ticket.pr === null ? "Open review" : "Open PR review"}
-              title={review === null ? "Run the code-review skill on this PR" : ticket.pr === null ? "Open the review" : "Open the PR review"}
-              className={iconButton}
-              onClick={stopping(review === null ? onReview : onOpenReview)}
-            >
-              <Icon name="kanban-search-check" className="size-3.5" />
-            </button>
-          ) : null}
-          <span className="inline-flex" title={hasDiff ? "View changes" : "No changes"} onClick={stopping(() => {})}>
-            <button
-              type="button"
-              aria-label={hasDiff ? "View changes" : "View changes: no changes"}
-              className={cn(iconButton, "disabled:pointer-events-none disabled:opacity-50")}
-              disabled={!hasDiff}
-              onClick={stopping(onOpenDiff)}
-            >
-              <Icon name="kanban-diff" className="size-3.5" />
-            </button>
+        {/* Hover actions sit over the counters instead of reserving room for themselves; a plain to-do has none. */}
+        {agentCard ? (
+          <span className={`pointer-events-none absolute inset-y-0 right-0 flex items-center gap-0.5 bg-card pl-3 opacity-0 ${OPACITY_TRANSITION} [mask-image:linear-gradient(to_right,transparent,black_12px)] focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100`}>
+            {ticket.pr !== null || review !== null ? (
+              <button
+                type="button"
+                aria-label={review === null ? "Review PR" : ticket.pr === null ? "Open review" : "Open PR review"}
+                title={review === null ? "Run the code-review skill on this PR" : ticket.pr === null ? "Open the review" : "Open the PR review"}
+                className={iconButton}
+                onClick={stopping(review === null ? onReview : onOpenReview)}
+              >
+                <Icon name="kanban-search-check" className="size-3.5" />
+              </button>
+            ) : null}
+            <span className="inline-flex" title={hasDiff ? "View changes" : "No changes"} onClick={stopping(() => {})}>
+              <button
+                type="button"
+                aria-label={hasDiff ? "View changes" : "View changes: no changes"}
+                className={cn(iconButton, "disabled:pointer-events-none disabled:opacity-50")}
+                disabled={!hasDiff}
+                onClick={stopping(onOpenDiff)}
+              >
+                <Icon name="kanban-diff" className="size-3.5" />
+              </button>
+            </span>
+            {ticket.threadId !== null ? (
+              <button type="button" aria-label="Open thread" title="Open thread" className={iconButton} onClick={stopping(onOpenThread)}>
+                <Icon name="MessageSquare" className="size-3.5" />
+              </button>
+            ) : null}
           </span>
-          {ticket.threadId !== null ? (
-            <button type="button" aria-label="Open thread" title="Open thread" className={iconButton} onClick={stopping(onOpenThread)}>
-              <Icon name="MessageSquare" className="size-3.5" />
-            </button>
-          ) : null}
-        </span>
+        ) : null}
       </div>
     </div>
   );

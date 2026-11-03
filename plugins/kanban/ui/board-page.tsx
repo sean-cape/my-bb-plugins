@@ -5,12 +5,12 @@ import { toast } from "sonner";
 import { SHIMMER, enter, speed, useArrivals } from "bb-motion";
 import { focusWhenShown, scrollKeepingCursor } from "bb-vim-keys";
 import type { Ticket } from "../shared/board";
-import { COLUMN, agedOut, doneColumnId } from "../shared/columns";
+import { COLUMN, agedOut, doneColumnId, todoColumnId } from "../shared/columns";
 import { COLUMN_HOLDER } from "../shared/stages";
 import { cn } from "@/lib/utils";
 import { ticketHasDiff, useBoard, useProjects, useThreadIndex, useOpenThread, useNow } from "./data";
-import { localDay } from "./format";
-import { pageUi, usePageUi, TICKET_TAB } from "./page-state";
+import { isSnoozed, localDay } from "./format";
+import { lastView, pageUi, usePageUi, TICKET_TAB } from "./page-state";
 import { KanbanDiffView, diffPlanFromSubPath, diffSubjectFromSubPath } from "./diff-page";
 import { type DropTarget, ColumnView } from "./column";
 import { NewTicketDialog } from "./new-ticket-dialog";
@@ -19,7 +19,7 @@ import { ColumnsDialog } from "./columns-dialog";
 import { SourcesDialog } from "./sources-dialog";
 import { type TodoKeys, TodoView } from "./todo-view";
 import { ProposalsList, ProposalView } from "./proposals";
-import { toastError, usePendingAction } from "./actions";
+import { runTodoKey, toastError, usePendingAction } from "./actions";
 import { LoopMenu } from "./loop-menu";
 import { type BoardCommand, byAttention, cursorAfter, movePlacement, placementIndex } from "./board-nav";
 import { useBoardKeys } from "./board-keys";
@@ -37,6 +37,14 @@ export function BoardPage({ subPath }: { subPath: string }) {
   const proposalsList = trimmed === "proposals";
   const view: "board" | "todo" = trimmed === "todo" ? "todo" : "board";
   const navigate = useBbNavigate();
+  // Only arriving at the page's root opens the remembered view; within the page T, the toggle and history move freely.
+  useEffect(() => {
+    if (trimmed === "" && lastView.get() === "todo") navigate.toPluginPanel("board", { subPath: "todo", replace: true });
+    // Mount only: a later visit to the root is a choice to see the board.
+  }, []);
+  useEffect(() => {
+    if (trimmed === "" || trimmed === "todo") lastView.set(view);
+  }, [trimmed, view]);
   const { rpc, board, setBoard, error, refetch } = useBoard();
   const projects = useProjects();
   const threads = useThreadIndex();
@@ -53,13 +61,19 @@ export function BoardPage({ subPath }: { subPath: string }) {
   const now = useNow(60_000);
   // Columns whose aged-out cards the user asked to see again; forgotten when the page closes.
   const [revealed, setRevealed] = useState<ReadonlySet<string>>(new Set());
-  const { ticketsByColumn, hiddenByColumn } = useMemo(() => {
+  const { ticketsByColumn, hiddenByColumn, snoozedByColumn } = useMemo(() => {
     const shown = new Map<string, Ticket[]>();
     const hidden = new Map<string, number>();
+    const snoozed = new Map<string, number>();
+    const day = localDay(now);
     const columns = new Map((board?.columns ?? []).map((column) => [column.id, column]));
     for (const ticket of board?.tickets ?? []) {
       if (!showSubtasks && ticket.parentId !== null) continue;
       const column = columns.get(ticket.columnId);
+      if (isSnoozed(ticket, day)) {
+        snoozed.set(ticket.columnId, (snoozed.get(ticket.columnId) ?? 0) + 1);
+        if (!revealed.has(ticket.columnId)) continue;
+      }
       if (column !== undefined && !revealed.has(column.id) && agedOut(column, ticket.columnEnteredAt, now)) {
         hidden.set(ticket.columnId, (hidden.get(ticket.columnId) ?? 0) + 1);
         continue;
@@ -69,7 +83,7 @@ export function BoardPage({ subPath }: { subPath: string }) {
       shown.set(ticket.columnId, list);
     }
     for (const [columnId, list] of shown) list.sort(columnId === COLUMN.review ? byAttention : byPosition);
-    return { ticketsByColumn: shown, hiddenByColumn: hidden };
+    return { ticketsByColumn: shown, hiddenByColumn: hidden, snoozedByColumn: snoozed };
   }, [board, showSubtasks, revealed, now]);
   const toggleHidden = (columnId: string) => {
     const next = new Set(revealed);
@@ -277,13 +291,34 @@ export function BoardPage({ subPath }: { subPath: string }) {
       case "delete":
         if (at === null && ticket !== undefined) void deleteTicket(ticket);
         return;
+      case "toggle-done": {
+        if (ticket === undefined || doneId === null) return;
+        const target = ticket.columnId === doneId ? todoColumnId(board.columns) : doneId;
+        if (target === null) return;
+        pendingFocusId.current = ticket.id;
+        void moveTicket(ticket, target, (ticketsByColumn.get(target) ?? []).length);
+        return;
+      }
+      case "priority":
+      case "snooze": {
+        if (ticket === undefined) return;
+        // A snoozed card leaves the column, so the cursor steps to its neighbour first.
+        if (command.kind === "snooze" && !isSnoozed(ticket, today) && !revealed.has(ticket.columnId)) {
+          const below = cursorAfter(layout, ticket.id, "down");
+          const neighbour = below !== ticket.id ? below : cursorAfter(layout, ticket.id, "up");
+          pendingFocusId.current = neighbour !== ticket.id ? neighbour : null;
+        }
+        void runTodoKey(rpc, ticket, command, today).then(refetch);
+        return;
+      }
       case "add":
         pageUi.set({ dialog: "new", newTicketColumn: (at?.band === "columns" ? at.stop.dataset.columnId : ticket?.columnId) ?? null });
         return;
       case "toggle-hidden": {
         // With no card under the cursor, the first column holding cards back.
-        const columnId = ticket?.columnId ?? board.columns.find((column) => (hiddenByColumn.get(column.id) ?? 0) > 0 || revealed.has(column.id))?.id;
-        if (columnId !== undefined && board.columns.find((column) => column.id === columnId)?.hideAfterDays != null) toggleHidden(columnId);
+        const holdsBack = (columnId: string) => (hiddenByColumn.get(columnId) ?? 0) > 0 || (snoozedByColumn.get(columnId) ?? 0) > 0;
+        const columnId = ticket?.columnId ?? board.columns.find((column) => holdsBack(column.id) || revealed.has(column.id))?.id;
+        if (columnId !== undefined && (board.columns.find((column) => column.id === columnId)?.hideAfterDays != null || (snoozedByColumn.get(columnId) ?? 0) > 0)) toggleHidden(columnId);
         return;
       }
       default:
@@ -419,6 +454,7 @@ export function BoardPage({ subPath }: { subPath: string }) {
               onOpenDiff={(ticket) => openDiff(ticket.id)}
               onAdd={() => pageUi.set({ dialog: "new", newTicketColumn: column.id })}
               hiddenCount={hiddenByColumn.get(column.id) ?? 0}
+              snoozedCount={snoozedByColumn.get(column.id) ?? 0}
               revealed={revealed.has(column.id)}
               onToggleHidden={() => toggleHidden(column.id)}
               holder={loopColumns ? (COLUMN_HOLDER[column.id] ?? null) : null}

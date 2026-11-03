@@ -22,8 +22,11 @@ export type BoardCommand =
   | { kind: "toggle-hidden" }
   | { kind: "toggle-view" }
   | { kind: "toggle-done" }
+  | TodoKeyCommand
   | { kind: "focus-input" }
   | { kind: "scroll"; direction: 1 | -1 };
+
+export type TodoKeyCommand = { kind: "priority"; priority: number | null } | { kind: "snooze"; until: "tomorrow" | "next-week" };
 
 export const KEYMAP: Keymap<BoardCommand> = {
   h: { kind: "cursor", motion: "left" },
@@ -54,6 +57,13 @@ export const KEYMAP: Keymap<BoardCommand> = {
   "?": { kind: "help" },
   gg: { kind: "cursor", motion: "top" },
   za: { kind: "toggle-hidden" },
+  zs: { kind: "snooze", until: "tomorrow" },
+  zw: { kind: "snooze", until: "next-week" },
+  p1: { kind: "priority", priority: 1 },
+  p2: { kind: "priority", priority: 2 },
+  p3: { kind: "priority", priority: 3 },
+  p4: { kind: "priority", priority: 4 },
+  p0: { kind: "priority", priority: null },
   "<C-d>": { kind: "scroll", direction: 1 },
   "<C-u>": { kind: "scroll", direction: -1 },
 };
@@ -142,10 +152,13 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["t"], action: "Open the card's thread" },
       { keys: ["D"], action: "View the card's changes" },
       { keys: ["m"], action: "Open the card's loop menu: steer, hand to me, skip a review, stop, retry, resume, the gates, loop off; with the loop off, turns it on" },
+      { keys: ["x"], action: "Mark done / reopen" },
+      { keys: ["p1", "p2", "p3", "p4"], action: "Set the card's priority (p1 is the most urgent); p0 clears it" },
+      { keys: ["zs", "zw"], action: "Snooze the card until tomorrow / next Monday; on a snoozed card, wake it" },
       { keys: ["d"], action: "Delete card" },
       { keys: ["u"], action: "Undo the last delete" },
       { keys: ["a"], action: "New card in this column" },
-      { keys: ["za"], action: "Show / hide cards past the column's hide-after days" },
+      { keys: ["za"], action: "Show / hide the column's snoozed cards and cards past its hide-after days" },
       { keys: ["Ctrl-d", "Ctrl-u"], action: "Scroll the column half a page" },
       { keys: ["T"], action: "Switch between the board and the todo list" },
       { keys: ["?"], action: "Show these shortcuts" },
@@ -157,6 +170,8 @@ export const KEY_HELP: readonly KeyHelpSection[] = [
       { keys: ["j", "k"], action: "Next / previous todo; k past the top reaches the tag filters and the top bar" },
       { keys: ["gg", "G"], action: "First / last todo" },
       { keys: ["x"], action: "Mark done / reopen" },
+      { keys: ["p1", "p2", "p3", "p4"], action: "Set the todo's priority; p0 clears it" },
+      { keys: ["zs", "zw"], action: "Snooze until tomorrow / next Monday; on a snoozed todo, wake it" },
       { keys: ["o", "Enter"], action: "Open the card" },
       { keys: ["t"], action: "Open the card's thread" },
       { keys: ["i", "a"], action: "Type a new todo; Esc (twice with vim-mode) returns to the list" },

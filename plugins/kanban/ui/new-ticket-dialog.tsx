@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { errorMessage, parseQuickAdd, parseTagList } from "./format";
+import { errorMessage, localDay, parseQuickAdd, parseTagList, parseTodo, PRIORITY_LABEL } from "./format";
 import { type Rpc, type ProjectOption } from "./data";
 import { Select, Textarea, SegmentedTabs } from "./primitives";
 import { ProjectSelect } from "./project-select";
@@ -173,6 +173,7 @@ export function NewTicketDialog({
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [priority, setPriority] = useState("");
   const [subtasks, setSubtasks] = useState<SubtaskDraft[]>([]);
   const [subtaskText, setSubtaskText] = useState("");
   const [columnId, setColumnId] = useState(initialColumnId ?? columns[0]?.id ?? "");
@@ -208,7 +209,8 @@ export function NewTicketDialog({
     event.preventDefault();
     if (title.trim() === "" || pending) return;
     setPending(true);
-    const parsed = parseQuickAdd(title);
+    // Fields picked in the form win over the title's markers.
+    const parsed = parseTodo(title, localDay(Date.now()), projects);
     const extraTags = parseTagList(tags);
     // Text still in the add box counts, so the last subtask is not lost to a missed Enter.
     const subtaskList = [...subtasks.map((draft) => draft.text), subtaskText].map(parseQuickAdd).filter((subtask) => subtask.title !== "");
@@ -218,8 +220,9 @@ export function NewTicketDialog({
         description,
         columnId,
         tags: [...new Set([...parsed.tags, ...extraTags])],
-        dueDate: dueDate === "" ? null : dueDate,
-        projectId: projectId === "" ? null : projectId,
+        dueDate: dueDate === "" ? parsed.dueDate : dueDate,
+        priority: priority === "" ? parsed.priority : Number(priority),
+        projectId: projectId === "" ? parsed.projectId : projectId,
         ...runModeFlags(effectiveMode, gates),
         subtasks: subtaskList,
       });
@@ -227,6 +230,7 @@ export function NewTicketDialog({
       setDescription("");
       setTags("");
       setDueDate("");
+      setPriority("");
       setSubtasks([]);
       setSubtaskText("");
       onOpenChange(false);
@@ -272,8 +276,8 @@ export function NewTicketDialog({
         </DialogHeader>
         {mode === "single" ? (
           <form onSubmit={submit} className={cn("flex flex-col gap-4", bodyMotion)}>
-            <Input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Title (use #tag for tags)" aria-label="Title" />
-            <Textarea aria-label="Description" value={description} onChange={setDescription} placeholder="What needs to happen? (markdown, sent to the agent as the first prompt)" />
+            <Input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Title (#tag, !p1, @fri, +project)" aria-label="Title" />
+            <Textarea aria-label="Description" value={description} onChange={setDescription} placeholder="What needs to happen? (markdown; an agent's first prompt if one works on it)" />
             <Input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Tags, comma or space separated" aria-label="Tags" />
             <SubtaskDrafts drafts={subtasks} onChange={setSubtasks} text={subtaskText} onTextChange={setSubtaskText} />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -288,15 +292,29 @@ export function NewTicketDialog({
                 </Select>
               </label>
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                Project
-                <ProjectSelect projects={projects} value={projectId} onChange={pickProject} allowNone />
-              </label>
-              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                 Due date
                 <Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} aria-label="Due date" />
               </label>
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Priority
+                <Select aria-label="Priority" value={priority} onChange={setPriority}>
+                  <option value="">None</option>
+                  {[1, 2, 3, 4].map((level) => (
+                    <option key={level} value={level}>
+                      P{level} · {PRIORITY_LABEL[level]}
+                    </option>
+                  ))}
+                </Select>
+              </label>
             </div>
-            <RunModeControl value={runMode} onChange={setRunMode} gates={gates} onGatesChange={setGates} hasProject={projectId !== ""} disabled={pending} />
+            <fieldset className="flex flex-col gap-3 border-t border-border pt-3">
+              <legend className="pr-2 text-xs font-medium text-muted-foreground">Agent (optional)</legend>
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Project
+                <ProjectSelect projects={projects} value={projectId} onChange={pickProject} allowNone />
+              </label>
+              {projectId === "" ? null : <RunModeControl value={runMode} onChange={setRunMode} gates={gates} onGatesChange={setGates} hasProject disabled={pending} />}
+            </fieldset>
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel

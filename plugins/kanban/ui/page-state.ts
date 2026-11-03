@@ -51,6 +51,26 @@ export function usePageUi(): PageUiState {
   return useSyncExternalStore(pageUi.subscribe, pageUi.get, pageUi.get);
 }
 
+export type BoardView = "board" | "todo";
+
+/** The view the page last showed, which it opens on when the sidebar link brings it up again. */
+export const lastView = {
+  get: (): BoardView => {
+    try {
+      return window.localStorage.getItem("kanban:view") === "todo" ? "todo" : "board";
+    } catch {
+      return "board";
+    }
+  },
+  set: (view: BoardView) => {
+    try {
+      window.localStorage.setItem("kanban:view", view);
+    } catch {
+      // ignore
+    }
+  },
+};
+
 /** The right-panel tab that shows the selected card; targeted by ticket id. */
 export const TICKET_TAB = {
   panelId: "board",

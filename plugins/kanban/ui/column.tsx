@@ -38,6 +38,7 @@ export function ColumnView({
   onOpenDiff,
   onAdd,
   hiddenCount,
+  snoozedCount,
   revealed,
   onToggleHidden,
   holder,
@@ -66,6 +67,8 @@ export function ColumnView({
   onAdd: () => void;
   /** Cards kept off the board for sitting in the column past its `hideAfterDays`. */
   hiddenCount: number;
+  /** The column's snoozed cards, shown or not. */
+  snoozedCount: number;
   revealed: boolean;
   onToggleHidden: () => void;
   /** Who holds the ball in this column (agent, board, you), on boards with the loop's columns; null shows no subtitle. */
@@ -155,22 +158,40 @@ export function ColumnView({
           </div>
         ))}
         {isTarget && dropTarget.index >= tickets.length ? <div className="h-0.5 rounded bg-primary" /> : null}
-        {tickets.length === 0 && !isTarget && hiddenCount === 0 ? (
+        {tickets.length === 0 && !isTarget && hiddenCount === 0 && snoozedCount === 0 ? (
           <p className={cn("px-1 py-3 text-center text-xs text-muted-foreground", enter.fade)}>Drop cards here</p>
         ) : null}
-        {column.hideAfterDays != null && (hiddenCount > 0 || revealed) ? (
+        {(column.hideAfterDays != null && (hiddenCount > 0 || revealed)) || snoozedCount > 0 ? (
           <button
             type="button"
             onClick={onToggleHidden}
-            title={`Cards in ${column.name} longer than ${column.hideAfterDays} day${column.hideAfterDays === 1 ? "" : "s"} are hidden (za)`}
+            title={heldBackTitle(column, snoozedCount)}
             className={cn("rounded px-1 py-1.5 text-center text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground", enter.fade, PRESS)}
           >
-            {revealed ? `Hide cards older than ${column.hideAfterDays} day${column.hideAfterDays === 1 ? "" : "s"}` : `Show ${hiddenCount} older card${hiddenCount === 1 ? "" : "s"}`}
+            {revealed ? heldBackLabel(column, null, snoozedCount) : heldBackLabel(column, hiddenCount, snoozedCount)}
           </button>
         ) : null}
       </div>
     </section>
   );
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** The held-back toggle's label: what showing it brings back (`hidden` counts the old cards), or with null what hiding takes away. */
+function heldBackLabel(column: Column, hidden: number | null, snoozed: number): string {
+  if (hidden === null) {
+    const parts = [column.hideAfterDays != null ? `cards older than ${plural(column.hideAfterDays, "day")}` : null, snoozed > 0 ? "snoozed cards" : null];
+    return `Hide ${parts.filter((part) => part !== null).join(" and ")}`;
+  }
+  const parts = [hidden > 0 ? plural(hidden, "older card") : null, snoozed > 0 ? `${snoozed} snoozed` : null];
+  return `Show ${parts.filter((part) => part !== null).join(" · ")}`;
+}
+
+function heldBackTitle(column: Column, snoozed: number): string {
+  const parts = [column.hideAfterDays != null ? `cards in ${column.name} longer than ${plural(column.hideAfterDays, "day")}` : null, snoozed > 0 ? "snoozed cards" : null];
+  const text = parts.filter((part) => part !== null).join(" and ");
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)} are hidden (za)`;
 }
 
 const COLUMN_ACCENT: Record<string, string> = {

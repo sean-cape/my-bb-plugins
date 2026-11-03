@@ -294,5 +294,7 @@ export function migrate(bb: BbPluginApi, db: KanbanDatabase): void {
     `UPDATE tickets SET comments_synced_for = NULL`,
     // Findings the reviewer resolved by hand, as a GitHub thread is resolved: out of the diff, the apply round and re-reviews.
     `ALTER TABLE reviews ADD COLUMN resolved_finding_ids TEXT`,
+    `ALTER TABLE tickets ADD COLUMN priority INTEGER`,
+    `ALTER TABLE tickets ADD COLUMN snoozed_until TEXT`,
   ]);
 }
