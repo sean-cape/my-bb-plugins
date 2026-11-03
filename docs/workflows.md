@@ -17,7 +17,7 @@ removals are listed first so they can be vetoed in one place.
 | The ad hoc "review it yourself" prompt on review-request threads | The card thread is told to run its own review of the PR, while the source also runs the code-review skill and the narrative | The thread waits for the board's review and summarizes it instead of reviewing again | Three agents read each new review request today |
 | `review` column meaning both "In Review" and the loop's "Needs you" | A PR card's thread moved a PR awaiting other people's review into the loop's Needs you column | Authored PRs awaiting review go to `waiting`; `review` is Needs you only | The live board has one PR awaiting reviewers and one agent hand-off side by side in `review` |
 | Review loop controls in every agent card | Gates, strip, menu and brief render for every agent card | Folded behind the loop switch until the loop is on | The loop is on for 1 of 29 live cards |
-| Jira source | Settings, sync code, Jira card fields | Kept, not shown in the New source type picker unless the Jira settings are filled | No Jira source configured; the daily routine reads Jira through the connector instead |
+| Jira source | Settings, sync code, Jira card fields | Proposed: kept, but left out of the New source type picker unless the Jira settings are filled. Not done; it stays in the picker | No Jira source configured; the daily routine reads Jira through the connector instead |
 
 Not removed on this evidence: anything in the diff view. Its features landed
 Oct 21 to 23 and the activity log is thirteen days old, so low counts mean

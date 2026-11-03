@@ -90,18 +90,23 @@ export function reviewRequestPrompt(ticket: Ticket, columns: readonly Column[], 
   return [...head, ...context, ...task, reviewRequestFooter(ticket, columns)].join("\n");
 }
 
-/** A later review of the same pull request: the thread updates its brief rather than starting over. */
+/**
+ * A review completing while the card already has a thread: a re-review updates the brief, a first review (the thread
+ * was started before the board's review finished) asks for the brief itself.
+ */
 export function reviewRequestUpdatePrompt(ticket: Ticket, review: Review, narrative: NarrativeReport | null): string {
-  const since = review.sinceCommitSha === null ? "" : ` of the commits since ${review.sinceCommitSha.slice(0, 7)}`;
+  const first = review.sinceCommitSha === null;
   const resolved = review.report?.resolved ?? [];
   return [
-    `The board re-reviewed this pull request${since}.`,
+    first ? "The board's review of this pull request is done." : `The board re-reviewed this pull request of the commits since ${review.sinceCommitSha!.slice(0, 7)}.`,
     "",
     ...reviewSection(ticket, review),
     ...(resolved.length === 0 ? [] : ["Resolved since the last review:", ...resolved.map((entry) => `- ${entry.id} ${entry.title}`)]),
     ...(narrative === null ? [] : ["", ...narrativeSection(narrative)]),
     "",
-    "Update your brief in one short message: what changed, what to look at now, and which earlier points still stand. Then wait.",
+    first
+      ? "Write the reviewer's brief in one short message: what to read first and why, which findings matter most and which you'd let go, and the questions worth putting to the author. Then wait."
+      : "Update your brief in one short message: what changed, what to look at now, and which earlier points still stand. Then wait.",
   ].join("\n");
 }
 

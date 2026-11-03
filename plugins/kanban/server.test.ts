@@ -3262,6 +3262,20 @@ describe("review request briefs", () => {
     expect(String(cardThreads()[0]!.prompt)).toContain("at most five lines");
   });
 
+  it("asks a thread started before the review finished for the brief itself, not an update", async () => {
+    const card = await requested();
+    await current().harness.behavior.callRpc("ticket_start_thread", { id: card.id, projectId: "proj_acme" });
+    expect(cardThreads()).toHaveLength(1);
+    current().harness.sdk.stub("threads.send", async () => ({ ok: true }));
+    await completeReview(threadIdOf(workerOf("review")), findings(sha, [nilCheck]), sha);
+    expect(cardThreads()).toHaveLength(1);
+    const sent = current().harness.inspection.sdk.callsTo("threads.send") as Array<[{ threadId: string; input: Array<{ text: string }> }]>;
+    expect(sent).toHaveLength(1);
+    expect(sent[0]![0].input[0]!.text).toContain("The board's review of this pull request is done.");
+    expect(sent[0]![0].input[0]!.text).toContain("Write the reviewer's brief");
+    expect(sent[0]![0].input[0]!.text).not.toContain("re-reviewed");
+  });
+
   it("briefs nothing for your own PR, which no one asked you to review", async () => {
     vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { title: "Refactor", user: { login: "sean" } })] }));
     await load({ autoStartThreads: null });
