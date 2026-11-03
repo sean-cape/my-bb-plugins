@@ -11,11 +11,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { dueStatus, localDay } from "./format";
-import { type Rpc, type ProjectOption, useBoard, useTicketHasDiff, useProjects, useThreadIndex, useOpenThread, useNow } from "./data";
+import { type Rpc, type ProjectOption, useBoard, useTicketHasDiff, useProjects, useProjectSuggestion, useThreadIndex, useOpenThread, useNow } from "./data";
 import { collapseRightPanel, pageUi, TICKET_TAB } from "./page-state";
 import { focusBoard, requestCardFocus, useCardKeys } from "./card-keys";
 import { ExternalLink, ThreadStatusDot, Select, HEADER_ICON_BUTTON, COMPACT, Group, Property } from "./primitives";
-import { ProjectSelect } from "./project-select";
+import { type ProjectPickerSuggestion, ProjectSelect } from "./project-select";
 import { TagEditor } from "./tags";
 import { ReviewPanel } from "./review-panel";
 import { ApprovedPlan, HandoffBrief, LeftOpenFindings, PlanApproval } from "./brief-panel";
@@ -43,6 +43,7 @@ function ThreadStartRow({
   projects,
   projectId,
   onProjectChange,
+  suggestion,
   gates,
   onGatesChange,
   pending,
@@ -53,6 +54,7 @@ function ThreadStartRow({
   projects: ProjectOption[];
   projectId: string;
   onProjectChange: (projectId: string) => void;
+  suggestion: ProjectPickerSuggestion | undefined;
   gates: LoopGates;
   onGatesChange: (gates: LoopGates) => void;
   pending: boolean;
@@ -75,7 +77,7 @@ function ThreadStartRow({
     <Property label="Thread">
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <ProjectSelect projects={projects} value={projectId} onChange={onProjectChange} allowNone={false} className="h-7 w-auto max-w-48" />
+          <ProjectSelect projects={projects} value={projectId} onChange={onProjectChange} allowNone suggestion={suggestion} className="h-7 w-auto max-w-48" />
           <Button type="button" variant="secondary" className={COMPACT} disabled={pending || projectId === ""} onClick={start}>
             <Icon name="Play" className="size-3.5" />
             Start
@@ -133,20 +135,38 @@ function TicketDetails({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [projectPicked, setProjectPicked] = useState(false);
   const { pending, run } = usePendingAction(onChanged);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showParentPicker, setShowParentPicker] = useState(false);
   useEffect(() => {
     setTitle(ticket.title);
     setDescription(ticket.description);
-    setProjectId(ticket.projectId ?? "");
     setConfirmDelete(false);
     // Reset the form only when a different card is shown or its stored text changes.
-  }, [ticket.id, ticket.title, ticket.description, ticket.projectId]);
-  // Only an empty pick falls back: the list refetches after a project is made from a folder, and that pick must stay.
+  }, [ticket.id, ticket.title, ticket.description]);
   useEffect(() => {
-    if (projectId === "" && projects[0] !== undefined) setProjectId(projects[0].id);
-  }, [projectId, projects]);
+    setProjectId(ticket.projectId ?? "");
+    setProjectPicked(false);
+  }, [ticket.id, ticket.projectId]);
+  const suggestion = useProjectSuggestion(ticket, ticket.threadId === null);
+  const settled = suggestion === null || suggestion.pending ? { guess: null, fallbackProjectId: null } : suggestion;
+  const listed = (id: string | undefined | null) => projects.some((project) => project.id === id);
+  const guess = listed(settled.guess?.projectId) ? settled.guess : null;
+  const fallbackId = listed(settled.fallbackProjectId) ? settled.fallbackProjectId : null;
+  // Until the user picks, the guess beats the fallback project setting, which beats the first project. A pick, which
+  // includes a project just made from a folder that the refetched list may not hold yet, always stays.
+  useEffect(() => {
+    if (projectPicked || ticket.projectId !== null) return;
+    const kept = projects.some((project) => project.id === projectId) ? projectId : (projects[0]?.id ?? "");
+    const next = guess?.projectId ?? fallbackId ?? kept;
+    if (next !== projectId) setProjectId(next);
+  }, [projectPicked, ticket.projectId, projects, projectId, guess?.projectId, fallbackId]);
+  const pickProject = (next: string) => {
+    setProjectPicked(true);
+    setProjectId(next);
+  };
+  const pickerSuggestion: ProjectPickerSuggestion | undefined = suggestion?.pending === true && !projectPicked ? "pending" : (guess ?? undefined);
 
   // Title and description save when the field loses focus, like the other controls apply immediately.
   const saveText = () => {
@@ -380,7 +400,7 @@ function TicketDetails({
               </ParentProperty>
             ) : null}
             {ticket.threadId !== null ? null : (
-              <ThreadStartRow ticket={ticket} projects={projects} projectId={projectId} onProjectChange={setProjectId} gates={gateChoice} onGatesChange={setGateChoice} pending={pending} run={run} rpc={rpc} />
+              <ThreadStartRow ticket={ticket} projects={projects} projectId={projectId} onProjectChange={pickProject} suggestion={pickerSuggestion} gates={gateChoice} onGatesChange={setGateChoice} pending={pending} run={run} rpc={rpc} />
             )}
             {ticket.jira !== null ? (
               <>
@@ -432,7 +452,7 @@ function TicketDetails({
               </ParentProperty>
             ) : null}
             {ticket.threadId !== null ? null : (
-              <ThreadStartRow ticket={ticket} projects={projects} projectId={projectId} onProjectChange={setProjectId} gates={gateChoice} onGatesChange={setGateChoice} pending={pending} run={run} rpc={rpc} />
+              <ThreadStartRow ticket={ticket} projects={projects} projectId={projectId} onProjectChange={pickProject} suggestion={pickerSuggestion} gates={gateChoice} onGatesChange={setGateChoice} pending={pending} run={run} rpc={rpc} />
             )}
             {ticket.jira !== null ? (
               <>

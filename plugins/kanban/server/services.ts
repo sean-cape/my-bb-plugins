@@ -13,6 +13,7 @@ import { createDiffDelta } from "./diff/delta";
 import { createSuggestions } from "./diff/suggestions";
 import { createDumps } from "./dumps";
 import { createLoop } from "./loop/loop";
+import { createProjectGuess } from "./project-guess";
 import { createProjectSettings } from "./project-settings";
 import { createProjects } from "./projects";
 import { createReviewResume } from "./reviews/resume";
@@ -30,6 +31,7 @@ export function createServices(ctx: KanbanContext) {
   const subjects = createDiffSubjects(ctx, { board });
   const threads = createCardThreads(ctx, { board });
   const projects = createProjects(ctx, { threads });
+  const projectGuess = createProjectGuess(ctx, { board });
   const codeReviewThreads = createCodeReviewThreads(ctx);
   const changes = createChanges(ctx);
   const viewed = createViewedMarks(ctx, { changes });
@@ -42,11 +44,11 @@ export function createServices(ctx: KanbanContext) {
   const tour = createTour(ctx, { changes, threads, projects, codeReviewThreads });
   const dumps = createDumps(ctx, { board, threads });
   const subtasks = createSubtasks(ctx, { board, threads, projects });
-  const sourceSync = createSourceSync(ctx, { board, threads, projects, prComments, pendingReview, reviews, tour });
+  const sourceSync = createSourceSync(ctx, { board, threads, projects, projectGuess, prComments, pendingReview, reviews, tour });
   const loop = createLoop(ctx, { board, threads, codeReviewThreads, projectSettings, reviews, diffComments, prComments, changes, viewed, tour });
   const reviewResume = createReviewResume(ctx, { reviews, loop });
   const suggestions = createSuggestions(ctx, { prComments });
-  return { spend, board, projectSettings, loop, reviewResume, subjects, threads, projects, codeReviewThreads, changes, viewed, deltas, prComments, prConversation, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, suggestions };
+  return { spend, board, projectSettings, projectGuess, loop, reviewResume, subjects, threads, projects, codeReviewThreads, changes, viewed, deltas, prComments, prConversation, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, suggestions };
 }
 
 export type Services = ReturnType<typeof createServices>;

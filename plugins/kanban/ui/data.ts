@@ -4,7 +4,7 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../contract";
 import { knownChangeTotals } from "bb-diff-view/app/change-totals";
 import { useThreadChangeTotals } from "bb-diff-view/app/use-change-totals";
-import type { Board, Ticket } from "../shared/board";
+import type { Board, ProjectGuess, Ticket } from "../shared/board";
 import { BOARD_CHANGED } from "../shared/events";
 import { errorMessage } from "./format";
 
@@ -155,6 +155,33 @@ export function useReviewUnavailableReason(ticket: Ticket, enabled = true): stri
   }, [asks, rpc, ticket.id, ticket.threadId, ticket.updatedAt, threadStatus]);
   if (!asks) return null;
   return answer === null || answer.ticketId !== ticket.id ? "Checking the card's commits…" : answer.reason;
+}
+
+export type ProjectSuggestion = { pending: true } | { pending: false; guess: ProjectGuess | null; fallbackProjectId: string | null };
+
+/** The project a card with none should default to, asked again when the card's text changes; null when not asked. */
+export function useProjectSuggestion(ticket: Ticket, enabled: boolean): ProjectSuggestion | null {
+  const rpc = useRpc<typeof rpcContract>();
+  const asks = enabled && ticket.projectId === null;
+  const tags = ticket.tags.join(",");
+  const [answer, setAnswer] = useState<{ ticketId: string; suggestion: ProjectSuggestion } | null>(null);
+  useEffect(() => {
+    if (!asks) return;
+    let cancelled = false;
+    rpc.call("ticket_guess_project", { id: ticket.id }).then(
+      ({ guess, fallbackProjectId }) => {
+        if (!cancelled) setAnswer({ ticketId: ticket.id, suggestion: { pending: false, guess, fallbackProjectId } });
+      },
+      () => {
+        if (!cancelled) setAnswer({ ticketId: ticket.id, suggestion: { pending: false, guess: null, fallbackProjectId: null } });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [asks, rpc, ticket.id, ticket.title, ticket.description, tags]);
+  if (!asks) return null;
+  return answer === null || answer.ticketId !== ticket.id ? { pending: true } : answer.suggestion;
 }
 
 /** "Push after applying" is a per-user habit, so it lives in localStorage rather than on the card. */

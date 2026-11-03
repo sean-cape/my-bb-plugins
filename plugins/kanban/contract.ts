@@ -1,7 +1,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { COMMIT_SHA_PATTERN } from "bb-diff-view/types";
-import { TICKET_TITLE_MAX_LENGTH, boardSchema, columnSchema, dueDateSchema, sourceSchema, syncStatusSchema, tagSchema, ticketSchema } from "./shared/board";
+import { TICKET_TITLE_MAX_LENGTH, boardSchema, projectGuessSchema, columnSchema, dueDateSchema, sourceSchema, syncStatusSchema, tagSchema, ticketSchema } from "./shared/board";
 import { commentApplySchema, conversationDataSchema, diffCommentSchema, diffCommentTargetSchema, pendingReviewStateSchema, prCommentSchema, reviewEventSchema } from "./shared/comments";
 import { blameLineSchema, commitRangeSchema, diffCommitsSchema, diffDeltaSchema, diffSideSchema, structuralDiffSchema, suggestionItemSchema, symbolLookupSchema, symbolUsagesSchema, ticketDiffSchema } from "./shared/diff";
 import { dumpSchema, proposedTicketSchema } from "./shared/dump";
@@ -139,6 +139,11 @@ export const rpcContract = defineRpcContract({
   ticket_start_thread: {
     input: z.object({ id: z.string(), projectId: z.string() }).strict(),
     output: ticketSchema,
+  },
+  /** The project the card panel defaults to for a card with none: a model's guess, else the fallback project setting. */
+  ticket_guess_project: {
+    input: z.object({ id: z.string() }).strict(),
+    output: z.object({ guess: projectGuessSchema.nullable(), fallbackProjectId: z.string().nullable() }),
   },
   /** Turn the review loop on or off; off stops it after its current step. */
   /** `gates` are chosen as monitoring turns on; without them the card's kind picks the defaults. */

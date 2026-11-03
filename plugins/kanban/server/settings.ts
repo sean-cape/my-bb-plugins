@@ -67,6 +67,20 @@ export function defineSettings(bb: BbPluginApi) {
       description:
         "Used for PR cards whose repository does not match any project's git remote (and auto-creation is off), and as the default for ad hoc tickets.",
     },
+    guessProjects: {
+      type: "boolean",
+      label: "Guess a card's project",
+      description:
+        "A card with no project defaults to the one Claude Haiku picks from its title, description and the cards already filed under each project, run through the Claude Code CLI. Off, it defaults to the fallback project.",
+      default: true,
+    },
+    claudePath: {
+      type: "string",
+      label: "Claude Code CLI binary",
+      description:
+        "Path to `claude`, used to guess a card's project. bb launched from the Dock doesn't see your shell's PATH; when `claude` isn't found there, ~/.local/bin/claude is tried.",
+      default: "claude",
+    },
     hideVendored: {
       type: "boolean",
       label: "Hide vendored files in the changes view",

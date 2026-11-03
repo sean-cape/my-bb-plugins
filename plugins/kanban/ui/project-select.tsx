@@ -11,6 +11,9 @@ import { type ProjectOption, useCreateProjectFromFolder } from "./data";
 
 const NONE_LABEL = "No project (no thread)";
 
+/** A model's pick for this card, or `"pending"` while it is still choosing. */
+export type ProjectPickerSuggestion = { projectId: string; reason: string } | "pending";
+
 type Row = { kind: "none" } | { kind: "project"; project: ProjectOption } | { kind: "new" };
 
 function rowKey(row: Row): string {
@@ -21,19 +24,21 @@ function rowKey(row: Row): string {
  * A project picker whose open list takes vim keys, which a native select's popup never sees: j/k or the arrows move,
  * gg/G jump to the ends, Ctrl-D/Ctrl-U move half a list, Enter picks, / or i filters, and Escape closes (or leaves
  * the filter box). It starts with "New project from folder…", which makes a project of a directory picked in the native
- * folder dialog and selects it.
+ * folder dialog and selects it. A suggestion marks the guessed project in the trigger and the list, with its reason.
  */
 export function ProjectSelect({
   projects,
   value,
   onChange,
   allowNone,
+  suggestion,
   className,
 }: {
   projects: ProjectOption[];
   value: string;
   onChange: (value: string) => void;
   allowNone: boolean;
+  suggestion?: ProjectPickerSuggestion;
   className?: string;
 }) {
   const createProject = useCreateProjectFromFolder();
@@ -58,6 +63,8 @@ export function ProjectSelect({
     ...options.filter((project) => project.name.toLowerCase().includes(query)).map((project) => ({ kind: "project", project }) as const),
   ];
   const active = Math.min(highlight, rows.length - 1);
+  const suggestedId = suggestion === undefined || suggestion === "pending" ? null : suggestion.projectId;
+  const suggestionTitle = suggestion === "pending" ? "Guessing the project from the card…" : suggestion === undefined ? undefined : `Suggested: ${suggestion.reason || "the likeliest project for this card"}`;
 
   useEffect(() => {
     if (open) list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
@@ -122,6 +129,16 @@ export function ProjectSelect({
           <span className={cn("min-w-0 flex-1 truncate", (creating || current === undefined) && "text-muted-foreground")}>
             {creating ? "Choosing a folder…" : (current?.name ?? (allowNone && value === "" ? NONE_LABEL : "Choose a project"))}
           </span>
+          {suggestion === "pending" || (suggestedId !== null && suggestedId === value) ? (
+            <span title={suggestionTitle} className="flex shrink-0">
+              <Icon
+                name="Sparkles"
+                fallback="Zap"
+                aria-label={suggestionTitle}
+                className={cn("size-3.5 text-muted-foreground", suggestion === "pending" && "animate-pulse")}
+              />
+            </span>
+          ) : null}
           <Icon name="ChevronDown" className="size-3.5 shrink-0 text-muted-foreground" />
         </button>
       </Popover.Trigger>
@@ -202,6 +219,11 @@ export function ProjectSelect({
                   <span className="min-w-0 flex-1 truncate">
                     {row.kind === "project" ? row.project.name : row.kind === "none" ? NONE_LABEL : "New project from folder…"}
                   </span>
+                  {row.kind === "project" && row.project.id === suggestedId ? (
+                    <span title={suggestionTitle} className="shrink-0 text-xs text-muted-foreground">
+                      suggested
+                    </span>
+                  ) : null}
                   {selected ? <Icon name="Check" className="size-3.5 shrink-0" /> : null}
                 </div>
               );

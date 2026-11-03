@@ -275,6 +275,7 @@ export function registerCli(ctx: KanbanContext, services: Services): void {
               }
               ticket = await spawnThreadForTicket(ticket.id, projectId);
             }
+            services.projectGuess.prefetch(ticket.id);
             return {
               exitCode: 0,
               stdout: options.json ? JSON.stringify(ticket) : `Added ${formatTicket(ticket, columns)}`,

@@ -397,7 +397,7 @@ interface StubPendingReview {
 let ghPending: { reviews: StubPendingReview[]; nextComment: number; created: Array<Record<string, unknown>> } = { reviews: [], nextComment: 9000, created: [] };
 let host: Host | null = null;
 
-async function load(settings: Record<string, string | number | boolean> = {}) {
+async function load(settings: Record<string, string | number | boolean> = {}, { extraProjects = [] }: { extraProjects?: Array<{ id: string; name: string; gitRemoteUrl: string | null }> } = {}) {
   spawned = [];
   threadOutputs.clear();
   threadStatuses.clear();
@@ -408,7 +408,8 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
     pluginId: "kanban",
     agentSkillIds: ["kanban"],
     // The direct-post tests predate staging drafts on GitHub and keep exercising that path; staging tests turn it on.
-    settings: { githubToken: "tok", stageOnGithub: false, ...settings },
+    // Guessing a card's project would run the real `claude`; the guess's tests point it at a stub.
+    settings: { githubToken: "tok", stageOnGithub: false, guessProjects: false, ...settings },
     sdk: {
       projects: {
         list: async () => [
@@ -432,6 +433,7 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
             createdAt: 0,
             updatedAt: 0,
           },
+          ...extraProjects.map((project) => ({ ...project, kind: "standard", sources: [], createdAt: 0, updatedAt: 0 })),
         ],
       },
       threads: {
@@ -4402,5 +4404,106 @@ describe("columns", () => {
     const next = await board();
     expect(next.columns.map((column) => column.id)).toEqual(["todo", "doing", "done"]);
     expect(next.tickets.find((entry) => entry.id === ticket.id)?.columnId).toBe("todo");
+  });
+});
+
+describe("project guess", () => {
+  let dir: string;
+  let calls: string;
+
+  /** A `claude` stand-in that logs each prompt and answers with `answer` as its structured output. */
+  async function stubClaude(answer: { projectId: string | null; reason: string }, { delayMs = 0, fail = false } = {}): Promise<string> {
+    const path = join(dir, "claude");
+    const result = JSON.stringify({ type: "result", is_error: false, result: JSON.stringify(answer), structured_output: answer });
+    await writeFile(
+      path,
+      `#!/bin/sh\nfor last; do :; done\nprintf '%s\\n---\\n' "$last" >> '${calls}'\nsleep ${delayMs / 1000}\n${fail ? "echo boom >&2; exit 1" : `printf '%s' '${result}'`}\n`,
+      { mode: 0o755 },
+    );
+    return path;
+  }
+
+  async function prompts(): Promise<string[]> {
+    const log = await readFile(calls, "utf8").catch(() => "");
+    return log.split("\n---\n").filter((entry) => entry.trim() !== "");
+  }
+
+  const dotfiles = { id: "proj_dots", name: "dotfiles", gitRemoteUrl: "git@github.com:acme-co/dotfiles.git" };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "kanban-guess-"));
+    calls = join(dir, "calls.log");
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("offers the model's pick for a card with no project, from its text and the cards filed under each project", async () => {
+    const claudePath = await stubClaude({ projectId: "proj_dots", reason: "Shell config lives there" });
+    await load({ guessProjects: true, claudePath, autoStartThreads: false }, { extraProjects: [dotfiles] });
+    await current().harness.behavior.callRpc("ticket_create", { title: "Bump the widget API client", projectId: "proj_acme" });
+    const card = (await current().harness.behavior.callRpc("ticket_create", { title: "Speed up the zsh prompt", description: "It takes two seconds to draw." })) as Ticket;
+
+    const answer = await current().harness.behavior.callRpc("ticket_guess_project", { id: card.id });
+    expect(answer).toEqual({ guess: { projectId: "proj_dots", reason: "Shell config lives there" }, fallbackProjectId: null });
+    // Creating the card started the guess, and the panel's ask joined it rather than running another.
+    const sent = await prompts();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("- id proj_dots: dotfiles (acme-co/dotfiles)");
+    expect(sent[0]).toContain("- id proj_acme: widgets (acme-co/widgets, /Users/me/widgets)");
+    expect(sent[0]).toContain("  - card: Bump the widget API client");
+    expect(sent[0]).toContain("Title: Speed up the zsh prompt");
+    expect(sent[0]).toContain("It takes two seconds to draw.");
+
+    await current().harness.behavior.callRpc("ticket_guess_project", { id: card.id });
+    expect(await prompts()).toHaveLength(1);
+    await current().harness.behavior.callRpc("ticket_update", { id: card.id, title: "Speed up the fish prompt", description: "" });
+    await current().harness.behavior.callRpc("ticket_guess_project", { id: card.id });
+    expect(await prompts()).toHaveLength(2);
+  });
+
+  it("stores the guess for the card", async () => {
+    const claudePath = await stubClaude({ projectId: "proj_dots", reason: "Shell config" });
+    await load({ guessProjects: true, claudePath }, { extraProjects: [dotfiles] });
+    const card = (await current().harness.behavior.callRpc("ticket_create", { title: "Speed up the zsh prompt" })) as Ticket;
+    await current().harness.behavior.callRpc("ticket_guess_project", { id: card.id });
+    expect(await current().bb.storage.kv.get("projectGuesses")).toEqual({ [card.id]: { key: expect.any(String), guess: { projectId: "proj_dots", reason: "Shell config" } } });
+  });
+
+  it("drops an answer naming no listed project and falls back to the fallback project setting", async () => {
+    const claudePath = await stubClaude({ projectId: "proj_gone", reason: "Made up" });
+    await load({ guessProjects: true, claudePath, defaultProject: "proj_acme" }, { extraProjects: [dotfiles] });
+    const card = (await current().harness.behavior.callRpc("ticket_create", { title: "Speed up the zsh prompt" })) as Ticket;
+    expect(await current().harness.behavior.callRpc("ticket_guess_project", { id: card.id })).toEqual({ guess: null, fallbackProjectId: "proj_acme" });
+  });
+
+  it("answers no guess when claude fails", async () => {
+    const claudePath = await stubClaude({ projectId: "proj_dots", reason: "" }, { fail: true });
+    await load({ guessProjects: true, claudePath }, { extraProjects: [dotfiles] });
+    const card = (await current().harness.behavior.callRpc("ticket_create", { title: "Speed up the zsh prompt" })) as Ticket;
+    expect(await current().harness.behavior.callRpc("ticket_guess_project", { id: card.id })).toEqual({ guess: null, fallbackProjectId: null });
+    const other = (await current().harness.behavior.callRpc("ticket_create", { title: "Speed up the fish prompt" })) as Ticket;
+    await current().harness.behavior.callRpc("ticket_guess_project", { id: other.id });
+    // A failure holds further guesses off for a while rather than starting a failing process per card.
+    expect(await prompts()).toHaveLength(1);
+  });
+
+  it("asks nothing when the guess is off, the card has a project, or there is one project to choose", async () => {
+    const claudePath = await stubClaude({ projectId: "proj_dots", reason: "" });
+    await load({ guessProjects: false, claudePath }, { extraProjects: [dotfiles] });
+    const off = (await current().harness.behavior.callRpc("ticket_create", { title: "A" })) as Ticket;
+    expect(await current().harness.behavior.callRpc("ticket_guess_project", { id: off.id })).toEqual({ guess: null, fallbackProjectId: null });
+    await current().harness.lifecycle.dispose();
+
+    await load({ guessProjects: true, claudePath }, { extraProjects: [dotfiles] });
+    const filed = (await current().harness.behavior.callRpc("ticket_create", { title: "B", projectId: "proj_acme" })) as Ticket;
+    expect(await current().harness.behavior.callRpc("ticket_guess_project", { id: filed.id })).toEqual({ guess: null, fallbackProjectId: null });
+    await current().harness.lifecycle.dispose();
+
+    await load({ guessProjects: true, claudePath });
+    const lone = (await current().harness.behavior.callRpc("ticket_create", { title: "C" })) as Ticket;
+    expect(await current().harness.behavior.callRpc("ticket_guess_project", { id: lone.id })).toEqual({ guess: null, fallbackProjectId: null });
+    expect(await prompts()).toEqual([]);
   });
 });

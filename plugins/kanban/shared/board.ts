@@ -181,6 +181,10 @@ export const ticketSchema = z.object({
 });
 export type Ticket = z.infer<typeof ticketSchema>;
 
+/** A small model's pick of the project a card with none belongs to, offered as the card panel's default. */
+export const projectGuessSchema = z.object({ projectId: z.string(), reason: z.string() });
+export type ProjectGuess = z.infer<typeof projectGuessSchema>;
+
 export const syncStatusSchema = z.object({
   lastSyncAt: z.number().nullable(),
   lastError: z.string().nullable(),

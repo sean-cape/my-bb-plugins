@@ -9,6 +9,7 @@ import type { KanbanContext } from "./context";
 import type { TicketRow } from "./db/rows";
 import { fetchPrHeads, github, prStateOf, repoFromRepositoryUrl, resolveToken, searchPulls, type GithubPull } from "./github";
 import { JIRA_FIELDS, adfToText, jira, jiraConfig, searchJira, toJiraIssue, type JiraConfig, type JiraSearchIssue } from "./jira";
+import type { ProjectGuesser } from "./project-guess";
 import type { Projects } from "./projects";
 import type { Reviews } from "./reviews/reviews";
 import type { Tour } from "./tour";
@@ -69,11 +70,12 @@ export function createSourceSync(
     board,
     threads,
     projects,
+    projectGuess,
     prComments,
     pendingReview,
     reviews,
     tour,
-  }: { board: BoardStore; threads: CardThreads; projects: Projects; prComments: PrComments; pendingReview: PendingReview; reviews: Reviews; tour: Tour },
+  }: { board: BoardStore; threads: CardThreads; projects: Projects; projectGuess: ProjectGuesser; prComments: PrComments; pendingReview: PendingReview; reviews: Reviews; tour: Tour },
 ) {
   const { bb, settings, stmts, sync, publish } = ctx;
   const { getTicket, getColumns, getSources, createTicket, moveTicket } = board;
@@ -388,6 +390,7 @@ export function createSourceSync(
           jira: jiraIssue,
         });
         if (pass.autoStartThreads && projectId !== null) pass.toSpawn.push(ticket.id);
+        else projectGuess.prefetch(ticket.id);
         continue;
       }
       updateJira(pass, existing.id, issue, jiraIssue);

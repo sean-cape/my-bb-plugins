@@ -7,7 +7,7 @@ import type { Services } from "./services";
 /** The board's RPC surface; each handler hands off to the feature that owns it. */
 export function registerRpc(ctx: KanbanContext, services: Services): void {
   const { bb, db, stmts, sync, publish } = ctx;
-  const { board, subjects, threads, projects, changes, viewed, deltas, prComments, prConversation, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, codeReviewThreads, loop, projectSettings } = services;
+  const { board, subjects, threads, projects, changes, viewed, deltas, prComments, prConversation, pendingReview, diffComments, reviews, tour, dumps, subtasks, sourceSync, codeReviewThreads, loop, projectSettings, projectGuess } = services;
   const { resolveDiffSubject } = subjects;
 
   bb.rpc.register(rpcContract, {
@@ -68,6 +68,7 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
       if (input.startThread && input.projectId !== null) {
         return threads.spawnThreadForTicket(ticket.id, input.projectId);
       }
+      projectGuess.prefetch(ticket.id);
       return ticket;
     },
     ticket_update: ({ id, title, description }) => board.updateText(id, title, description),
@@ -100,6 +101,7 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
     ticket_delete: ({ id }) => board.deleteTicket(id),
     ticket_restore: ({ id }) => board.restoreTicket(id),
     ticket_start_thread: ({ id, projectId }) => threads.spawnThreadForTicket(id, projectId),
+    ticket_guess_project: async ({ id }) => ({ guess: await projectGuess.guessProject(id), fallbackProjectId: await projects.fallbackProject(null) }),
     ticket_set_monitored: ({ id, monitored, gates }) => loop.setMonitored(id, monitored, gates ?? null),
     loop_set_gates: ({ id, gates }) => loop.setGates(id, gates),
     loop_approve_plan: ({ id, plan }) => loop.approvePlan(id, plan),

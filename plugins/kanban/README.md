@@ -153,6 +153,17 @@ its PR is reviewed and its review findings and comments are handed to agents.
   threads; columns and the todo list sit on translucent, blurred panels.
 - **Ad hoc cards** from the page, from `bb kanban add`, or from an agent inside
   a thread (the card is linked to that thread).
+- **Project guess**: the card panel's Thread row picks the project for a card
+  that has none. Claude Haiku, run through the Claude Code CLI, chooses from
+  the card's title, description, tags and Jira key, each project's name,
+  repository and path, and the cards already filed under each project; a
+  sparkle marks the guess (hover it for the reason) and the list labels it
+  suggested. The guess starts when the card is made, so it's usually ready by
+  the time the card is opened; it's kept per card until the card's text or the
+  project list changes. An answer naming no listed project is dropped. Without
+  a guess the row falls back to the fallback project, then the first project.
+  A pick, including No project, always stays, and the card's own project is
+  set only when its thread starts.
 - **Monitored cards**: choose Review loop under How it runs when creating the
   card (Thread is the default once a project is picked; the gates sit inline,
   and Create and start makes the card, sets its loop and starts its thread in
@@ -695,6 +706,11 @@ GitHub access uses the **GitHub token** plugin setting, or falls back to
 bb started from the Dock or Finder gets a minimal PATH without Homebrew, so
 set the **GitHub CLI binary** setting to the full path (e.g.
 `/opt/homebrew/bin/gh`) if the board reports no token.
+
+The project guess runs `claude` on the BB server's machine with your Claude
+Code sign-in, outside any project, with no tools, MCP servers or settings
+files. Point the **Claude Code CLI binary** setting at it if it isn't on bb's
+PATH or in `~/.local/bin`, or turn off **Guess a card's project**.
 
 Optional settings: sync interval, whether to spawn a thread for every new PR
 card, a fallback project for PRs whose repository matches no project's git

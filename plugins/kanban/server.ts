@@ -50,6 +50,7 @@ export default async function plugin(bb: BbPluginApi) {
   const { board, codeReviewThreads, reviews, sourceSync, projectSettings, spend } = services;
 
   await projectSettings.loadProjectSettings();
+  await services.projectGuess.loadGuesses();
   await board.keepPreLoopDefaults();
   sourceSync.registerService();
   spend.registerService();
