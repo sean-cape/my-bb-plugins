@@ -54,10 +54,22 @@ export function createRoutines(bb: BbPluginApi, vault: VaultAccess, routineProvi
       providerId,
       environment: { type: "host", hostId: await vault.hostId(), workspace: { type: "unmanaged", path: root } },
       title: `Daily ${mode} — ${dateKey}`,
-      prompt: `/daily-note ${mode}`,
+      prompt: routinePrompt(mode),
     });
     return { threadId: thread.id };
   }
 
   return { start, isVaultProject };
+}
+
+/**
+ * The prompt a routine thread starts with. A bare `/daily-note start` reached the agent as text: the provider doesn't
+ * expand slash commands in a spawned prompt, and the agent, seeing no skill by that name, built the note by hand. So the
+ * prompt names the skill and the tool that loads it.
+ */
+export function routinePrompt(mode: RoutineMode): string {
+  return [
+    `Run the \`daily-note\` skill in \`${mode}\` mode: load it with the Skill tool (skill \`daily-note\`, args \`${mode}\`) and follow it.`,
+    "If no skill by that name is available, stop and say so instead of writing the note by hand.",
+  ].join("\n");
 }

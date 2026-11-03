@@ -17,8 +17,9 @@ Work in your Obsidian vault without leaving bb.
   note for a meeting, filed where your rules say: interviews in one folder,
   one-on-ones in another, the rest under Meetings. Agents read the same
   calendar with `bb obsidian calendar`.
-- **Start day** and **Wrap up**, which run your `/daily-note` routine in a
-  thread inside the vault.
+- **Start day** and **Wrap up**, which run your `daily-note` skill in a
+  thread inside the vault; the morning pass runs unattended and ends with
+  one question.
 - A **Vault home** with today's inbox, carried-forward items, active tickets,
   and recently edited notes.
 - `@` mentions for any note, or today's daily note, as thread context.
