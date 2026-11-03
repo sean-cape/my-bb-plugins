@@ -28,6 +28,7 @@ import {
   entryProjectId,
   searchThreads,
   PINNED_ENTRY,
+  RECENT_ENTRY,
   threadRowsForEntry,
   UNREAD_ENTRY,
   unreadThreads,
@@ -63,6 +64,12 @@ import { ProjectsColumn } from "./ProjectsColumn.js";
 import { ThreadsColumn } from "./ThreadsColumn.js";
 import { undoLastArchive } from "../undo-archive.js";
 
+const START_ENTRIES: Record<PickerStart["entry"], LeftEntry> = {
+  unread: UNREAD_ENTRY,
+  pinned: PINNED_ENTRY,
+  recent: RECENT_ENTRY,
+};
+
 /**
  * Opens on Unread with the left column focused, so the projects are one j
  * away, unless the sidebar's indicators asked for an entry's threads. The
@@ -75,7 +82,7 @@ function initialSelection(
   resolveProjectId: SidebarProjectIdResolver,
 ): { leftKey: string; threadId: string | null; column: PickerColumn } {
   const rows = threadRowsForEntry({
-    entry: start.entry === "pinned" ? PINNED_ENTRY : UNREAD_ENTRY,
+    entry: START_ENTRIES[start.entry],
     threads,
     resolveProjectId,
   });

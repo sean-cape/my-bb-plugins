@@ -507,7 +507,7 @@ describe("project picker", () => {
     act(() => closeProjectPicker());
   });
 
-  it("lists Open folder, Unassociated, Pinned, and Unread above projects by recent activity", async () => {
+  it("lists Open folder, Unassociated, Recent, Pinned, and Unread above projects by recent activity", async () => {
     setPreferencesMirrorStorageForTest(null);
     renderPicker();
     const dialog = await openPicker();
@@ -516,6 +516,7 @@ describe("project picker", () => {
       expect(leftLabels()).toEqual([
         "Open folder…",
         "Unassociated",
+        "Recent",
         "Pinned",
         "Unread",
         "App",
@@ -591,6 +592,8 @@ describe("project picker", () => {
     expect(selected("Projects")).toBe("Unread");
     press(dialog, "k");
     expect(selected("Projects")).toBe("Pinned");
+    press(dialog, "k");
+    expect(selected("Projects")).toBe("Recent");
     press(dialog, "k");
     expect(selected("Projects")).toBe("Unassociated");
     press(dialog, "g");
@@ -790,6 +793,7 @@ describe("project picker", () => {
     expect(leftLabels()).toEqual([
       "Open folder…",
       "Unassociated",
+      "Recent",
       "Pinned",
       "Unread",
       "Web",
@@ -826,6 +830,7 @@ describe("project picker", () => {
       expect(leftLabels()).toEqual([
         "Open folder…",
         "Unassociated",
+        "Recent",
         "Pinned",
         "Unread",
         "Web",

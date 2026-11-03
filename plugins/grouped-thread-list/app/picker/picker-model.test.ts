@@ -26,7 +26,7 @@ describe("buildLeftEntries", () => {
     project("proj_b", "hss"),
   ];
 
-  it("lists Open folder, Unassociated, Pinned, Unread, then projects", () => {
+  it("lists Open folder, Unassociated, Recent, Pinned, Unread, then projects", () => {
     expect(
       buildLeftEntries({
         orderedProjects: projects,
@@ -34,7 +34,7 @@ describe("buildLeftEntries", () => {
         currentProjectId: null,
         query: "",
       }).map((entry) => entry.key),
-    ).toEqual(["browse", "personal", "pinned", "unread", "proj_a", "proj_b"]);
+    ).toEqual(["browse", "personal", "recent", "pinned", "unread", "proj_a", "proj_b"]);
     expect(
       buildLeftEntries({
         orderedProjects: projects,
@@ -42,7 +42,7 @@ describe("buildLeftEntries", () => {
         currentProjectId: null,
         query: "",
       }).map((entry) => entry.key),
-    ).toEqual(["browse", "pinned", "unread", "proj_a", "proj_b"]);
+    ).toEqual(["browse", "recent", "pinned", "unread", "proj_a", "proj_b"]);
   });
 
   it("filters to matching projects only, and switches to path mode for paths", () => {
@@ -73,6 +73,7 @@ describe("buildLeftEntries", () => {
     });
     expect(entries.map((entry) => [entry.key, entry.group])).toEqual([
       ["browse", "nav"],
+      ["recent", "nav"],
       ["pinned", "nav"],
       ["unread", "nav"],
       ["proj_b", "current"],
@@ -292,6 +293,36 @@ describe("thread sections", () => {
   });
 });
 
+describe("Recent", () => {
+  const DAY = 86_400_000;
+  const now = new Date(2026, 9, 9, 15, 0).getTime();
+
+  it("lists every thread, children too, by last activity, filed by its age", () => {
+    const threads = [
+      makeSidebarThread({ id: "old", projectId: "proj_a", latestAttentionAt: now - 30 * DAY, updatedAt: now - 30 * DAY, lastReadAt: now }),
+      makeSidebarThread({ id: "asking", projectId: "proj_b", hasPendingInteraction: true, latestAttentionAt: now - 3 * DAY, updatedAt: now - 3 * DAY }),
+      makeSidebarThread({ id: "running", projectId: "proj_a", status: "active", latestAttentionAt: now - 10 * DAY, updatedAt: now - 60_000 }),
+      makeSidebarThread({ id: "parent", projectId: "proj_a", latestAttentionAt: now - DAY, updatedAt: now - DAY, lastReadAt: now }),
+      makeSidebarThread({ id: "child", projectId: "proj_a", parentThreadId: "parent", latestAttentionAt: now - 120_000, updatedAt: now - 120_000, lastReadAt: now }),
+      makeSidebarThread({ id: "side-chat", projectId: "proj_a", isHidden: true, latestAttentionAt: now, updatedAt: now }),
+    ];
+    expect(
+      threadRowsForEntry({
+        entry: { kind: "recent", key: "recent", label: "Recent", group: "nav" },
+        threads,
+        resolveProjectId: createThreadProjectResolver(threads),
+        now,
+      }).map((row) => [row.thread.id, row.depth, row.section]),
+    ).toEqual([
+      ["running", 0, "today"],
+      ["child", 0, "today"],
+      ["parent", 0, "yesterday"],
+      ["asking", 0, "week"],
+      ["old", 0, "older"],
+    ]);
+  });
+});
+
 describe("searchThreads", () => {
   const threads = [
     makeSidebarThread({ id: "kanban", title: "Make the kanban board navigable", latestAttentionAt: 1 }),
@@ -326,19 +357,20 @@ describe("searchThreads", () => {
 
 describe("entryProjectId", () => {
   it("starts new threads in the selected project, else the active one", () => {
-    const [browse, personal, pinned, unread, projectEntry] = buildLeftEntries({
+    const [browse, personal, recent, pinned, unread, projectEntry] = buildLeftEntries({
       orderedProjects: [project("proj_a", "alpha")],
       personalProjectId: "proj_me",
       currentProjectId: null,
       query: "",
     });
     expect(
-      [browse, personal, pinned, unread, projectEntry, undefined].map(
+      [browse, personal, recent, pinned, unread, projectEntry, undefined].map(
         (entry) => entryProjectId(entry, "proj_active"),
       ),
     ).toEqual([
       "proj_active",
       "proj_me",
+      "proj_active",
       "proj_active",
       "proj_active",
       "proj_a",

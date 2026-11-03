@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 
 /** The left-column entry the picker starts on, and whether it starts in that entry's threads. */
 export interface PickerStart {
-  entry: "unread" | "pinned";
+  entry: "unread" | "pinned" | "recent";
   inThreads: boolean;
 }
 

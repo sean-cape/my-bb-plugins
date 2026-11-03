@@ -63,6 +63,11 @@ export default definePluginApp((app) => {
     run: () => openProjectPicker({ entry: "unread", inThreads: true }),
   });
   app.commands.register({
+    id: "show-recent-threads",
+    title: "Show recently active threads",
+    run: () => openProjectPicker({ entry: "recent", inThreads: true }),
+  });
+  app.commands.register({
     id: "show-pinned-threads",
     title: "Show pinned threads",
     run: () => openProjectPicker({ entry: "pinned", inThreads: true }),

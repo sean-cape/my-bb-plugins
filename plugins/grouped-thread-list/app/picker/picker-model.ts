@@ -11,7 +11,10 @@ import {
   isRuntimeBusyThread,
   isUnreadDoneThread,
 } from "../model/thread-activity.js";
-import type { SidebarProjectIdResolver } from "../model/active-project.js";
+import {
+  threadLastActiveAt,
+  type SidebarProjectIdResolver,
+} from "../model/active-project.js";
 
 export type PickerColumn = "left" | "right" | "preview";
 
@@ -34,6 +37,7 @@ export type LeftEntry = LeftEntryBase &
     | { kind: "pinned"; key: "pinned" }
     | { kind: "personal"; key: "personal"; projectId: string }
     | { kind: "unread"; key: "unread" }
+    | { kind: "recent"; key: "recent" }
     | { kind: "project"; key: string; project: SidebarProject }
     | { kind: "search"; key: "search"; query: string }
     | { kind: "path"; key: "path" }
@@ -44,6 +48,13 @@ export const PINNED_ENTRY: LeftEntry = {
   kind: "pinned",
   key: "pinned",
   label: "Pinned",
+  group: "nav",
+};
+
+export const RECENT_ENTRY: LeftEntry = {
+  kind: "recent",
+  key: "recent",
+  label: "Recent",
   group: "nav",
 };
 
@@ -174,7 +185,7 @@ export function buildLeftEntries({
         group: "nav",
       });
     }
-    entries.push(PINNED_ENTRY, UNREAD_ENTRY);
+    entries.push(RECENT_ENTRY, PINNED_ENTRY, UNREAD_ENTRY);
   }
   const current = orderedProjects.find(
     (project) => project.id === currentProjectId,
@@ -315,6 +326,22 @@ function isRunningClaudeThread(thread: SidebarThread): boolean {
 }
 
 /**
+ * Every thread, children included, strictly by last activity: running and
+ * waiting threads aren't floated up, so the order reads as a timeline.
+ */
+export function recentThreads(
+  threads: readonly SidebarThread[],
+): SidebarThread[] {
+  return threads
+    .filter(isSidebarProjectThread)
+    .sort(
+      (left, right) =>
+        threadLastActiveAt(right) - threadLastActiveAt(left) ||
+        compareStandardThreads(left, right),
+    );
+}
+
+/**
  * Root threads only, matching the unread dot the glyphs already show. Running
  * Claude sessions are listed too so the tab doubles as "what needs me soon".
  */
@@ -358,6 +385,12 @@ export function threadRowsForEntry({
         unreadThreads(visible).map((thread) => ({ thread, children: [] })),
         now,
       );
+    case "recent":
+      return recentThreads(visible).map((thread) => ({
+        thread,
+        depth: 0,
+        section: ageSection(threadLastActiveAt(thread), now),
+      }));
     case "search":
       return searchThreads(visible, entry.query).map((thread) => ({
         thread,

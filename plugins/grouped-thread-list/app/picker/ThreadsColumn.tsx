@@ -3,7 +3,10 @@ import { enter, PRESS, speed, STAGGER, stagger, useChangedSinceMount, SOFT } fro
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { threadListIndicatorStateForThread } from "../model/thread-activity.js";
-import type { SidebarProjectIdResolver } from "../model/active-project.js";
+import {
+  threadLastActiveAt,
+  type SidebarProjectIdResolver,
+} from "../model/active-project.js";
 import type { SidebarThread } from "../model/sidebar-thread.js";
 import type { SidebarProject } from "../model/use-sidebar-data.js";
 import { ThreadStatusGlyph } from "../rows/ThreadStatusGlyph.js";
@@ -36,15 +39,22 @@ function showsProjectMonograms(entry: LeftEntry | undefined): boolean {
   return (
     entry?.kind === "pinned" ||
     entry?.kind === "unread" ||
+    entry?.kind === "recent" ||
     entry?.kind === "search"
   );
 }
 
 /**
  * The age agrees with the order: running threads sort by when they started,
- * so they don't reshuffle on every update; the rest by latest attention.
+ * so they don't reshuffle on every update; Recent by last activity; the rest
+ * by latest attention.
  */
-function rowAge(row: ThreadRowModel, now: number): string {
+function rowAge(
+  row: ThreadRowModel,
+  entry: LeftEntry | undefined,
+  now: number,
+): string {
+  if (entry?.kind === "recent") return formatAge(threadLastActiveAt(row.thread), now);
   return formatAge(
     row.section === "running" ? row.thread.createdAt : threadActivityAt(row.thread),
     now,
@@ -55,6 +65,7 @@ const HEADER_ICONS: Partial<Record<LeftEntry["kind"], IconName>> = {
   personal: "UserRound",
   pinned: "Pin",
   unread: "Mail",
+  recent: "Clock",
   search: "Search",
 };
 
@@ -279,7 +290,7 @@ export function ThreadsColumn({
                     <span className="flex size-3 items-center justify-center">
                       <PinnedMark pinned={row.thread.pinnedAt !== null} />
                     </span>
-                    <span className={ROW_NUMBER_CLASS}>{rowAge(row, now)}</span>
+                    <span className={ROW_NUMBER_CLASS}>{rowAge(row, entry, now)}</span>
                   </span>
                 </div>
               </Fragment>

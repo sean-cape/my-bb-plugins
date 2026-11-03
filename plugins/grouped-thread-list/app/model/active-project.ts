@@ -17,6 +17,11 @@ export function createThreadProjectResolver(
   );
 }
 
+/** When anything last happened on the thread: a turn, a status change, a reply. */
+export function threadLastActiveAt(thread: SidebarThread): number {
+  return Math.max(thread.updatedAt, thread.latestAttentionAt);
+}
+
 export function latestActivityByProject(
   threads: readonly SidebarThread[],
   resolveProjectId: SidebarProjectIdResolver,
@@ -25,7 +30,7 @@ export function latestActivityByProject(
   for (const thread of threads) {
     if (thread.isHidden) continue;
     const projectId = resolveProjectId(thread);
-    const at = Math.max(thread.updatedAt, thread.latestAttentionAt);
+    const at = threadLastActiveAt(thread);
     if (at > (latest.get(projectId) ?? -Infinity)) latest.set(projectId, at);
   }
   return latest;

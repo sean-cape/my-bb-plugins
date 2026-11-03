@@ -19,6 +19,7 @@ const ENTRY_ICONS: Record<Exclude<LeftEntry["kind"], "project">, IconName> = {
   personal: "UserRound",
   pinned: "Pin",
   unread: "Mail",
+  recent: "Clock",
   search: "Search",
 };
 
