@@ -40,7 +40,7 @@ export function createCardThreads(ctx: KanbanContext, { board }: { board: BoardS
     }
     const { repo, number, role } = ticket.pr;
     // A review request's thread briefs from the board's review; started before one exists, it reads enough to answer and waits.
-    if (role === "other") return reviewRequestPrompt(ticket, columns, { review: null, narrative: null });
+    if (role === "other") return reviewRequestPrompt(ticket, columns, { review: null, narrative: null, reviewFailed: false });
     return [
       `This thread tracks your pull request ${repo}#${number}: "${ticket.title}" (${ticket.pr.url}).`,
       "",

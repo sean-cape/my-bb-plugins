@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Column, JiraIssue, PullRequest, Source, SyncStatus } from "../shared/board";
 import { reviewDepthSchema, type ReviewDepth } from "../shared/review";
-import { doneColumn, initialColumn, type BoardStore } from "./board";
+import { authoredPrColumn, doneColumn, initialColumn, type BoardStore } from "./board";
 import type { CardThreads } from "./card-threads";
 import type { PrComments } from "./comments/pr-comments";
 import type { PendingReview } from "./comments/pending-review";
@@ -79,7 +79,7 @@ export function createSourceSync(
 ) {
   const { bb, settings, stmts, sync, publish } = ctx;
   const { getTicket, getColumns, getSources, createTicket, moveTicket } = board;
-  const { spawnThreadForTicket } = threads;
+  const { spawnThreadForTicket, linkThread } = threads;
   const { fallbackProject, resolveProjectForRepo, adoptProjectForRepo } = projects;
   const { syncPrComments } = prComments;
 
@@ -275,7 +275,9 @@ export function createSourceSync(
           mergeTags(pass, threadCard, sourceTags);
           continue;
         }
-        const projectId = await resolveProjectForRepo(repo, itemSources[0]!.projectId);
+        // A PR pushed from a bb thread's branch is that thread's work: the thread becomes the card's, in the project it runs in.
+        const authoring = threadId === undefined || threadCard !== undefined ? null : await liveThread(threadId);
+        const projectId = authoring?.projectId ?? (await resolveProjectForRepo(repo, itemSources[0]!.projectId));
         const ticket = createTicket({
           title: item.title,
           description: "",
@@ -287,10 +289,12 @@ export function createSourceSync(
           projectId,
           pr,
         });
+        stmts.setPlacedColumn.run(ticket.columnId, ticket.id);
+        if (authoring !== null) await linkThread(ticket.id, authoring.id);
         const depth = autoReviewDepth(itemSources);
         if (depth !== null) stmts.setAutoReview.run(depth, ticket.id);
         if (itemSources.some((source) => source.narrateNewPrs)) stmts.setAutoNarrative.run(1, ticket.id);
-        if (pass.autoStartThreads && projectId !== null) pass.toSpawn.push(ticket.id);
+        if (pass.autoStartThreads && projectId !== null && authoring === null) pass.toSpawn.push(ticket.id);
         continue;
       }
       stmts.setPr.run(item.title, item.html_url, pr.state, pr.role, pr.author, item.updated_at, pr.body, now, existing.id);
@@ -299,7 +303,7 @@ export function createSourceSync(
         stmts.setLeftSource.run(0, existing.id);
         // Back in a source after leaving it, such as a re-requested review: it needs you again.
         if ((pr.state === "open" || pr.state === "draft") && existing.column_id === doneColumn(pass.columns)) {
-          moveTicket(existing.id, initialColumn(pass.columns, pr), null);
+          place(existing.id, initialColumn(pass.columns, pr));
         }
         const depth = autoReviewDepth(itemSources);
         if (depth !== null && (pr.state === "open" || pr.state === "draft")) stmts.setAutoReview.run(depth, existing.id);
@@ -349,6 +353,38 @@ export function createSourceSync(
       finish(pass, row, state === "merged" || state === "closed" || goneFromDoneSource(pass, row));
     }
     await syncPrHeads(pass, token);
+    placeAuthoredPrs(pass);
+  }
+
+  /** The bb thread behind a branch named after it, when it still exists and isn't archived. */
+  async function liveThread(threadId: string): Promise<{ id: string; projectId: string } | null> {
+    try {
+      const thread = await bb.sdk.threads.get({ threadId });
+      return thread.archivedAt === null ? { id: thread.id, projectId: thread.projectId } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A move of sync's own, remembered so later passes know the card is still where sync put it. */
+  function place(ticketId: string, columnId: string): void {
+    moveTicket(ticketId, columnId, null);
+    stmts.setPlacedColumn.run(columnId, ticketId);
+  }
+
+  /**
+   * Your open PRs follow their state (draft, failing checks or open comments from others, else waiting on reviewers)
+   * for as long as they sit where sync put them; a card you moved by hand stays put until it leaves Done and comes back.
+   */
+  function placeAuthoredPrs(pass: SyncPass): void {
+    const done = doneColumn(pass.columns);
+    for (const row of stmts.openPrs.all()) {
+      if (row.pr_role !== "authored" || row.column_id === done || row.placed_column_id === null || row.column_id !== row.placed_column_id) continue;
+      const ticket = getTicket(row.id);
+      if (ticket.pr === null) continue;
+      const target = authoredPrColumn(pass.columns, ticket.pr, ticket.comments?.open ?? 0);
+      if (target !== row.column_id) place(row.id, target);
+    }
   }
 
   /** Every pass for every open PR: a CI run finishing does not move the PR's updated_at. Merged and closed PRs keep their last values. */

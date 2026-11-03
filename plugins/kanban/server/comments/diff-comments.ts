@@ -4,6 +4,7 @@ import type { KanbanContext } from "../context";
 import { rowToDiffComment, type DiffCommentRow } from "../db/rows";
 import type { Changes } from "../diff/changes";
 import type { DiffSubjects } from "../diff/subjects";
+import { COLUMN } from "../../shared/columns";
 import { doneColumn, type BoardStore } from "../board";
 import { GithubHttpError, NO_GITHUB_TOKEN, githubPages, githubPost, resolveToken } from "../github";
 import type { PendingReview } from "./pending-review";
@@ -142,12 +143,16 @@ export function createDiffComments(
    * Post GitHub drafts: new threads as one review (inline where a line is given, otherwise in the review body), then
    * replies into their threads. Each draft records the synced comment it became so the board shows it once.
    */
-  /** An approval finishes the user's review of someone else's PR, so the card goes where finished cards go. */
-  async function moveApprovedToDone(ticket: Ticket): Promise<boolean> {
-    const done = doneColumn(await getColumns());
-    if (ticket.columnId === done) return false;
-    moveTicket(ticket.id, done, null);
-    return true;
+  /**
+   * The card follows the verdict: an approval finishes the user's review of someone else's PR (Done), a change request
+   * hands it back to its author (Waiting, where the board has it). Says whether the card went to Done.
+   */
+  async function moveAfterVerdict(ticket: Ticket, event: ReviewEvent): Promise<boolean> {
+    const columns = await getColumns();
+    const target = event === "APPROVE" ? doneColumn(columns) : event === "REQUEST_CHANGES" ? (columns.find((column) => column.id === COLUMN.waiting)?.id ?? null) : null;
+    if (target === null || ticket.columnId === target) return false;
+    moveTicket(ticket.id, target, null);
+    return event === "APPROVE";
   }
 
   async function postDiffCommentsToGithub(ticket: Ticket, drafts: DiffComment[], event: ReviewEvent, summary: string): Promise<{ posted: number; url: string | null; movedToDone: boolean }> {
@@ -194,7 +199,7 @@ export function createDiffComments(
       for (const comment of topLevel) stmts.markDiffCommentPosted.run(now, review.html_url, `review:${review.id}`, comment.id);
       posted += topLevel.length;
       url = review.html_url;
-      if (event === "APPROVE") movedToDone = await moveApprovedToDone(ticket);
+      movedToDone = await moveAfterVerdict(ticket, event);
       const created = inlinePosted ? await reviewCommentsOf(repo, number, review.id, auth.token) : [];
       for (const comment of inline) {
         const index = created.findIndex((entry) => entry.path === comment.path && (entry.body ?? "").trim() === comment.body.trim());
@@ -239,7 +244,7 @@ export function createDiffComments(
       const body = summary !== "" ? summary : event === "REQUEST_CHANGES" ? "Requesting changes; see my replies in the review threads." : "";
       const review = await githubPost<{ html_url: string }>(`/repos/${repo}/pulls/${number}/reviews`, auth.token, { event, ...(body === "" ? {} : { body }) });
       url = review.html_url;
-      if (event === "APPROVE") movedToDone = await moveApprovedToDone(ticket);
+      movedToDone = await moveAfterVerdict(ticket, event);
     }
     const row = stmts.byId.get(ticket.id);
     if (repliesPosted > 0 && row !== undefined) {
@@ -257,7 +262,7 @@ export function createDiffComments(
     if (ticket.pr === null) throw new Error("Only PR cards can post to GitHub");
     const drafts = stmts.githubDraftComments.all(ticket.id);
     const { posted, url } = await pendingReview.submit(ticket, drafts, event, summary);
-    const movedToDone = event === "APPROVE" ? await moveApprovedToDone(ticket) : false;
+    const movedToDone = await moveAfterVerdict(ticket, event);
     const row = stmts.byId.get(ticket.id);
     const auth = await resolveToken(settings);
     if (row !== undefined && auth !== null) {

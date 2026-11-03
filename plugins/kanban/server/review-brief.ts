@@ -30,23 +30,28 @@ export function createReviewBrief(ctx: KanbanContext, { board, threads }: { boar
   async function brief(ticketId: string): Promise<void> {
     const ticket = getTicket(ticketId);
     if (!isReviewRequest(ticket) || ticket.projectId === null) return;
-    const reviewRow = stmts.latestCompletedReview.get(ticket.id);
-    if (reviewRow === undefined || reviewRow.briefed_at !== null) return;
-    if (stmts.latestReview.get(ticket.id)?.status === "running") return;
+    const latest = stmts.latestReview.get(ticket.id);
+    if (latest === undefined || latest.status === "running" || latest.briefed_at !== null) return;
     if (narrativePending(ticket.id)) return;
-    const review = rowToReview(reviewRow);
     const narrativeRow = stmts.latestNarrative.get(ticket.id);
     const narrative = narrativeRow === undefined ? null : rowToNarrative(narrativeRow).report;
-    stmts.setReviewBriefed.run(Date.now(), reviewRow.id);
-    if (ticket.threadId === null) {
-      await threads.spawnThreadForTicket(ticket.id, ticket.projectId, reviewRequestPrompt(ticket, await getColumns(), { review, narrative }));
-      return;
+    if (latest.status === "failed") {
+      // A review that never ran still owes the user a thread, or nothing reaches them: it reads the PR itself instead.
+      if (ticket.threadId === null) await threads.spawnThreadForTicket(ticket.id, ticket.projectId, reviewRequestPrompt(ticket, await getColumns(), { review: null, narrative, reviewFailed: true }));
+    } else {
+      const review = rowToReview(latest);
+      if (ticket.threadId === null) {
+        await threads.spawnThreadForTicket(ticket.id, ticket.projectId, reviewRequestPrompt(ticket, await getColumns(), { review, narrative, reviewFailed: false }));
+      } else {
+        await bb.sdk.threads.send({
+          threadId: ticket.threadId,
+          mode: "auto",
+          input: [{ type: "text", text: reviewRequestUpdatePrompt(ticket, review, narrative), mentions: [] }],
+        });
+      }
     }
-    await bb.sdk.threads.send({
-      threadId: ticket.threadId,
-      mode: "auto",
-      input: [{ type: "text", text: reviewRequestUpdatePrompt(ticket, review, narrative), mentions: [] }],
-    });
+    // Marked after the spawn or send, so a failed one is tried again at the next completion.
+    stmts.setReviewBriefed.run(Date.now(), latest.id);
   }
 
   /** A review or narrative thread finished: brief the card it belongs to, if it is a review request waiting for one. */

@@ -23,6 +23,8 @@ export function registerThreadLifecycle(
     if (!autoMoveOnActivity) return;
     const row = stmts.byThread.get(thread.id);
     if (row === undefined) return;
+    // A review asked of you isn't being built here: its thread briefing you is no reason to call it in progress.
+    if (row.kind === "pr" && row.pr_role === "other") return;
     const columns = await getColumns();
     const target = columns.find((column) => column.id === COLUMN.inProgress);
     if (target === undefined) return;

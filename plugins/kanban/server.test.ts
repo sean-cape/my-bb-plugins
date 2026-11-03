@@ -718,6 +718,60 @@ describe("GitHub sync", () => {
     expect(requestPrompt).toContain("Do not post comments");
   });
 
+  it("links a PR pushed from a bb thread's branch to that thread and starts none of its own", async () => {
+    vi.stubGlobal(
+      "fetch",
+      stubGithub({
+        authored: [searchItem("acme-co/widgets", 1, { title: "From a thread", user: { login: "sean" } }), searchItem("acme-co/widgets", 2, { title: "By hand", user: { login: "sean" } })],
+        heads: { "acme-co/widgets#1": { headRef: "bb/from-a-thread-thr_42", rollup: "SUCCESS" }, "acme-co/widgets#2": { headRef: "by-hand", rollup: "SUCCESS" } },
+      }),
+    );
+    await load({ autoStartThreads: true });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const byNumber = new Map((await board()).tickets.map((ticket) => [ticket.pr?.number, ticket]));
+    expect(byNumber.get(1)).toMatchObject({ threadId: "thr_42", projectId: "proj_acme", columnId: "waiting" });
+    expect(byNumber.get(2)).toMatchObject({ threadId: "thr_1" });
+    expect(spawned).toHaveLength(1);
+    expect(current().harness.inspection.sdk.callsTo("threads.updatePluginMetadata")).toEqual([[expect.objectContaining({ threadId: "thr_42", set: { ticketId: byNumber.get(1)!.id } })]]);
+  });
+
+  it("moves your open PR by its state while it sits where sync put it: failing checks or others' comments hand it back to you, and a hand move holds", async () => {
+    // A comment bumps the PR's updated_at, which is what makes sync read the comments again.
+    const mine = (rollup: string | null, comments: Array<{ id: number; login: string; body: string }> = []) =>
+      stubGithub({
+        authored: [searchItem("acme-co/widgets", 1, { title: "Mine", user: { login: "sean" }, updated_at: comments.length === 0 ? "2026-10-05T00:00:00Z" : "2026-10-06T00:00:00Z" })],
+        heads: { "acme-co/widgets#1": { headRef: "mine", rollup } },
+        comments: { issue: comments },
+      });
+    vi.stubGlobal("fetch", mine("SUCCESS"));
+    await load({ autoStartThreads: null });
+    await current().harness.behavior.callRpc("sources_set", {
+      sources: [{ id: "my-prs", name: "Mine", kind: "github-search", query: "is:pr is:open author:@me", tags: ["my-prs"], doneWhenGone: false, enabled: true }],
+    });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const columnOf = async () => (await board()).tickets[0]!.columnId;
+    expect(await columnOf()).toBe("waiting");
+
+    vi.stubGlobal("fetch", mine("FAILURE"));
+    await current().harness.behavior.callRpc("sync_now", null);
+    expect(await columnOf()).toBe("todo");
+
+    vi.stubGlobal("fetch", mine("SUCCESS"));
+    await current().harness.behavior.callRpc("sync_now", null);
+    expect(await columnOf()).toBe("waiting");
+
+    vi.stubGlobal("fetch", mine("SUCCESS", [{ id: 1, login: "alice", body: "Could you rename this?" }]));
+    await current().harness.behavior.callRpc("sync_now", null);
+    expect(await columnOf()).toBe("todo");
+
+    // Moved by hand: sync leaves it alone from here, whatever the PR does.
+    const id = (await board()).tickets[0]!.id;
+    await current().harness.behavior.callRpc("ticket_move", { id, columnId: "backlog" });
+    vi.stubGlobal("fetch", mine("SUCCESS"));
+    await current().harness.behavior.callRpc("sync_now", null);
+    expect(await columnOf()).toBe("backlog");
+  });
+
   it("is idempotent and moves merged, closed, and reviewed PRs to done", async () => {
     vi.stubGlobal(
       "fetch",
@@ -3186,6 +3240,28 @@ describe("review request briefs", () => {
     expect(sent[0]![0].input[0]!.text).toContain("Update your brief");
   });
 
+  it("tells the brief thread never to move the card, and its activity doesn't call the card in progress", async () => {
+    const card = await requested();
+    await completeReview(threadIdOf(workerOf("review")), findings(sha, [nilCheck]), sha);
+    const configured = await current().harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ pluginMetadata: { ticketId: card.id } }));
+    expect(configured?.instructions).toContain("Never move the card");
+    expect(configured?.instructions).not.toContain("bb kanban move");
+
+    const threadId = threadIdOf(cardThreads()[0]!);
+    await current().harness.behavior.emitThreadEvent("thread.active", { thread: makeThreadResponse({ id: threadId, projectId: "proj_acme" }) });
+    expect((await board()).tickets[0]!.columnId).toBe("todo");
+  });
+
+  it("still gives the card a thread when the board's review failed, saying so", async () => {
+    const card = await requested();
+    const review = workerOf("review");
+    await current().harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadIdOf(review), projectId: "proj_acme" }), lastAssistantText: "Could not check out the PR." });
+    expect(card.threadId).toBeNull();
+    expect(cardThreads()).toHaveLength(1);
+    expect(String(cardThreads()[0]!.prompt)).toContain("The board's review of it failed");
+    expect(String(cardThreads()[0]!.prompt)).toContain("at most five lines");
+  });
+
   it("briefs nothing for your own PR, which no one asked you to review", async () => {
     vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("acme-co/widgets", 7, { title: "Refactor", user: { login: "sean" } })] }));
     await load({ autoStartThreads: null });
@@ -3609,7 +3685,7 @@ describe("diff view and diff comments", () => {
     expect(approved.movedToDone).toBe(true);
   });
 
-  it("leaves the card where it is when a review posts as a comment or change request, or when the approval fails", async () => {
+  it("leaves the card where it is when a review posts as a comment, hands it back to the author on a change request, and leaves it when the approval fails", async () => {
     vi.stubGlobal("fetch", stubGithub({ requested: [searchItem("acme-co/widgets", 7, { user: { login: "alice" } })] }));
     await load({ autoStartThreads: false });
     await current().harness.behavior.callRpc("sync_now", null);
@@ -3620,7 +3696,8 @@ describe("diff view and diff comments", () => {
     await current().harness.behavior.callRpc("diff_comment_add", { ticketId: theirs.id, path: "a.go", line: 3, side: "LEFT", body: "Hmm", target: "github" });
     expect(await submit("COMMENT")).toMatchObject({ movedToDone: false, ticket: { columnId: "todo" } });
     await current().harness.behavior.callRpc("diff_comment_add", { ticketId: theirs.id, path: "a.go", line: 3, side: "LEFT", body: "Please fix", target: "github" });
-    expect(await submit("REQUEST_CHANGES")).toMatchObject({ movedToDone: false, ticket: { columnId: "todo" } });
+    expect(await submit("REQUEST_CHANGES")).toMatchObject({ movedToDone: false, ticket: { columnId: "waiting" } });
+    await current().harness.behavior.callRpc("ticket_move", { id: theirs.id, columnId: "todo" });
 
     const stub = fetch;
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

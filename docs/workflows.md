@@ -229,12 +229,15 @@ A review-request source with no review depth set produces no thread and so
 nothing in Unread: the card in Needs you and the morning brief are the
 signal. Set a depth on the source to get the brief thread.
 
-Landed Nov 3: steps 1 and 2 (no thread at arrival by default, the brief
+Landed Nov 3: steps 1 to 5 (no thread at arrival by default, the brief
 thread after the review and narrative, re-reviews as updates into it, the
-"don't move the card" footer, arrival in Needs you) and Flow 4's placement
-(open PRs in Waiting, drafts in Doing, a Waiting column added to boards that
-lack it). Still to do: the approve / request-changes moves, the authoring
-thread link, and state-driven re-placement of authored PRs.
+card's instructions and footer both say never to move it, its activity no
+longer calls it in progress, arrival in Needs you, a change request moves it
+to Waiting, approval to Done) and Flow 4 in full (a PR from a bb thread's
+branch links that thread; open PRs in Waiting, drafts in Doing, failing checks
+or others' comments in Needs you while the card sits where sync put it; a
+Waiting column added to boards that lack it). A review that fails still gives
+the card a thread, which says so and reads the PR itself.
 
 ## Flow 4: the pull requests you author
 

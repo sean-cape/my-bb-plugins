@@ -72,6 +72,7 @@ export function prepareStatements(db: KanbanDatabase) {
          source_id = COALESCE(source_id, ?), title_edited = 1, updated_at = ? WHERE id = ?`,
     ),
     setLeftSource: db.prepare<[number, string]>(`UPDATE tickets SET left_source = ? WHERE id = ?`),
+    setPlacedColumn: db.prepare<[string | null, string]>(`UPDATE tickets SET placed_column_id = ? WHERE id = ?`),
     setAutoReview: db.prepare<[ReviewDepth | null, string]>(`UPDATE tickets SET auto_review_depth = ? WHERE id = ?`),
     setAutoNarrative: db.prepare<[number, string]>(`UPDATE tickets SET auto_narrative = ? WHERE id = ?`),
     pendingAutoNarratives: db.prepare<[], TicketRow>(

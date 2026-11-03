@@ -22,9 +22,21 @@ export function initialColumn(columns: Column[], pr: PullRequest | null, jira: J
   }
   if (pr === null) return pick(COLUMN.backlog, COLUMN.todo);
   if (pr.state === "merged" || pr.state === "closed") return pick(COLUMN.done);
-  // By who holds the ball: a review asked of you needs you; your own draft is still being made; your open PR waits on its reviewers.
+  // A review asked of you needs you; your own PR goes by its state.
   if (pr.role === "other") return pick(COLUMN.review, COLUMN.todo, COLUMN.backlog);
+  return authoredPrColumn(columns, pr, 0);
+}
+
+/**
+ * Where your own pull request sits by who holds the ball: a draft is still being made; failing checks or open comments
+ * from others hand it back to you; otherwise its reviewers have it.
+ */
+export function authoredPrColumn(columns: Column[], pr: PullRequest, openComments: number): string {
+  const ids = new Set(columns.map((column) => column.id));
+  const pick = (...preferred: string[]) => preferred.find((id) => ids.has(id)) ?? columns[0]!.id;
+  if (pr.state === "merged" || pr.state === "closed") return pick(COLUMN.done);
   if (pr.state === "draft") return pick(COLUMN.inProgress, COLUMN.todo, COLUMN.backlog);
+  if (pr.checks === "failing" || openComments > 0) return pick(COLUMN.review, COLUMN.todo, COLUMN.backlog);
   return pick(COLUMN.waiting, COLUMN.todo, COLUMN.backlog);
 }
 

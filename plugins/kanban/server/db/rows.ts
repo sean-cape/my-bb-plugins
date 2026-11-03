@@ -56,6 +56,8 @@ export interface TicketRow {
   auto_review_depth: ReviewDepth | null;
   /** 1 when a source asked for a narrative of this PR card that has not started yet. */
   auto_narrative: number;
+  /** The column sync last placed this PR card in; null once the user or an agent moved it, or for cards sync never placed. */
+  placed_column_id: string | null;
   created_at: number;
   updated_at: number;
 }

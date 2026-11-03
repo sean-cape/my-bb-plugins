@@ -57,7 +57,9 @@ function cardInstructions(stmts: Statements, projectSettings: ProjectSettingsSto
   const loop = parseLoopState(row.loop_state);
   const workflow = loop.monitored
     ? builderContract(row.kind === "pr", projectSettings.projectSettings(row.project_id).checkCommand, loop.phase === "planning")
-    : "When you start working move it with `bb kanban move in-progress`; when the work is finished and verified, `bb kanban move done`. Run `bb kanban columns` to see the available columns.";
+    : row.kind === "pr" && row.pr_role === "other"
+      ? "The user was asked to review this pull request. Never move the card: it moves when the user submits their review from the card's changes page. Brief them on the change and answer their questions about it; don't review it again from scratch unless asked, and never post to GitHub unless asked."
+      : "When you start working move it with `bb kanban move in-progress`; when the work is finished and verified, `bb kanban move done`. Run `bb kanban columns` to see the available columns.";
   return [
     `This thread is kanban ticket ${JSON.stringify(row.id)} titled ${JSON.stringify(row.title)}, currently in column ${JSON.stringify(row.column_id)}.${pr}${dueNote}${priorityNote}${parentNote}${childNote}`,
     workflow,

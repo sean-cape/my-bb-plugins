@@ -298,5 +298,7 @@ export function migrate(bb: BbPluginApi, db: KanbanDatabase): void {
     `ALTER TABLE tickets ADD COLUMN snoozed_until TEXT`,
     // When a review-request card's thread was briefed on this review, so a second completion (a late narrative, a resync) doesn't brief it again.
     `ALTER TABLE reviews ADD COLUMN briefed_at INTEGER`,
+    // The column sync last put a PR card in; while the card is still there, sync may move it again as the PR's state changes.
+    `ALTER TABLE tickets ADD COLUMN placed_column_id TEXT`,
   ]);
 }

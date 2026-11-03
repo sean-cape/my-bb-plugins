@@ -35,7 +35,13 @@ its PR is reviewed and its review findings and comments are handed to agents.
     in-progress column. Merged or closed PRs move to Done. An open PR card in
     Done that left its source and comes back (your review is requested again,
     or a closed PR is reopened) returns to where it would arrive. A PR whose
-    branch ends in an ad hoc card's thread id joins that card instead.
+    branch ends in an ad hoc card's thread id joins that card instead, and one
+    whose branch ends in any other live thread's id makes that thread the
+    card's: the thread that wrote the code is the one you talk to about the
+    PR. Your open PRs then follow their state for as long as they sit where
+    sync put them: a draft in the in-progress column, failing checks or open
+    comments from others in Needs you, otherwise Waiting; once you move one by
+    hand it stays put until it leaves Done and comes back.
   - **Jira (JQL)**: a JQL query on your Jira Cloud site. Needs the Jira site
     URL, account email, and API token plugin settings. Cards land in To Do or
     In Progress from the issue's status category, carry key, status, priority
@@ -657,7 +663,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   its own. With drafts, new threads post as one review (inline where a line is
   given, in the review body otherwise, under your comment) and replies post
   into their GitHub threads. An approval also moves the card to Done, since
-  your review of it is finished.
+  your review of it is finished, and a change request moves it to Waiting:
+  the author has it until the PR comes back to the search.
 - **One pending review, in both places**: with "Stage GitHub drafts in your
   pending review on GitHub" on (the default), a GitHub draft saved here goes
   into your pending review on the PR the moment it is saved (creating the

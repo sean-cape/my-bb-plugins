@@ -50,6 +50,8 @@ function narrativeSection(report: NarrativeReport): string[] {
 export interface ReviewRequestBrief {
   review: Review | null;
   narrative: NarrativeReport | null;
+  /** The board's review ran and failed, so there is none to brief from. */
+  reviewFailed: boolean;
 }
 
 /**
@@ -71,7 +73,14 @@ export function reviewRequestPrompt(ticket: Ticket, columns: readonly Column[], 
   const task =
     brief.review === null
       ? [
-          "The board hasn't reviewed it yet (Review PR on the card runs the code-review skill). Read `gh pr view " + `${number} --repo ${repo}` + "` and enough of `gh pr diff " + `${number} --repo ${repo}` + "` to say in at most five lines what the change does and where its risk is, then stop and wait for questions. Don't run a review of your own unless asked.",
+          (brief.reviewFailed
+            ? "The board's review of it failed (its thread is in the card's Threads menu; Retry on the card runs it again). "
+            : "The board hasn't reviewed it yet (Review PR on the card runs the code-review skill). ") +
+            "Read `gh pr view " +
+            `${number} --repo ${repo}` +
+            "` and enough of `gh pr diff " +
+            `${number} --repo ${repo}` +
+            "` to say in at most five lines what the change does and where its risk is, then stop and wait for questions. Don't run a review of your own unless asked.",
         ]
       : [
           "Write one message, the reviewer's brief, in under 25 lines: what to read first and why, in order; which findings matter most and which you'd let go, with a reason each; the questions worth putting to the author; and anything the narrative's watch-outs flag. Don't review the code again from scratch; read it (`gh pr diff " +
