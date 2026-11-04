@@ -89,9 +89,9 @@ export const StructuralLine = memo(function StructuralLine({
       {segments.map((segment, index) => (
         <span
           key={index}
-          style={segment.color !== undefined ? { color: segment.color } : undefined}
+          style={segment.color !== undefined ? { color: segmentColor(segment) } : undefined}
           className={cn(
-            segment.color === undefined ? (HIGHLIGHT_CLASS[segment.highlight] ?? "") : "",
+            segment.color === undefined ? (segment.changed && segment.highlight === "comment" ? CHANGED_COMMENT_CLASS : (HIGHLIGHT_CLASS[segment.highlight] ?? "")) : "",
             segment.changed && (side === "LEFT" ? "rounded-sm bg-red-500/25" : "rounded-sm bg-emerald-500/25"),
           )}
         >
@@ -101,3 +101,14 @@ export const StructuralLine = memo(function StructuralLine({
     </>
   );
 });
+
+const CHANGED_COMMENT_CLASS = "text-foreground/80 italic";
+
+/**
+ * Themes draw comments in a dim colour that is unreadable on the changed-span tint, so a changed comment is pulled most
+ * of the way toward the line's text colour (`currentColor` in `color` is the inherited one) and keeps a hint of its hue.
+ */
+function segmentColor(segment: { changed: boolean; highlight: string; color: string | undefined }): string | undefined {
+  if (segment.color === undefined || !segment.changed || segment.highlight !== "comment") return segment.color;
+  return `color-mix(in oklab, ${segment.color} 35%, currentColor)`;
+}
