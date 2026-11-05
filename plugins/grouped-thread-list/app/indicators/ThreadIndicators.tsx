@@ -52,7 +52,7 @@ const PINNED_START: PickerStart = { entry: "pinned", inThreads: true };
 // bb's rail markup has no plugin contract; if a bb update renames it, the
 // indicators fall back to the thread-list slot.
 const RAIL = '[data-testid="app-nav-rail"]';
-const RAIL_ITEMS = `${RAIL} nav > div`;
+const RAIL_ITEMS = `${RAIL} > div`;
 
 /**
  * bb scopes a plugin's styles to its root, so a host outside the slot wears

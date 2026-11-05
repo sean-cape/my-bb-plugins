@@ -143,43 +143,51 @@ describe("mountMinimalTopBar", () => {
   it("shows a collapsed sidebar's page list on Settings, Plugins, and Skills but not elsewhere", () => {
     const sidebar = (page: string) => `
       <div id="${page}" data-side="left" data-collapsible="rail">
-        <div data-testid="nav-rail-sidebar-body" style="visibility: hidden">
-          <div data-testid="${page}-sidebar-body"></div>
-        </div>
-        <div data-testid="sidebar-footer-row">
-          <div style="visibility: hidden"></div>
-          <div style="visibility: hidden"></div>
+        <div data-sidebar="sidebar">
+          <div>
+            <nav></nav>
+            <div data-sidebar="collapsible-body" data-testid="nav-rail-sidebar-body" style="visibility: hidden">
+              <div data-testid="${page}-sidebar-body"></div>
+            </div>
+            <div></div>
+            <div data-sidebar="collapsible-body" data-testid="sidebar-footer-body" style="visibility: hidden"></div>
+          </div>
         </div>
       </div>`;
     document.body.innerHTML = ["settings", "plugins", "skills", "app"].map(sidebar).join("");
     const cleanup = mountMinimalTopBar(document, window);
     const visibility = (page: string) => {
       const root = document.getElementById(page)!;
-      const footer = root.querySelectorAll('[data-testid="sidebar-footer-row"] > div');
-      return [root.querySelector('[data-testid="nav-rail-sidebar-body"]')!, ...footer].map(
-        (element) => getComputedStyle(element).visibility,
-      );
+      return [
+        root.querySelector('[data-testid="nav-rail-sidebar-body"]')!,
+        root.querySelector('[data-testid="sidebar-footer-body"]')!,
+      ].map((element) => getComputedStyle(element).visibility);
     };
     for (const page of ["settings", "plugins", "skills"]) {
-      expect(visibility(page)).toEqual(["visible", "hidden", "visible"]);
+      expect(visibility(page)).toEqual(["visible", "visible"]);
     }
-    expect(visibility("app")).toEqual(["hidden", "hidden", "hidden"]);
+    expect(visibility("app")).toEqual(["hidden", "visible"]);
     cleanup();
   });
 
   it("shows the footer's icons above Settings while the sidebar is collapsed to the rail", () => {
     document.body.innerHTML = `
       <div data-side="left" data-collapsible="rail">
-        <div data-testid="sidebar-footer-row">
-          <div id="settings-cell"></div>
-          <div id="footer-icons" data-sidebar="collapsible-body" style="visibility: hidden"></div>
+        <div data-sidebar="sidebar">
+          <div id="grid">
+            <nav></nav>
+            <div data-sidebar="collapsible-body" data-testid="nav-rail-sidebar-body"></div>
+            <div id="settings-cell"></div>
+            <div id="footer-icons" data-sidebar="collapsible-body" data-testid="sidebar-footer-body" style="visibility: hidden"></div>
+          </div>
         </div>
       </div>`;
     const cleanup = mountMinimalTopBar(document, window);
-    expect(getComputedStyle(document.getElementById("footer-icons")!).visibility).toBe("visible");
-    expect(
-      getComputedStyle(document.querySelector('[data-testid="sidebar-footer-row"]')!).flexDirection,
-    ).toBe("column-reverse");
+    const style = (id: string) => getComputedStyle(document.getElementById(id)!);
+    expect(style("footer-icons").visibility).toBe("visible");
+    expect(style("grid").gridTemplateRows).toBe("minmax(0, 1fr) auto auto");
+    expect([style("footer-icons").gridRow, style("footer-icons").gridColumn]).toEqual(["2", "1"]);
+    expect(style("settings-cell").gridRow).toBe("3");
     cleanup();
   });
 
@@ -187,10 +195,8 @@ describe("mountMinimalTopBar", () => {
     document.body.innerHTML = `
       <div data-side="left" data-collapsible="rail">
         <div id="list" data-testid="nav-rail-sidebar-body" inert></div>
-        <div data-testid="sidebar-footer-row">
-          <div id="settings-cell"></div>
-          <div id="footer-icons" data-sidebar="collapsible-body" inert></div>
-        </div>
+        <div id="settings-cell"></div>
+        <div id="footer-icons" data-sidebar="collapsible-body" data-testid="sidebar-footer-body" inert></div>
       </div>
       <div data-side="right" data-collapsible="rail">
         <div id="other" data-testid="nav-rail-sidebar-body" inert></div>

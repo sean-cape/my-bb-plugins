@@ -127,7 +127,11 @@
  * rail-indicator.ts slides one fill between the rail's items; while it runs,
  * the current button drops bb's own fill so the two don't stack. Moves within
  * the rail (scrolling, resizing) and first appearances snap into place. */
-[data-testid="app-nav-rail"][data-bbm-rail-glide] nav button[aria-current="page"] {
+[data-testid="app-nav-rail"][data-bbm-rail-glide] {
+  position: relative;
+  isolation: isolate;
+}
+[data-testid="app-nav-rail"][data-bbm-rail-glide] button[aria-current="page"] {
   background-color: transparent;
 }
 [data-bbm-rail-indicator] {

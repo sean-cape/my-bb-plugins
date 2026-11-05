@@ -9,16 +9,20 @@ afterEach(() => {
 
 function renderRail() {
   document.body.innerHTML = `
-    <div data-testid="app-nav-rail">
-      <nav>
-        <button id="home" aria-label="Home"></button>
-        <span data-nav-rail-item="kanban/board"><button id="kanban"></button></span>
-        <span data-nav-rail-item="__bb__/automations"><button id="automations" disabled></button></span>
-        <span data-nav-rail-item="__bb__/extensions"><button id="plugins"></button></span>
-        <button id="more"><svg data-icon="MoreHorizontal"></svg></button>
-        <div data-bb-plugin-root data-bb-plugin="grouped-thread-list"><button id="inbox"></button></div>
-      </nav>
-    </div>
+    <nav data-testid="sidebar-navigation-rail">
+      <div data-bb-plugin-root data-bb-plugin="navigation">
+        <div data-testid="app-nav-rail">
+          <div>
+            <button id="home" aria-label="Home"></button>
+            <span data-nav-rail-item="kanban/board"><button id="kanban"></button></span>
+            <span data-nav-rail-item="__bb__/automations"><button id="automations" disabled></button></span>
+            <span data-nav-rail-item="__bb__/extensions"><button id="plugins"></button></span>
+            <button id="more"><svg data-icon="MoreHorizontal"></svg></button>
+            <div data-bb-plugin-root data-bb-plugin="grouped-thread-list"><button id="inbox"></button></div>
+          </div>
+        </div>
+      </div>
+    </nav>
     <div data-sidebar="footer"><button id="settings"></button></div>`;
 }
 

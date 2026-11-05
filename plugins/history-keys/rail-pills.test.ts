@@ -20,13 +20,17 @@ const held = () => byId("rail").hasAttribute(HELD_ATTRIBUTE);
 
 function renderRail() {
   document.body.innerHTML = `
-    <div id="rail" data-testid="app-nav-rail">
-      <nav>
-        <button id="home"></button>
-        <span data-nav-rail-item="kanban/board"><button id="kanban"></button></span>
-        <button id="more"><svg data-icon="MoreHorizontal"></svg></button>
-      </nav>
-    </div>`;
+    <nav data-testid="sidebar-navigation-rail">
+      <div data-bb-plugin-root data-bb-plugin="navigation">
+        <div id="rail" data-testid="app-nav-rail">
+          <div>
+            <button id="home"></button>
+            <span data-nav-rail-item="kanban/board"><button id="kanban"></button></span>
+            <button id="more"><svg data-icon="MoreHorizontal"></svg></button>
+          </div>
+        </div>
+      </div>
+    </nav>`;
 }
 
 describe("labelRail", () => {

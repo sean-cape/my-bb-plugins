@@ -33,13 +33,13 @@ function rail(...tops: number[]): HTMLElement {
   const el = document.createElement("div");
   el.setAttribute("data-testid", "app-nav-rail");
   boxAt(el, 0, 0);
-  const nav = document.createElement("nav");
+  const items = document.createElement("div");
   for (const top of tops) {
     const button = document.createElement("button");
     boxAt(button, top);
-    nav.append(button);
+    items.append(button);
   }
-  el.append(nav);
+  el.append(items);
   return el;
 }
 
@@ -141,7 +141,7 @@ describe("watchRailIndicator", () => {
     const indicator = indicatorOf(el)!;
     recordSnaps(indicator);
     boxAt(el.querySelector("button")!, 40);
-    el.querySelector("nav")!.dispatchEvent(new Event("scroll"));
+    el.querySelector("div")!.dispatchEvent(new Event("scroll"));
     expect(indicator.style.transform).toBe("translate3d(8px, 40px, 0)");
     expect(snaps).toEqual([true]);
   });

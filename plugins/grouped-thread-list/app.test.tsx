@@ -269,24 +269,28 @@ describe("sidebar thread indicators", () => {
     setPreferencesMirrorStorageForTest(null);
     renderIndicators();
     await screen.findByRole("button", { name: /need/ });
+    const nav = document.createElement("nav");
+    const navigationRoot = document.createElement("div");
+    navigationRoot.setAttribute("data-bb-plugin-root", "");
+    navigationRoot.setAttribute("data-bb-plugin", "navigation");
     const rail = document.createElement("div");
     rail.setAttribute("data-testid", "app-nav-rail");
-    const nav = document.createElement("nav");
     const items = document.createElement("div");
-    nav.append(items);
-    rail.append(nav);
-    document.body.append(rail);
+    rail.append(items);
+    navigationRoot.append(rail);
+    nav.append(navigationRoot);
+    document.body.append(nav);
     try {
       await waitFor(() =>
         expect(
-          rail.querySelector('[data-bb-plugin-root] [data-thread-indicators]'),
+          items.querySelector('[data-bb-plugin-root] [data-thread-indicators]'),
         ).not.toBeNull(),
       );
       const inbox = screen.getByRole("button", { name: /need/ });
       expect(items.contains(inbox)).toBe(true);
       expect(document.querySelectorAll("[data-thread-indicators]")).toHaveLength(1);
     } finally {
-      rail.remove();
+      nav.remove();
     }
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /need/ }).isConnected).toBe(true),

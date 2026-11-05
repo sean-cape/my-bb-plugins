@@ -6,7 +6,8 @@ export const RAIL_SLOT_COUNT = 9;
 export const RAIL = '[data-testid="app-nav-rail"]';
 const MORE_ICON = 'svg[data-icon="MoreHorizontal"]';
 // Plugins that portal their own buttons into the rail, such as the Project
-// switcher's thread indicators, aren't navigation items.
+// switcher's thread indicators, aren't navigation items. bb renders the rail
+// itself from a built-in plugin, so only roots inside the rail's own count.
 const PLUGIN_ROOT = "[data-bb-plugin-root]";
 
 /**
@@ -17,8 +18,9 @@ const PLUGIN_ROOT = "[data-bb-plugin-root]";
 export function railItems(doc: Document): HTMLButtonElement[] {
   const rail = doc.querySelector(RAIL);
   if (rail === null) return [];
-  return [...rail.querySelectorAll<HTMLButtonElement>("nav button")].filter(
-    (button) => button.querySelector(MORE_ICON) === null && button.closest(PLUGIN_ROOT) === null,
+  const railRoot = rail.closest(PLUGIN_ROOT);
+  return [...rail.querySelectorAll<HTMLButtonElement>("button")].filter(
+    (button) => button.querySelector(MORE_ICON) === null && button.closest(PLUGIN_ROOT) === railRoot,
   );
 }
 

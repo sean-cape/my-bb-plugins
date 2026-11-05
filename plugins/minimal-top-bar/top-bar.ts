@@ -21,7 +21,12 @@ const LIST_PAGES =
 const LIST_PAGE_SIDEBAR = `${RAIL_SIDEBAR}:has(${LIST_PAGES})`;
 const RAIL_ONLY_SIDEBAR = `${RAIL_SIDEBAR}:not(:has(${LIST_PAGES}))`;
 const LIST_BODY = '[data-testid="nav-rail-sidebar-body"]';
-const FOOTER_BODY = '[data-testid="sidebar-footer-row"] > [data-sidebar="collapsible-body"]';
+const FOOTER_BODY = '[data-testid="sidebar-footer-body"]';
+// One grid holds the rail and list over the footer: the rail column has the
+// rail above the Settings cell, the list column the list above the footer's
+// other icons.
+const SIDEBAR_GRID = `[data-sidebar="sidebar"] > div:has(> ${FOOTER_BODY})`;
+const SETTINGS_CELL = `${SIDEBAR_GRID} > div:not([data-sidebar])`;
 // A footer icon's disclosure (Provider usage) and More → Customize footer
 // open at the bottom of the thread list, which the rail hides.
 const FOOTER_PANEL_CONTENT =
@@ -58,19 +63,30 @@ ${LIST_PAGE_SIDEBAR} > [data-sidebar="panel"] {
   width: var(--sidebar-width) !important;
 }
 ${LIST_PAGE_SIDEBAR} ${LIST_BODY},
-${LIST_PAGE_SIDEBAR} [data-testid="sidebar-footer-row"] > :not(:first-child) {
+${LIST_PAGE_SIDEBAR} ${FOOTER_BODY} {
   visibility: visible !important;
 }
 /* Elsewhere the footer's own icons (Provider usage, More footer actions,
-   update badges) sit beside Settings, in the part of the footer the rail
-   hides, so they stack above it instead. */
-${RAIL_ONLY_SIDEBAR} [data-testid="sidebar-footer-row"] {
-  flex-direction: column-reverse;
+   update badges) sit beside Settings, in the column the rail hides, so they
+   move into a row of the rail's column above it instead. */
+${RAIL_ONLY_SIDEBAR} ${SIDEBAR_GRID} {
+  grid-template-rows: minmax(0, 1fr) auto auto !important;
 }
+${RAIL_ONLY_SIDEBAR} ${SETTINGS_CELL} {
+  grid-row: 3 !important;
+}
+/* Its own width, not its wide menu's, so the rail column keeps its size. */
 ${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} {
+  grid-row: 2 !important;
+  grid-column: 1 !important;
+  width: calc(${RAIL_COLUMN}) !important;
   visibility: visible !important;
   border-color: transparent !important;
   border-radius: 0 !important;
+  background-color: var(--surface-recessed);
+}
+[data-framed] ${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} {
+  background-color: transparent;
 }
 ${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} > div {
   width: auto !important;
