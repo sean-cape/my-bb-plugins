@@ -104,7 +104,10 @@ export function registerRpc(ctx: KanbanContext, services: Services): void {
     ticket_delete: ({ id }) => board.deleteTicket(id),
     ticket_restore: ({ id }) => board.restoreTicket(id),
     ticket_start_thread: ({ id, projectId }) => threads.spawnThreadForTicket(id, projectId),
-    ticket_guess_project: async ({ id }) => ({ guess: await projectGuess.guessProject(id), fallbackProjectId: await projects.fallbackProject(null) }),
+    ticket_guess_project: async ({ id }) => {
+      const repo = stmts.byId.get(id)?.pr_repo ?? null;
+      return { guess: await projectGuess.guessProject(id), fallbackProjectId: repo === null ? await projects.fallbackProject(null) : await projects.projectMatchingRepo(repo) };
+    },
     ticket_set_monitored: ({ id, monitored, gates }) => loop.setMonitored(id, monitored, gates ?? null),
     loop_set_gates: ({ id, gates }) => loop.setGates(id, gates),
     loop_approve_plan: ({ id, plan }) => loop.approvePlan(id, plan),

@@ -80,7 +80,7 @@ export function createSourceSync(
   const { bb, settings, stmts, sync, publish } = ctx;
   const { getTicket, getColumns, getSources, createTicket, moveTicket } = board;
   const { spawnThreadForTicket, linkThread } = threads;
-  const { fallbackProject, resolveProjectForRepo, adoptProjectForRepo } = projects;
+  const { fallbackProject, resolveProjectForRepo, adoptProjectForRepo, refileMisfiledPrs } = projects;
   const { syncPrComments } = prComments;
 
   let syncPromise: Promise<void> | null = null;
@@ -317,6 +317,7 @@ export function createSourceSync(
         .then((projectId) => (projectId === null ? undefined : adoptProjectForRepo(repo, projectId)))
         .catch((error: unknown) => bb.log.warn(`could not find a project for ${repo}: ${String(error)}`));
     }
+    await refileMisfiledPrs(stmts.openPrs.all());
     // Comments: refetch when the PR's updated_at moved (comments bump it) or never fetched.
     for (const row of stmts.openPrs.all()) {
       if (row.comments_synced_for !== null && row.comments_synced_for === row.pr_updated_at) continue;

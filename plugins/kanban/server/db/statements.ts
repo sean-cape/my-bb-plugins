@@ -269,6 +269,7 @@ export function prepareStatements(db: KanbanDatabase) {
     moveDiffComments: db.prepare<[string, string]>(`UPDATE diff_comments SET ticket_id = ? WHERE ticket_id = ?`),
     unprojectedPrsForRepo: db.prepare<[string], TicketRow>(`SELECT * FROM tickets WHERE pr_repo = ? AND project_id IS NULL AND thread_id IS NULL`),
     setProjectIfUnset: db.prepare<[string, number, string]>(`UPDATE tickets SET project_id = ?, updated_at = ? WHERE id = ? AND project_id IS NULL`),
+    setProject: db.prepare<[string | null, number, string]>(`UPDATE tickets SET project_id = ?, updated_at = ? WHERE id = ?`),
     moveViewed: db.prepare<[string, string]>(`UPDATE diff_viewed SET ticket_id = ? WHERE ticket_id = ?`),
     insertNarrative: db.prepare(
       `INSERT INTO narratives (id, ticket_id, thread_id, status, head_sha, created_at) VALUES (@id, @ticket_id, @thread_id, 'running', @head_sha, @created_at)`,

@@ -65,7 +65,7 @@ export function defineSettings(bb: BbPluginApi) {
       type: "project",
       label: "Fallback project",
       description:
-        "Used for PR cards whose repository does not match any project's git remote (and auto-creation is off), and as the default for ad hoc tickets.",
+        "The default project for ad hoc tickets and Jira issues. A PR card only runs in a project whose git remote is its repository, so it never falls back to this one.",
     },
     guessProjects: {
       type: "boolean",

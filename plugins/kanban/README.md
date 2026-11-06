@@ -207,7 +207,8 @@ its PR is reviewed and its review findings and comments are handed to agents.
   suggested. The guess starts when the card is made, so it's usually ready by
   the time the card is opened; it's kept per card until the card's text or the
   project list changes. An answer naming no listed project is dropped. Without
-  a guess the row falls back to the fallback project, then the first project.
+  a guess the row falls back to the fallback project (for a PR card, the
+  project matching its repository), then the first project.
   A pick, including No project, always stays, and the card's own project is
   set only when its thread starts.
 - **Monitored cards**: choose Review loop under How it runs when creating the
@@ -522,8 +523,11 @@ its PR is reviewed and its review findings and comments are handed to agents.
   SSH when your other projects use SSH) under the clone directory setting
   (default `<bb data dir>/plugins/kanban/repos/<owner>/<repo>`) and
   registered as a project, and every card for that repo adopts it. Turn this
-  off with the "Create a project for each new repository" setting to fall
-  back to the fallback project instead.
+  off with the "Create a project for each new repository" setting and such a
+  card has no project until you add one for a clone of the repo; the next
+  sync files the card under it. A PR card never runs in a project whose git
+  remote is another repository: one filed there is moved, and picking one
+  for its review or thread is refused, since it can't fetch the PR's head.
 - **New project from a folder**: every project dropdown starts with "New
   project from folder…", which opens the native folder picker on bb's
   primary host and makes the chosen directory a project (named after the
@@ -762,8 +766,7 @@ PATH or in `~/.local/bin`, or turn off **Guess a card's project**.
 Optional settings: sync interval, whether to spawn a thread for every new PR
 card as it arrives (off by default: a review request gets its thread once the
 board's review is done, with the review as its brief, and `t` on any card
-starts one), a fallback project for PRs whose repository matches no project's
-git remote, and whether a card moves to In Progress when its thread starts
+starts one), a fallback project for ad hoc and Jira cards, and whether a card moves to In Progress when its thread starts
 working.
 
 ## Columns

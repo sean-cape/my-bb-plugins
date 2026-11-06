@@ -1068,14 +1068,59 @@ describe("PR review", () => {
     expect((await board()).tickets[0]!.latestReview).toMatchObject({ threadId: "thr_2" });
   });
 
-  it("asks for a project when none matches a PR card's repository", async () => {
+  it("asks for a project when none matches a PR card's repository, and refuses one that checks out another", async () => {
     vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("other/repo", 1)] }));
-    await load({ autoStartThreads: false, autoCreateProjects: false });
+    await load({ autoStartThreads: false, autoCreateProjects: false }, { extraProjects: [{ id: "proj_local", name: "local", gitRemoteUrl: null }] });
+    const sources = (projectId: string) => [{ id: `src_${projectId}`, projectId, hostId: "host_1", isDefault: true, path: "/Users/me/local", type: "local_path", createdAt: 0, updatedAt: 0 }];
+    const listed = await current().bb.sdk.projects.list();
+    current().harness.sdk.stub("projects.list", async () => listed.map((project) => (project.id === "proj_local" ? { ...project, sources: sources(project.id) } : project)));
     await current().harness.behavior.callRpc("sync_now", null);
     const pr = (await board()).tickets.find((ticket) => ticket.pr !== null)!;
-    await expect(current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id })).rejects.toThrow(/No project matches/u);
-    const reviewed = (await current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id, projectId: "proj_acme" })) as Ticket;
+    await expect(current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id })).rejects.toThrow(/No project's git remote is other\/repo/u);
+    await expect(current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id, projectId: "proj_acme" })).rejects.toThrow(/widgets is a checkout of acme-co\/widgets/u);
+    expect(spawned).toHaveLength(0);
+    // A project with no GitHub remote can't be told apart, so it's the user's call.
+    const reviewed = (await current().harness.behavior.callRpc("ticket_review_pr", { id: pr.id, projectId: "proj_local" })) as Ticket;
     expect(reviewed.reviewThreadId).toBe("thr_1");
+  });
+
+  it("never files a PR card under the fallback project", async () => {
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("other/repo", 1)] }));
+    await load({ autoStartThreads: false, autoCreateProjects: false, defaultProject: "proj_acme" });
+    await current().harness.behavior.callRpc("sync_now", null);
+    const card = (await board()).tickets.find((ticket) => ticket.pr !== null)!;
+    expect(card.projectId).toBeNull();
+    expect(await current().harness.behavior.callRpc("ticket_guess_project", { id: card.id })).toMatchObject({ fallbackProjectId: null });
+  });
+
+  it("moves a PR card filed under a project of another repository to the one matching its repository", async () => {
+    vi.stubGlobal("fetch", stubGithub({ authored: [searchItem("other/repo", 1), searchItem("other/repo", 2)] }));
+    await load({ autoStartThreads: false, autoCreateProjects: false });
+    const project = (id: string, name: string, gitRemoteUrl: string) => ({
+      id,
+      name,
+      kind: "standard",
+      gitRemoteUrl,
+      sources: [{ id: `src_${id}`, projectId: id, hostId: "host_1", isDefault: true, path: `/Users/me/${name}`, type: "local_path", createdAt: 0, updatedAt: 0 }],
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    // The cards are filed under proj_acme while it checks out other/repo, as the fallback project once filed them.
+    current().harness.sdk.stub("projects.list", async () => [project("proj_acme", "widgets", "git@github.com:other/repo.git")]);
+    await current().harness.behavior.callRpc("sync_now", null);
+    expect((await board()).tickets.map((ticket) => ticket.projectId)).toEqual(["proj_acme", "proj_acme"]);
+
+    current().harness.sdk.stub("projects.list", async () => [
+      project("proj_acme", "widgets", "git@github.com:acme-co/widgets.git"),
+      project("proj_other", "repo", "git@github.com:Other/Repo.git"),
+    ]);
+    const first = (await board()).tickets.find((ticket) => ticket.pr?.number === 1)!;
+    const reviewed = (await current().harness.behavior.callRpc("ticket_review_pr", { id: first.id })) as Ticket;
+    expect(spawned[0]).toMatchObject({ projectId: "proj_other" });
+    expect(reviewed.projectId).toBe("proj_other");
+
+    await current().harness.behavior.callRpc("sync_now", null);
+    expect((await board()).tickets.find((ticket) => ticket.pr?.number === 2)!.projectId).toBe("proj_other");
   });
 
   it("creates a project for a repository no project matches and adopts its cards", async () => {
