@@ -52,8 +52,17 @@ export const TOP_BAR_FRAME_CSS = `
   ${FRAMED} {
     --bb-sidebar-rail-padding: max(0px, calc((${unzoomed(TOP_BAR_HEIGHT_PX)} - var(--bb-sidebar-control-size)) / 2)) !important;
   }
+  /* The page's card outline is a ::before inside a 1px padding, with its
+     rounded corners cut by a clip-path and mask. */
   ${FRAMED} > main[data-sidebar="inset"] {
     border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    clip-path: none !important;
+    mask-image: none !important;
+  }
+  ${FRAMED} > main[data-sidebar="inset"]::before {
+    border-color: transparent !important;
     border-radius: 0 !important;
   }
   /* The title bar's controls float over the top bar. Back and forward hide

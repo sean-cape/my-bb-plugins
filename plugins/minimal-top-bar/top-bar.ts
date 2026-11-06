@@ -85,8 +85,11 @@ ${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} {
   border-radius: 0 !important;
   background-color: var(--surface-recessed);
 }
+/* Framed, bb fixes the footer to the top bar's height and clips it to the
+   list card's corner, which would cut the stacked icons. */
 [data-framed] ${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} {
   background-color: transparent;
+  clip-path: none !important;
 }
 ${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} > div {
   width: auto !important;
@@ -95,6 +98,8 @@ ${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} > div {
    the rest into a More menu. A wide, click-through list keeps them all
    visible while they stack. */
 ${RAIL_ONLY_SIDEBAR} ${FOOTER_BODY} [data-sidebar="footer"] {
+  height: auto !important;
+  margin-bottom: 0 !important;
   align-items: flex-start;
   padding: 8px 0 0 calc(${RAIL_COLUMN} / 2 - ${FOOTER_ICON_PX / 2}px);
 }
