@@ -23,6 +23,7 @@ Personal [bb](https://getbb.app) plugins, one directory each under `plugins/`.
 | `local-voice` | Voice input transcribed by a local speech model: whisper.cpp kept warm by the plugin, or any OpenAI-compatible transcription server |
 | `no-selection-menu` | Hides the Add to chat / Reply in side chat toolbar bb pops up over highlighted text |
 | `activity` | Logs every click, vim key command, and page across bb and the plugins, attributed to the plugin it happened in, with an Activity page and `bb activity` CLI that rank them so unused features can be pruned |
+| `finish-action` | When done: a per-thread switch, beside the send button, for whether the agent merges its finished change to main, commits it to the branch, or leaves it uncommitted |
 
 ## Screenshots
 
@@ -61,6 +62,16 @@ node scripts/install.mjs                  # pull, then install or upgrade every 
 node scripts/install.mjs kanban diff-view # only these plugins
 node scripts/install.mjs --no-pull        # use the checkout as it is
 node scripts/install.mjs --registry https://registry.npmjs.org/   # if ~/.npmrc points at a registry you can't reach
+```
+
+To land a thread branch's commits on `main` and install what they touched, run this from the thread's worktree
+(outside the sandbox: it signs the cherry-picks and writes to the main checkout). It cherry-picks the commits `main`
+lacks, runs the typecheck and tests of each touched plugin and of every plugin built on a touched shared library, then
+builds and reloads them through `install.mjs`. It never pushes:
+
+```sh
+node scripts/land.mjs             # every commit of HEAD that main doesn't have yet
+node scripts/land.mjs --dry-run   # what it would land and install
 ```
 
 One plugin from a local checkout (rebuild after changes with `bb plugin build plugins/<name>`):

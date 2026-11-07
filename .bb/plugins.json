@@ -24,6 +24,7 @@
     { "name": "no-selection-menu", "source": "./plugins/no-selection-menu" },
     { "name": "dashboard", "source": "./plugins/dashboard" },
     { "name": "activity", "source": "./plugins/activity" },
-    { "name": "agent-graph", "source": "./plugins/agent-graph" }
+    { "name": "agent-graph", "source": "./plugins/agent-graph" },
+    { "name": "finish-action", "source": "./plugins/finish-action" }
   ]
 }

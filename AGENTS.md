@@ -24,14 +24,17 @@ A thread should reach the user's unread list, and send a push, only when it need
 
 ## Finishing work
 
-When a plugin change is done, land it and install it locally without waiting to be asked:
+The thread's "when done" setting decides what happens to a finished change: call the `finish_action` tool before ending a turn that changed files, and do what it says. This project's default is Merge to main, so a thread that hasn't picked otherwise lands its work without waiting to be asked. (A thread without the tool, which started before the When done plugin was installed, lands too.)
 
-1. Commit on the thread's branch, then apply it to `main` in the main checkout (`/Users/sean/dev/my-bb-plugins`) with `git -C /Users/sean/dev/my-bb-plugins cherry-pick <sha>...`. Other sessions commit to `main` concurrently, so cherry-pick rather than fast-forward or rebase.
-2. In the main checkout's plugin directory, run `pnpm install --frozen-lockfile` if its dependencies changed, then the typecheck and tests, then `bb plugin build .`. A change to a shared library (`plugins/*/lib`) reaches every plugin that links it, so also run `node scripts/check-lib-consumers.mjs <plugin>/lib`, then build and reload each consumer.
-3. Load it with `bb plugin reload <name>`. A new plugin is first listed in `.bb/plugins.json`, then installed with `bb plugin install path:/Users/sean/dev/my-bb-plugins --plugin <name> --yes`.
-4. Check that `bb plugin reload` reports it `running`. Don't push `main` unless asked.
+To land, commit on the thread's branch, then run `node scripts/land.mjs` from the worktree's root, outside the sandbox. It:
 
-`node scripts/install.mjs --no-pull <name>...` in the main checkout does steps 2 to 4 for the named plugins (dependencies, build, install or reload, the `running` check) and links the Claude config; it doesn't run the typecheck or tests.
+1. Cherry-picks the branch's commits that `main` doesn't have yet into the main checkout (`/Users/sean/dev/my-bb-plugins`). Other sessions commit to `main` concurrently, so it cherry-picks rather than fast-forwarding or rebasing `main`; a conflict aborts the cherry-pick and leaves `main` as it was.
+2. Installs dependencies in each touched plugin whose `package.json` or lockfile changed, then runs the typecheck and tests of every touched plugin and of every plugin built on a touched shared library (`plugins/*/lib`).
+3. Builds and installs or reloads those plugins through `scripts/install.mjs`, which also checks each reports `running` and links the Claude config.
+
+When a check fails, the commits are already on `main` and nothing was built: commit a fix on the branch and run it again, and it lands only the fix. `--dry-run` lists what it would land and install. It never pushes; don't push `main` unless asked. A new plugin has to be listed in `.bb/plugins.json` in the same commits, or it isn't installed.
+
+`node scripts/install.mjs --no-pull <name>...` in the main checkout builds and loads named plugins without landing anything, and skips the typecheck and tests.
 
 New worktrees get their `node_modules` from `.bb-env-setup.sh`, which bb runs on creation: each plugin's entries link to the main checkout's, so don't run `pnpm install` in a worktree. In an older worktree, run `bash .bb-env-setup.sh` from its root.
 

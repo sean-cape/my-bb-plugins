@@ -4,50 +4,21 @@
 //
 //   node scripts/check-lib-consumers.mjs vim-mode/lib        # bb-vim-keys
 //   node scripts/check-lib-consumers.mjs motion/lib diff-view/lib
-//
-// A consumer is a plugin whose package.json links the library, or whose source imports it by
-// relative path (diff-view's library does, because other plugins bundle it). The plugin that
-// holds the library counts too.
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { libraryConsumers, libraryName } from "./lib-consumers.mjs";
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const pluginsDir = join(repo, "plugins");
-const libraries = process.argv.slice(2).map((arg) => arg.replace(/^plugins\//, "").replace(/\/$/, ""));
+const libraries = process.argv.slice(2).map(libraryName);
 if (libraries.length === 0) {
   console.error("usage: check-lib-consumers.mjs <plugin>/lib [...]");
   process.exit(2);
 }
 
-const SOURCE = /\.(ts|tsx|mts)$/;
-const SKIP = new Set(["node_modules", "dist", ".bb", ".git"]);
-
-function* sources(dir) {
-  for (const entry of readdirSync(dir)) {
-    if (SKIP.has(entry)) continue;
-    const path = join(dir, entry);
-    if (statSync(path).isDirectory()) yield* sources(path);
-    else if (SOURCE.test(entry)) yield path;
-  }
-}
-
-function consumes(plugin, library) {
-  if (library.split("/")[0] === plugin) return true;
-  const manifest = readFileSync(join(pluginsDir, plugin, "package.json"), "utf8");
-  if (manifest.includes(`../${library}"`)) return true;
-  const target = join(pluginsDir, library) + sep;
-  for (const file of sources(join(pluginsDir, plugin))) {
-    for (const [, specifier] of readFileSync(file, "utf8").matchAll(/from\s+"(\.{1,2}\/[^"]+)"/g)) {
-      if (join(dirname(file), specifier).startsWith(target)) return true;
-    }
-  }
-  return false;
-}
-
-const plugins = readdirSync(pluginsDir).filter((name) => existsSync(join(pluginsDir, name, "package.json")));
-const consumers = plugins.filter((plugin) => libraries.some((library) => consumes(plugin, library)));
+const consumers = libraryConsumers(repo, libraries);
 
 function run(plugin, script) {
   const scripts = JSON.parse(readFileSync(join(pluginsDir, plugin, "package.json"), "utf8")).scripts ?? {};
@@ -67,5 +38,5 @@ for (const plugin of consumers) {
     }
   }
 }
-console.log(`\n${consumers.length} plugins build on ${libraries.join(", ")}: ${consumers.map((plugin) => relative(pluginsDir, join(pluginsDir, plugin))).join(", ")}`);
+console.log(`\n${consumers.length} plugins build on ${libraries.join(", ")}: ${consumers.join(", ")}`);
 process.exit(failed ? 1 : 0);
