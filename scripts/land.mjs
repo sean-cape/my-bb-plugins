@@ -116,9 +116,9 @@ const subject = (sha) => git("log", "-1", "--format=%h %s", sha).out.slice(0, 12
 console.log(`Landing ${commits.length} commit${commits.length === 1 ? "" : "s"} on ${MAIN_BRANCH} in ${main}${squash ? " as one commit, since the branch has merged main" : ""}:`);
 for (const sha of commits) console.log(`  ${subject(sha)}`);
 
-/** What the commits touch, by plugin directory under plugins/. */
-function plan(files) {
-  const isPlugin = (dir) => existsSync(join(main, "plugins", dir, "package.json"));
+/** What the commits touch, by plugin directory under `root`'s plugins/. */
+function plan(files, root) {
+  const isPlugin = (dir) => existsSync(join(root, "plugins", dir, "package.json"));
   const touched = new Set();
   const libraries = new Set();
   const dependencies = new Set();
@@ -129,7 +129,7 @@ function plan(files) {
     if (sub === "lib" && leaf !== undefined) libraries.add(`${dir}/lib`);
     if (["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "package-lock.json"].includes(sub) && leaf === undefined) dependencies.add(dir);
   }
-  const consumers = libraries.size > 0 ? libraryConsumers(main, [...libraries]) : [];
+  const consumers = libraries.size > 0 ? libraryConsumers(root, [...libraries]) : [];
   const checked = [...new Set([...touched, ...consumers])].sort();
   return { checked, dependencies: [...dependencies], libraries: [...libraries], claude: files.some((file) => file.startsWith("claude/")) };
 }
@@ -138,7 +138,7 @@ const filesOf = (range) => git("diff", "--name-only", ...range).out.split("\n").
 
 if (dryRun) {
   const files = [...new Set(commits.flatMap((sha) => filesOf([`${sha}^`, sha])))];
-  const { checked, dependencies, libraries } = plan(files);
+  const { checked, dependencies, libraries } = plan(files, checkout);
   console.log(`\nWould check and install: ${checked.join(", ") || "no plugins"}`);
   if (libraries.length > 0) console.log(`  (${libraries.join(", ")} changed, so every plugin built on it is included)`);
   if (dependencies.length > 0) console.log(`Would install dependencies first in: ${dependencies.join(", ")}`);
@@ -180,7 +180,7 @@ const after = gitMain("rev-parse", "HEAD").out;
 const landed = gitMain("rev-list", "--count", `${before}..${after}`).out;
 console.log(`\n${MAIN_BRANCH}: ${before.slice(0, 7)}..${after.slice(0, 7)} (${landed} new commit${landed === "1" ? "" : "s"})`);
 
-const { checked, dependencies, claude } = plan(gitMain("diff", "--name-only", before, after).out.split("\n").filter(Boolean));
+const { checked, dependencies, claude } = plan(gitMain("diff", "--name-only", before, after).out.split("\n").filter(Boolean), main);
 const pluginDir = (dir) => join(main, "plugins", dir);
 
 const registryArgs = registry === null ? [] : [`--config.registry=${registry}`];
