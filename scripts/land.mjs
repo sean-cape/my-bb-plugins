@@ -63,8 +63,6 @@ if (dirty !== "" && !dryRun) stop(`uncommitted changes in ${checkout}; commit th
 if (dirty !== "") console.log(`warning: uncommitted changes aren't landed:\n${dirty}\n`);
 const untracked = git("ls-files", "--others", "--exclude-standard").out;
 if (untracked !== "") console.log(`warning: untracked files aren't landed:\n${untracked}\n`);
-const mainDirty = gitMain("status", "--porcelain", "--untracked-files=no").out;
-if (mainDirty !== "" && !dryRun) stop(`the main checkout ${main} has uncommitted changes; land once they're committed or gone:\n${mainDirty}`);
 
 const lines = (result) => result.out.split("\n").filter(Boolean);
 const revList = (...revArgs) => lines(git("rev-list", ...revArgs));
